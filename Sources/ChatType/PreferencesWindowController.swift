@@ -968,15 +968,10 @@ private struct PreferencesView: View {
                     .toggleStyle(.switch)
             }
 
+            terminologyImportRow
             terminologyEditor
             terminologyLibraryHeader
             terminologyToolbar
-
-            if let terminologyImportMessage {
-                Text(terminologyImportMessage)
-                    .font(.system(size: 11))
-                    .foregroundStyle(terminologyImportIsError ? .red : .secondary)
-            }
 
             terminologyList
         }
@@ -1153,10 +1148,51 @@ private struct PreferencesView: View {
             .accessibilityLabel("Filter dictionary entries")
 
             Spacer()
+        }
+    }
 
-            Button("Import Dictionary...") {
-                importTerminologyDictionary()
+    private var terminologyImportRow: some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Label("Import a dictionary", systemImage: "square.and.arrow.down")
+                    .font(.system(size: 12, weight: .semibold))
+
+                Text(terminologyImportMessage ?? "Add many terms at once from a local text or CSV file.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(terminologyImportIsError ? .red : .secondary)
+                    .lineLimit(2)
             }
+
+            Spacer(minLength: 12)
+
+            Button {
+                importTerminologyDictionary(
+                    title: "Import Text Dictionary",
+                    allowedContentTypes: [.plainText],
+                    message: "Choose a plain text terminology dictionary."
+                )
+            } label: {
+                Label("Text Dictionary…", systemImage: "doc.plaintext")
+            }
+            .accessibilityIdentifier("import-text-dictionary")
+
+            Button {
+                importTerminologyDictionary(
+                    title: "Import CSV Dictionary",
+                    allowedContentTypes: [.commaSeparatedText],
+                    message: "Choose a CSV terminology dictionary."
+                )
+            } label: {
+                Label("CSV Dictionary…", systemImage: "tablecells")
+            }
+            .accessibilityIdentifier("import-csv-dictionary")
+        }
+        .padding(12)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
         }
     }
 
@@ -1165,7 +1201,7 @@ private struct PreferencesView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Your dictionary")
                     .font(.system(size: 12, weight: .semibold))
-                Text("Review custom entries or import a text or CSV dictionary.")
+                Text("Review, enable, edit, or remove dictionary entries.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -1391,13 +1427,18 @@ private struct PreferencesView: View {
         return true
     }
 
-    private func importTerminologyDictionary() {
+    private func importTerminologyDictionary(
+        title: String,
+        allowedContentTypes: [UTType],
+        message: String
+    ) {
         let panel = NSOpenPanel()
+        panel.title = title
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.plainText, .commaSeparatedText]
-        panel.message = "Choose a plain text or CSV terminology dictionary."
+        panel.allowedContentTypes = allowedContentTypes
+        panel.message = message
 
         guard panel.runModal() == .OK, let fileURL = panel.url else {
             return
