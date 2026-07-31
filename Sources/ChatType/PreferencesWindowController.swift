@@ -123,7 +123,7 @@ private struct PreferencesView: View {
     private enum TerminologyFilter: String, CaseIterable, Identifiable {
         case all = "All"
         case terms = "Terms"
-        case corrections = "Corrections"
+        case corrections = "Replacements"
 
         var id: String { rawValue }
     }
@@ -954,13 +954,12 @@ private struct PreferencesView: View {
     }
 
     private var terminologyDictionarySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Terminology Dictionary")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    Text("Terms guide transcription. Corrections deterministically replace common mistakes after transcription.")
+                    Text("Teach ChatType the words you use")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Preserve the spelling of a term, or replace a recurring transcription mistake.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -969,9 +968,9 @@ private struct PreferencesView: View {
                     .toggleStyle(.switch)
             }
 
-            terminologySummaryRow
-            terminologyToolbar
             terminologyEditor
+            terminologyLibraryHeader
+            terminologyToolbar
 
             if let terminologyImportMessage {
                 Text(terminologyImportMessage)
@@ -1123,11 +1122,7 @@ private struct PreferencesView: View {
 
         return HStack(spacing: 8) {
             terminologyCountBadge(title: "Terms", count: termCount, color: .accentColor)
-            terminologyCountBadge(title: "Corrections", count: correctionCount, color: .orange)
-            Spacer()
-            Text("Import a text or CSV dictionary, then add custom terms or corrections here.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+            terminologyCountBadge(title: "Replacements", count: correctionCount, color: .orange)
         }
     }
 
@@ -1153,7 +1148,9 @@ private struct PreferencesView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .frame(maxWidth: 430)
+            .frame(maxWidth: 390)
+            .labelsHidden()
+            .accessibilityLabel("Filter dictionary entries")
 
             Spacer()
 
@@ -1163,23 +1160,71 @@ private struct PreferencesView: View {
         }
     }
 
+    private var terminologyLibraryHeader: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Your dictionary")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Review custom entries or import a text or CSV dictionary.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+            terminologySummaryRow
+        }
+        .padding(.top, 2)
+    }
+
     private var terminologyEditor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(editingTerminologyIndex == nil ? "Add Entry" : "Edit Entry")
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Label(
+                    editingTerminologyIndex == nil ? "Add a custom entry" : "Edit custom entry",
+                    systemImage: editingTerminologyIndex == nil ? "plus.circle.fill" : "pencil.circle.fill"
+                )
                 .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.primary)
 
-            HStack {
-                Picker("", selection: terminologyTypeBinding) {
-                    Text("Term").tag(TerminologyEntryType.term)
-                    Text("Correction").tag(TerminologyEntryType.correction)
+                Text(terminologyEditorHelp)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+            }
+
+            Picker("Entry type", selection: terminologyTypeBinding) {
+                Text("Term").tag(TerminologyEntryType.term)
+                Text("Replacement").tag(TerminologyEntryType.correction)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 260)
+            .accessibilityIdentifier("terminology-entry-type")
+
+            HStack(alignment: .bottom, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(editingTerminologyType == .term ? "Preferred spelling" : "Spoken or incorrect text")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        editingTerminologyType == .term ? "e.g. OpenClaw" : "e.g. opencloud",
+                        text: $editingOriginal
+                    )
+                    .accessibilityIdentifier("terminology-original")
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 220)
-
-                TextField(editingTerminologyType == .term ? "Term" : "Wrong text", text: $editingOriginal)
 
                 if editingTerminologyType == .correction {
-                    TextField("Correct text", text: $editingReplacement)
+                    Image(systemName: "arrow.right")
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 6)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Replace with")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        TextField("e.g. OpenClaw", text: $editingReplacement)
+                            .accessibilityIdentifier("terminology-replacement")
+                    }
                 }
 
                 if editingTerminologyIndex != nil {
@@ -1187,16 +1232,38 @@ private struct PreferencesView: View {
                         clearTerminologyEditor()
                     }
                 }
-                Button(editingTerminologyIndex == nil ? "Add" : "Save Entry") {
+
+                Button(terminologyEditorActionTitle) {
                     saveTerminologyEditor()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canSaveTerminologyEntry)
+                .accessibilityIdentifier("terminology-save-entry")
             }
         }
-        .padding(10)
+        .padding(12)
         .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
+        }
+    }
+
+    private var terminologyEditorHelp: String {
+        switch editingTerminologyType {
+        case .term:
+            return "Keep names and technical terms spelled exactly this way."
+        case .correction:
+            return "Automatically fix a phrase after transcription."
+        }
+    }
+
+    private var terminologyEditorActionTitle: String {
+        if editingTerminologyIndex != nil {
+            return "Save Changes"
+        }
+        return editingTerminologyType == .term ? "Add Term" : "Add Replacement"
     }
 
     private var terminologyList: some View {
@@ -1224,10 +1291,10 @@ private struct PreferencesView: View {
 
     private func terminologyEntryRow(index: Int, entry: TerminologyEntry) -> some View {
         HStack(spacing: 8) {
-            Text(entry.type.rawValue.capitalized)
+            Text(entry.type == .correction ? "Replacement" : "Term")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(entry.type == .correction ? .orange : .accentColor)
-                .frame(width: 74, alignment: .leading)
+                .frame(width: 82, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 2) {
                 if entry.type == .correction {
