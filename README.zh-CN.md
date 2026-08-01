@@ -108,8 +108,9 @@ packaging/homebrew/Casks/chattype.rb
 
 `ChatType` 保留本地确定性术语对齐，并把它作为 AI 润色前后的安全层：
 
-- 在设置页里点 `Import Dictionary...`，导入文本或 CSV 词库
-- 在设置页里添加自定义术语和确定性修正
+- 通过系统通讯录权限导入通讯录备注名
+- 从微信联系人 CSV 导出中只导入备注名列
+- 在设置页里添加自定义术语和确定性替换
 - 导入后的词表由 ChatType 自己保存在本地配置里
 - 在 STT 和可选 AI 润色之后，对工具名、产品名和技术术语做本地对齐
 - `transcription.hintTerms` 仍然保留，用于文件名等关键字的 exact-only 保留
@@ -161,8 +162,8 @@ swift test --package-path .
 
 术语相关的高级选项：
 
-- 在设置页中用 `Import Dictionary...` 导入文本或 CSV 词库
-- 在设置页里添加自定义术语和修正
+- 导入通讯录备注名或微信联系人 CSV 中的备注名
+- 在设置页里添加自定义术语和替换
 - 用 `transcription.hintTerms` 保留不想被改动的 exact-only 隐藏术语
 
 ## 权限修复

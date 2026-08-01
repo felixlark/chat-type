@@ -316,7 +316,7 @@ struct TerminologyNormalizer: TranscriptNormalizing {
     ) -> [ExactRule] {
         var rules: [ExactRule] = []
 
-        for entry in importedEntries where entry.isEnabled && entry.type == .term {
+        for entry in importedEntries where entry.type == .term {
             rules.append(contentsOf: exactRules(for: entry, priority: 100))
         }
 
@@ -342,7 +342,7 @@ struct TerminologyNormalizer: TranscriptNormalizing {
 
     private func correctionRules(from entries: [TerminologyEntry]) -> [ExactRule] {
         entries
-            .filter { $0.isEnabled && $0.type == .correction }
+            .filter { $0.type == .correction }
             .flatMap { entry -> [ExactRule] in
                 let replacement = entry.replacement ?? ""
                 return normalizedTerms(from: [entry.original] + entry.aliases).compactMap { term in
@@ -401,7 +401,7 @@ struct TerminologyNormalizer: TranscriptNormalizing {
 
     private func fuzzyRules(from entries: [TerminologyEntry]) -> [FuzzyRule] {
         entries
-            .filter { $0.isEnabled && $0.type == .term }
+            .filter { $0.type == .term }
             .compactMap { entry in
             let references = normalizedTerms(from: [entry.canonical] + entry.aliases)
                 .filter { containsLatinLetters($0) }
@@ -424,7 +424,7 @@ struct TerminologyNormalizer: TranscriptNormalizing {
     private func protectedCorrectionReplacementKeys(from entries: [TerminologyEntry]) -> Set<String> {
         Set(
             entries
-                .filter { $0.isEnabled && $0.type == .correction }
+                .filter { $0.type == .correction }
                 .compactMap { entry in
                     let replacement = (entry.replacement ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                     return replacement.isEmpty ? nil : canonicalKey(for: replacement)

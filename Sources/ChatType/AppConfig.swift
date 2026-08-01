@@ -191,13 +191,7 @@ struct TranscriptionConfig: Codable, Sendable {
     }
 
     var activeDictionaryEntries: [TerminologyEntry] {
-        guard terminology.enabled else {
-            return []
-        }
-
-        return terminology.entries.filter {
-            $0.isEnabled && ($0.type == .term || $0.type == .correction)
-        }
+        terminology.entries.filter { $0.type == .term || $0.type == .correction }
     }
 
     var promptHintTerms: [String] {
@@ -208,7 +202,6 @@ struct TranscriptionConfig: Codable, Sendable {
 }
 
 struct TerminologyConfig: Codable, Sendable, Equatable {
-    var enabled: Bool = true
     var entries: [TerminologyEntry] = []
     var lastImportedSource: String?
     var lastImportedAt: String?
@@ -217,7 +210,6 @@ struct TerminologyConfig: Codable, Sendable, Equatable {
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         let decodedEntries = try container.decodeIfPresent([TerminologyEntry].self, forKey: .entries) ?? []
         let legacyImportedEntries = try container.decodeIfPresent([TerminologyEntry].self, forKey: .importedEntries) ?? []
         entries = decodedEntries.isEmpty ? legacyImportedEntries : decodedEntries
@@ -241,14 +233,12 @@ struct TerminologyConfig: Codable, Sendable, Equatable {
 
     func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(enabled, forKey: .enabled)
         try container.encode(entries, forKey: .entries)
         try container.encodeIfPresent(lastImportedSource, forKey: .lastImportedSource)
         try container.encodeIfPresent(lastImportedAt, forKey: .lastImportedAt)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled
         case entries
         case importedEntries
         case lastImportedSource
@@ -279,7 +269,6 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
     var original: String
     var replacement: String?
     var aliases: [String]
-    var isEnabled: Bool
     var source: String
     var usageCount: Int
     var createdAt: String
@@ -300,7 +289,6 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
         original: String,
         replacement: String?,
         aliases: [String],
-        isEnabled: Bool,
         source: String,
         usageCount: Int,
         createdAt: String
@@ -309,7 +297,6 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
         self.original = original
         self.replacement = replacement
         self.aliases = aliases
-        self.isEnabled = isEnabled
         self.source = source
         self.usageCount = usageCount
         self.createdAt = createdAt
@@ -325,7 +312,6 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
             original: canonical,
             replacement: nil,
             aliases: aliases,
-            isEnabled: true,
             source: source,
             usageCount: 0,
             createdAt: ISO8601DateFormatter().string(from: Date())
@@ -341,7 +327,6 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
             ?? ""
         replacement = try container.decodeIfPresent(String.self, forKey: .replacement)
         aliases = try container.decodeIfPresent([String].self, forKey: .aliases) ?? []
-        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         let decodedSource = try container.decodeIfPresent(String.self, forKey: .source) ?? "dictionary-import"
         source = Self.normalizedSource(rawType: rawType, source: decodedSource)
         usageCount = try container.decodeIfPresent(Int.self, forKey: .usageCount) ?? 0
@@ -367,7 +352,6 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
         try container.encode(original, forKey: .original)
         try container.encodeIfPresent(replacement, forKey: .replacement)
         try container.encode(aliases, forKey: .aliases)
-        try container.encode(isEnabled, forKey: .isEnabled)
         try container.encode(source, forKey: .source)
         try container.encode(usageCount, forKey: .usageCount)
         try container.encode(createdAt, forKey: .createdAt)
@@ -378,7 +362,6 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
         case original
         case replacement
         case aliases
-        case isEnabled
         case source
         case usageCount
         case createdAt

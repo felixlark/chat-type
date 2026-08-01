@@ -34,7 +34,10 @@ private func runPostScript(arguments: [String]) throws -> ScriptResult {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/bash")
     process.arguments = ["scripts/post_x.sh"] + arguments
-    process.currentDirectoryURL = URL(fileURLWithPath: "/Users/longbiao/Projects/chat-type")
+    process.currentDirectoryURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
     process.environment = ProcessInfo.processInfo.environment
 
     let stdout = Pipe()

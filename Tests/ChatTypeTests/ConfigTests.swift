@@ -88,7 +88,7 @@ func defaultConfigEncodesTerminologyDefaults() throws {
     let transcription = try #require(object["transcription"] as? [String: Any])
     let terminology = try #require(transcription["terminology"] as? [String: Any])
 
-    #expect(terminology["enabled"] as? Bool == true)
+    #expect(terminology["enabled"] == nil)
     #expect((terminology["entries"] as? [Any])?.isEmpty == true)
     #expect(terminology["importedEntries"] == nil)
     #expect(terminology["lastImportedSource"] == nil)
@@ -199,7 +199,6 @@ func configRoundTripPreservesTerminologyEntries() throws {
     try encoder.encode(config).write(to: configURL)
 
     let decoded = try JSONDecoder().decode(AppConfig.self, from: Data(contentsOf: configURL))
-    #expect(decoded.transcription.terminology.enabled == true)
     #expect(decoded.transcription.terminology.entries.count == 2)
     #expect(decoded.transcription.terminology.entries[0].canonical == "ChatType")
     #expect(decoded.transcription.terminology.entries[0].aliases == ["Chat Type"])
@@ -233,7 +232,6 @@ func legacyImportedTerminologyEntriesMigrateIntoUserDictionaryEntries() throws {
     #expect(migrated.type == .term)
     #expect(migrated.original == "TypeWhisper")
     #expect(migrated.aliases == ["Type Whisper", "Takwiisper"])
-    #expect(migrated.isEnabled == true)
     #expect(migrated.source == "dictionary-import")
 }
 
@@ -279,7 +277,6 @@ func configRoundTripPreservesUserDictionaryEntryFields() throws {
             original: "opencloud",
             replacement: "OpenClaw",
             aliases: [],
-            isEnabled: true,
             source: "user",
             usageCount: 3,
             createdAt: "2026-05-07T10:00:00Z"
@@ -289,7 +286,6 @@ func configRoundTripPreservesUserDictionaryEntryFields() throws {
             original: "TypeWhisper",
             replacement: nil,
             aliases: [],
-            isEnabled: true,
             source: "user",
             usageCount: 4,
             createdAt: "2026-05-07T10:01:00Z"
@@ -305,6 +301,7 @@ func configRoundTripPreservesUserDictionaryEntryFields() throws {
 
     #expect(decoded.transcription.terminology.entries == config.transcription.terminology.entries)
     #expect(entries.allSatisfy { $0["caseSensitive"] == nil })
+    #expect(entries.allSatisfy { $0["isEnabled"] == nil })
     #expect(entries.allSatisfy { ($0["type"] as? String) != "suggestion" })
 }
 
@@ -331,6 +328,7 @@ func legacySuggestionDictionaryEntryDecodesAsTerm() throws {
     #expect(decoded.original == "TypeWhisper")
     #expect(decoded.source == "legacy-import")
     #expect(encodedJSON.contains("suggestion") == false)
+    #expect(encodedJSON.contains("isEnabled") == false)
 }
 
 @Test
@@ -392,7 +390,7 @@ func legacyConfigWithoutTerminologyReencodesWithTerminologyDefaults() throws {
     let transcription = try #require(object["transcription"] as? [String: Any])
     let terminology = try #require(transcription["terminology"] as? [String: Any])
 
-    #expect(terminology["enabled"] as? Bool == true)
+    #expect(terminology["enabled"] == nil)
     #expect(terminology["importedEntries"] == nil)
 }
 

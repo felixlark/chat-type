@@ -35,8 +35,10 @@ The V1 architecture deliberately optimizes for a single-app workflow where ChatT
   - builds the fixed “directly usable text” prompt and optional hidden hint terms
 - `TerminologyNormalizer`
   - applies deterministic terminology alignment before and after optional text polish
-- `TerminologyTextImporter`
-  - imports plain text or CSV terminology dictionaries into ChatType-owned entries
+- `AppleContactRemarkImporter`
+  - imports Apple Contacts nicknames through the system Contacts framework
+- `WeixinRemarkCSVImporter`
+  - imports only the validated remark-name column from an explicit WeChat contacts CSV export
 - `OpenAICompatibleTextPolisher`
   - runs the optional post-ASR rewrite pass through ChatType-managed ChatGPT Auth
   - calls the configured ChatGPT backend Responses endpoint with a ChatGPT access token

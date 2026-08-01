@@ -12,6 +12,12 @@ if /usr/bin/plutil -extract LSUIElement raw -o - "$PLIST" >/dev/null 2>&1; then
   exit 1
 fi
 
+CONTACTS_DESCRIPTION="$(/usr/bin/plutil -extract NSContactsUsageDescription raw -o - "$PLIST" 2>/dev/null || true)"
+if [[ -z "$CONTACTS_DESCRIPTION" ]]; then
+  echo "Packaged app is missing NSContactsUsageDescription for contact nickname import." >&2
+  exit 1
+fi
+
 ENTITLEMENTS="$(/usr/bin/codesign -d --entitlements :- "$APP" 2>/dev/null || true)"
 if [[ "$ENTITLEMENTS" != *"com.apple.security.device.audio-input"* ]]; then
   echo "Packaged app is missing hardened runtime audio input entitlement." >&2

@@ -10,7 +10,8 @@ final class PreferencesWindowController: NSWindowController {
         config: AppConfig,
         authManager: ChatGPTAuthManager,
         onSave: @escaping (AppConfig) -> Void,
-        onImportTerminologyDictionary: @escaping (AppConfig, URL) -> Result<AppConfig, any Error>,
+        onImportAppleContactRemarks: @escaping (AppConfig) async -> Result<AppConfig, any Error>,
+        onImportWeixinRemarks: @escaping (AppConfig, URL) -> Result<AppConfig, any Error>,
         onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
         onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
         recoveryDirectoryURL: URL,
@@ -22,7 +23,8 @@ final class PreferencesWindowController: NSWindowController {
             initialConfig: config,
             authManager: authManager,
             onSave: onSave,
-            onImportTerminologyDictionary: onImportTerminologyDictionary,
+            onImportAppleContactRemarks: onImportAppleContactRemarks,
+            onImportWeixinRemarks: onImportWeixinRemarks,
             onLoadRecentHistory: onLoadRecentHistory,
             onLoadRecoveryHistory: onLoadRecoveryHistory,
             recoveryDirectoryURL: recoveryDirectoryURL,
@@ -120,20 +122,12 @@ private struct PreferencesView: View {
         }
     }
 
-    private enum TerminologyFilter: String, CaseIterable, Identifiable {
-        case all = "All"
-        case terms = "Terms"
-        case corrections = "Replacements"
-
-        var id: String { rawValue }
-    }
-
     @State private var config: AppConfig
     @State private var showsAdvancedRecovery: Bool
     @State private var permissionRefreshNonce: Int = 0
     @State private var terminologyImportMessage: String?
     @State private var terminologyImportIsError = false
-    @State private var terminologyFilter: TerminologyFilter = .all
+    @State private var isImportingContactRemarks = false
     @State private var editingTerminologyIndex: Int?
     @State private var editingTerminologyType: TerminologyEntryType = .term
     @State private var editingOriginal = ""
@@ -152,7 +146,8 @@ private struct PreferencesView: View {
 
     let authManager: ChatGPTAuthManager
     let onSave: (AppConfig) -> Void
-    let onImportTerminologyDictionary: (AppConfig, URL) -> Result<AppConfig, any Error>
+    let onImportAppleContactRemarks: (AppConfig) async -> Result<AppConfig, any Error>
+    let onImportWeixinRemarks: (AppConfig, URL) -> Result<AppConfig, any Error>
     let onLoadRecentHistory: () -> [TranscriptionHistoryRecord]
     let onLoadRecoveryHistory: () -> [RecoveryRecord]
     let recoveryDirectoryURL: URL
@@ -163,7 +158,8 @@ private struct PreferencesView: View {
         initialConfig: AppConfig,
         authManager: ChatGPTAuthManager,
         onSave: @escaping (AppConfig) -> Void,
-        onImportTerminologyDictionary: @escaping (AppConfig, URL) -> Result<AppConfig, any Error>,
+        onImportAppleContactRemarks: @escaping (AppConfig) async -> Result<AppConfig, any Error>,
+        onImportWeixinRemarks: @escaping (AppConfig, URL) -> Result<AppConfig, any Error>,
         onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
         onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
         recoveryDirectoryURL: URL,
@@ -180,7 +176,8 @@ private struct PreferencesView: View {
         _selectedSection = State(initialValue: focusRecoveryHistory ? .recovery : .account)
         self.authManager = authManager
         self.onSave = onSave
-        self.onImportTerminologyDictionary = onImportTerminologyDictionary
+        self.onImportAppleContactRemarks = onImportAppleContactRemarks
+        self.onImportWeixinRemarks = onImportWeixinRemarks
         self.onLoadRecentHistory = onLoadRecentHistory
         self.onLoadRecoveryHistory = onLoadRecoveryHistory
         self.recoveryDirectoryURL = recoveryDirectoryURL
@@ -419,11 +416,9 @@ private struct PreferencesView: View {
             return nil
         }
 
-        if let timestamp = config.transcription.terminology.lastImportedAt {
-            return "Dictionary has \(entries.count) entries. Last dictionary import: \(timestamp)."
-        }
-
-        return "Dictionary has \(entries.count) entries."
+        let terms = entries.filter { $0.type == .term }.count
+        let replacements = entries.filter { $0.type == .correction }.count
+        return "\(terms) terms · \(replacements) replacements"
     }
 
     private static func loadTextPolishUsage(
@@ -506,16 +501,7 @@ private struct PreferencesView: View {
 
     private var filteredTerminologyEntries: [(offset: Int, entry: TerminologyEntry)] {
         config.transcription.terminology.entries.enumerated().compactMap { offset, entry in
-            let include: Bool
-            switch terminologyFilter {
-            case .all:
-                include = true
-            case .terms:
-                include = entry.type == .term
-            case .corrections:
-                include = entry.type == .correction
-            }
-            return include ? (offset: offset, entry: entry) : nil
+            entry.type == editingTerminologyType ? (offset: offset, entry: entry) : nil
         }
     }
 
@@ -954,26 +940,9 @@ private struct PreferencesView: View {
     }
 
     private var terminologyDictionarySection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Teach ChatType the words you use")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Preserve the spelling of a term, or replace a recurring transcription mistake.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Toggle("Enabled", isOn: $config.transcription.terminology.enabled)
-                    .toggleStyle(.switch)
-            }
-
+        VStack(alignment: .leading, spacing: 12) {
             terminologyImportRow
-            terminologyEditor
-            terminologyLibraryHeader
-            terminologyToolbar
-
-            terminologyList
+            terminologyWorkspace
         }
     }
 
@@ -1110,54 +1079,13 @@ private struct PreferencesView: View {
             .clipShape(Capsule())
     }
 
-    private var terminologySummaryRow: some View {
-        let entries = config.transcription.terminology.entries
-        let termCount = entries.filter { $0.type == .term }.count
-        let correctionCount = entries.filter { $0.type == .correction }.count
-
-        return HStack(spacing: 8) {
-            terminologyCountBadge(title: "Terms", count: termCount, color: .accentColor)
-            terminologyCountBadge(title: "Replacements", count: correctionCount, color: .orange)
-        }
-    }
-
-    private func terminologyCountBadge(title: String, count: Int, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Text(title)
-            Text("\(count)")
-                .fontWeight(.semibold)
-        }
-        .font(.system(size: 11))
-        .foregroundStyle(color)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(Capsule())
-    }
-
-    private var terminologyToolbar: some View {
-        HStack(spacing: 10) {
-            Picker("", selection: $terminologyFilter) {
-                ForEach(TerminologyFilter.allCases) { filter in
-                    Text(filter.rawValue).tag(filter)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 390)
-            .labelsHidden()
-            .accessibilityLabel("Filter dictionary entries")
-
-            Spacer()
-        }
-    }
-
     private var terminologyImportRow: some View {
         HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
-                Label("Import a dictionary", systemImage: "square.and.arrow.down")
+                Label("Dictionary sources", systemImage: "person.2")
                     .font(.system(size: 12, weight: .semibold))
 
-                Text(terminologyImportMessage ?? "Add many terms at once from a local text or CSV file.")
+                Text(terminologyImportMessage ?? terminologyEntryCountSummary)
                     .font(.system(size: 11))
                     .foregroundStyle(terminologyImportIsError ? .red : .secondary)
                     .lineLimit(2)
@@ -1166,26 +1094,22 @@ private struct PreferencesView: View {
             Spacer(minLength: 12)
 
             Button {
-                importTerminologyDictionary(
-                    title: "Import Text Dictionary",
-                    allowedContentTypes: [.plainText],
-                    message: "Choose a plain text terminology dictionary."
-                )
+                importAppleContactRemarks()
             } label: {
-                Label("Text Dictionary…", systemImage: "doc.plaintext")
+                Label(
+                    isImportingContactRemarks ? "Importing…" : "Contacts Remarks",
+                    systemImage: "person.crop.circle.badge.plus"
+                )
             }
-            .accessibilityIdentifier("import-text-dictionary")
+            .disabled(isImportingContactRemarks)
+            .accessibilityIdentifier("import-contact-remarks")
 
             Button {
-                importTerminologyDictionary(
-                    title: "Import CSV Dictionary",
-                    allowedContentTypes: [.commaSeparatedText],
-                    message: "Choose a CSV terminology dictionary."
-                )
+                importWeixinRemarks()
             } label: {
-                Label("CSV Dictionary…", systemImage: "tablecells")
+                Label("WeChat Remarks…", systemImage: "message")
             }
-            .accessibilityIdentifier("import-csv-dictionary")
+            .accessibilityIdentifier("import-weixin-remarks")
         }
         .padding(12)
         .background(Color(nsColor: .textBackgroundColor))
@@ -1196,45 +1120,15 @@ private struct PreferencesView: View {
         }
     }
 
-    private var terminologyLibraryHeader: some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Your dictionary")
-                    .font(.system(size: 12, weight: .semibold))
-                Text("Review, enable, edit, or remove dictionary entries.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-            terminologySummaryRow
-        }
-        .padding(.top, 2)
-    }
-
-    private var terminologyEditor: some View {
+    private var terminologyWorkspace: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Label(
-                    editingTerminologyIndex == nil ? "Add a custom entry" : "Edit custom entry",
-                    systemImage: editingTerminologyIndex == nil ? "plus.circle.fill" : "pencil.circle.fill"
-                )
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.primary)
-
-                Text(terminologyEditorHelp)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-            }
-
             Picker("Entry type", selection: terminologyTypeBinding) {
-                Text("Term").tag(TerminologyEntryType.term)
+                Text("Terms").tag(TerminologyEntryType.term)
                 Text("Replacement").tag(TerminologyEntryType.correction)
             }
             .pickerStyle(.segmented)
-            .frame(width: 260)
+            .frame(maxWidth: 360)
+            .labelsHidden()
             .accessibilityIdentifier("terminology-entry-type")
 
             HStack(alignment: .bottom, spacing: 10) {
@@ -1265,7 +1159,7 @@ private struct PreferencesView: View {
 
                 if editingTerminologyIndex != nil {
                     Button("Cancel") {
-                        clearTerminologyEditor()
+                        clearTerminologyEditor(preservingType: true)
                     }
                 }
 
@@ -1276,6 +1170,19 @@ private struct PreferencesView: View {
                 .disabled(!canSaveTerminologyEntry)
                 .accessibilityIdentifier("terminology-save-entry")
             }
+
+            Divider()
+
+            HStack {
+                Text(editingTerminologyType == .term ? "Terms" : "Replacement")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Text("\(filteredTerminologyEntries.count) entries")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            terminologyList
         }
         .padding(12)
         .background(Color(nsColor: .textBackgroundColor))
@@ -1286,13 +1193,11 @@ private struct PreferencesView: View {
         }
     }
 
-    private var terminologyEditorHelp: String {
-        switch editingTerminologyType {
-        case .term:
-            return "Keep names and technical terms spelled exactly this way."
-        case .correction:
-            return "Automatically fix a phrase after transcription."
-        }
+    private var terminologyEntryCountSummary: String {
+        let entries = config.transcription.terminology.entries
+        let terms = entries.filter { $0.type == .term }.count
+        let replacements = entries.filter { $0.type == .correction }.count
+        return "\(terms) terms · \(replacements) replacements"
     }
 
     private var terminologyEditorActionTitle: String {
@@ -1305,20 +1210,14 @@ private struct PreferencesView: View {
     private var terminologyList: some View {
         Group {
             if filteredTerminologyEntries.isEmpty {
-                Text("No dictionary entries for this filter.")
+                Text(editingTerminologyType == .term ? "No terms yet." : "No replacements yet.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 8)
             } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(filteredTerminologyEntries.prefix(5)), id: \.offset) { index, entry in
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(filteredTerminologyEntries, id: \.offset) { index, entry in
                         terminologyEntryRow(index: index, entry: entry)
-                    }
-
-                    if filteredTerminologyEntries.count > 5 {
-                        Text("Showing 5 of \(filteredTerminologyEntries.count). Use the filter or edit config.json for bulk changes.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -1327,11 +1226,6 @@ private struct PreferencesView: View {
 
     private func terminologyEntryRow(index: Int, entry: TerminologyEntry) -> some View {
         HStack(spacing: 8) {
-            Text(entry.type == .correction ? "Replacement" : "Term")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(entry.type == .correction ? .orange : .accentColor)
-                .frame(width: 82, alignment: .leading)
-
             VStack(alignment: .leading, spacing: 2) {
                 if entry.type == .correction {
                     Text("\(entry.original) -> \(entry.replacement ?? "")")
@@ -1340,19 +1234,12 @@ private struct PreferencesView: View {
                     Text(entry.original)
                         .font(.system(size: 12, weight: .medium))
                 }
-                Text("\(entry.source) · \(entry.isEnabled ? "enabled" : "disabled")")
+                Text(entry.source)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
-
-            Toggle("", isOn: Binding(
-                get: { config.transcription.terminology.entries[index].isEnabled },
-                set: { config.transcription.terminology.entries[index].isEnabled = $0 }
-            ))
-            .toggleStyle(.switch)
-            .labelsHidden()
 
             Button("Edit") {
                 editTerminologyEntry(at: index)
@@ -1392,7 +1279,6 @@ private struct PreferencesView: View {
             original: original,
             replacement: replacement,
             aliases: [],
-            isEnabled: true,
             source: "user",
             usageCount: 0,
             createdAt: ISO8601DateFormatter().string(from: Date())
@@ -1404,12 +1290,13 @@ private struct PreferencesView: View {
             config.transcription.terminology.entries.append(entry)
         }
 
-        clearTerminologyEditor()
+        clearTerminologyEditor(preservingType: true)
     }
 
-    private func clearTerminologyEditor() {
+    private func clearTerminologyEditor(preservingType: Bool = false) {
+        let currentType = editingTerminologyType
         editingTerminologyIndex = nil
-        editingTerminologyType = .term
+        editingTerminologyType = preservingType ? currentType : .term
         editingOriginal = ""
         editingReplacement = ""
     }
@@ -1427,29 +1314,43 @@ private struct PreferencesView: View {
         return true
     }
 
-    private func importTerminologyDictionary(
-        title: String,
-        allowedContentTypes: [UTType],
-        message: String
-    ) {
+    private func importAppleContactRemarks() {
+        isImportingContactRemarks = true
+        Task {
+            let result = await onImportAppleContactRemarks(config)
+            await MainActor.run {
+                isImportingContactRemarks = false
+                applyTerminologyImportResult(result, sourceLabel: "Contacts")
+            }
+        }
+    }
+
+    private func importWeixinRemarks() {
         let panel = NSOpenPanel()
-        panel.title = title
+        panel.title = "Import WeChat Remark Names"
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = allowedContentTypes
-        panel.message = message
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.message = "Choose a WeChat contacts CSV containing a 备注名 column."
 
         guard panel.runModal() == .OK, let fileURL = panel.url else {
             return
         }
 
-        switch onImportTerminologyDictionary(config, fileURL) {
+        applyTerminologyImportResult(onImportWeixinRemarks(config, fileURL), sourceLabel: "WeChat")
+    }
+
+    private func applyTerminologyImportResult(
+        _ result: Result<AppConfig, any Error>,
+        sourceLabel: String
+    ) {
+        switch result {
         case .success(let updatedConfig):
             config = updatedConfig
-            terminologyImportMessage = Self.terminologyStatusMessage(for: updatedConfig)
+            terminologyImportMessage = "Imported \(sourceLabel) remarks. \(terminologyEntryCountSummary)"
             terminologyImportIsError = false
-            terminologyFilter = .all
+            editingTerminologyType = .term
         case .failure(let error):
             terminologyImportMessage = error.localizedDescription
             terminologyImportIsError = true
@@ -1565,7 +1466,12 @@ private struct PreferencesView: View {
     private var terminologyTypeBinding: Binding<TerminologyEntryType> {
         Binding(
             get: { editingTerminologyType },
-            set: { editingTerminologyType = $0 }
+            set: { newType in
+                editingTerminologyType = newType
+                editingTerminologyIndex = nil
+                editingOriginal = ""
+                editingReplacement = ""
+            }
         )
     }
 

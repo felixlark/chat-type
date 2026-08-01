@@ -183,7 +183,6 @@ func terminologyNormalizerAppliesUserCorrectionForOpenClawMisrecognition() {
                 original: "opencloud",
                 replacement: "OpenClaw",
                 aliases: [],
-                isEnabled: true,
                 source: "user",
                 usageCount: 0,
                 createdAt: "2026-05-07T10:00:00Z"
@@ -207,7 +206,6 @@ func terminologyNormalizerIgnoresLegacyCaseSensitiveFlagForCorrections() {
                 original: "opencloud",
                 replacement: "OpenClaw",
                 aliases: [],
-                isEnabled: true,
                 source: "user",
                 usageCount: 0,
                 createdAt: "2026-05-07T10:00:00Z"
@@ -220,16 +218,15 @@ func terminologyNormalizerIgnoresLegacyCaseSensitiveFlagForCorrections() {
 }
 
 @Test
-func terminologyNormalizerIgnoresDisabledDictionaryEntries() {
+func terminologyNormalizerUsesEveryStoredEntryWithoutEnableFlags() {
     let result = TerminologyNormalizer().normalize(
-        text: "opencloud 和 chattype 都不要被改。",
+        text: "opencloud 和 chattype 都要被改。",
         importedEntries: [
             TerminologyEntry(
                 type: .correction,
                 original: "opencloud",
                 replacement: "OpenClaw",
                 aliases: [],
-                isEnabled: false,
                 source: "user",
                 usageCount: 0,
                 createdAt: "2026-05-07T10:00:00Z"
@@ -239,7 +236,6 @@ func terminologyNormalizerIgnoresDisabledDictionaryEntries() {
                 original: "ChatType",
                 replacement: nil,
                 aliases: [],
-                isEnabled: false,
                 source: "user",
                 usageCount: 0,
                 createdAt: "2026-05-07T10:00:00Z"
@@ -248,8 +244,8 @@ func terminologyNormalizerIgnoresDisabledDictionaryEntries() {
         hintTerms: []
     )
 
-    #expect(result.text == "opencloud 和 chattype 都不要被改。")
-    #expect(result.exactReplacementCount == 0)
+    #expect(result.text == "OpenClaw 和 ChatType 都要被改。")
+    #expect(result.exactReplacementCount == 2)
     #expect(result.fuzzyReplacementCount == 0)
 }
 
@@ -263,7 +259,6 @@ func terminologyNormalizerAppliesCorrectionBeforeTermFuzzyAlignment() {
                 original: "OpenCloud",
                 replacement: nil,
                 aliases: [],
-                isEnabled: true,
                 source: "user",
                 usageCount: 0,
                 createdAt: "2026-05-07T10:00:00Z"
@@ -273,7 +268,6 @@ func terminologyNormalizerAppliesCorrectionBeforeTermFuzzyAlignment() {
                 original: "opencloud",
                 replacement: "OpenClaw",
                 aliases: [],
-                isEnabled: true,
                 source: "user",
                 usageCount: 0,
                 createdAt: "2026-05-07T10:00:00Z"
@@ -297,7 +291,6 @@ func terminologyNormalizerDoesNotDowncaseCorrectionReplacementWithLowercaseTerm(
                 original: "opencloud",
                 replacement: "OpenClaw",
                 aliases: [],
-                isEnabled: true,
                 source: "user",
                 usageCount: 0,
                 createdAt: "2026-05-07T10:00:00Z"
@@ -307,7 +300,6 @@ func terminologyNormalizerDoesNotDowncaseCorrectionReplacementWithLowercaseTerm(
                 original: "openclaw",
                 replacement: nil,
                 aliases: [],
-                isEnabled: true,
                 source: "user",
                 usageCount: 0,
                 createdAt: "2026-05-07T10:00:00Z"
@@ -329,7 +321,6 @@ func terminologyNormalizerAppliesUserLowercaseTermCasingForShadowd() {
                 original: "shadowd",
                 replacement: nil,
                 aliases: [],
-                isEnabled: true,
                 source: "user",
                 usageCount: 0,
                 createdAt: "2026-06-15T06:43:11Z"
@@ -352,7 +343,6 @@ func terminologyNormalizerAppliesExplicitLowercaseCorrectionForShadowd() {
                 original: "ShadowD",
                 replacement: "shadowd",
                 aliases: [],
-                isEnabled: true,
                 source: "user",
                 usageCount: 0,
                 createdAt: "2026-06-15T06:43:11Z"

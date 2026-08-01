@@ -545,7 +545,31 @@ final class AppCoordinator {
                         self.notifier.notify(title: "ChatType", body: error.localizedDescription)
                     }
                 },
-                onImportTerminologyDictionary: { [weak self] currentConfig, fileURL in
+                onImportAppleContactRemarks: { [weak self] currentConfig in
+                    guard let self else {
+                        return .failure(
+                            NSError(
+                                domain: "ChatType.Preferences",
+                                code: 1,
+                                userInfo: [NSLocalizedDescriptionKey: "ChatType settings are no longer available."]
+                            )
+                        )
+                    }
+
+                    do {
+                        let imported = try await AppleContactRemarkImporter().importEntries()
+                        return .success(
+                            try self.persistTerminologyImport(
+                                currentConfig: currentConfig,
+                                imported: imported,
+                                lastImportedSource: imported.source
+                            )
+                        )
+                    } catch {
+                        return .failure(error)
+                    }
+                },
+                onImportWeixinRemarks: { [weak self] currentConfig, fileURL in
                     guard let self else {
                         return .failure(
                             NSError(
@@ -558,27 +582,17 @@ final class AppCoordinator {
 
                     do {
                         let data = try Data(contentsOf: fileURL)
-                        let imported = try TerminologyTextImporter().importEntries(
+                        let imported = try WeixinRemarkCSVImporter().importEntries(
                             from: data,
                             sourceName: fileURL.lastPathComponent
                         )
-                        var updatedConfig = currentConfig
-                        updatedConfig.transcription.terminology.enabled = true
-                        updatedConfig.transcription.terminology.entries = Self.mergedTerminologyEntries(
-                            existing: updatedConfig.transcription.terminology.entries,
-                            incoming: imported.entries
+                        return .success(
+                            try self.persistTerminologyImport(
+                                currentConfig: currentConfig,
+                                imported: imported,
+                                lastImportedSource: fileURL.path
+                            )
                         )
-                        updatedConfig.transcription.terminology.lastImportedSource = fileURL.path
-                        updatedConfig.transcription.terminology.lastImportedAt = imported.importedAt
-
-                        try self.configStore.save(updatedConfig)
-                        self.config = updatedConfig
-                        self.refreshReadyState(
-                            detailOverride: "Imported \(imported.entries.count) terminology terms",
-                            state: .ready
-                        )
-
-                        return .success(updatedConfig)
                     } catch {
                         return .failure(error)
                     }
@@ -607,6 +621,28 @@ final class AppCoordinator {
         }
 
         preferencesWindowController?.show()
+    }
+
+    private func persistTerminologyImport(
+        currentConfig: AppConfig,
+        imported: TerminologyImportResult,
+        lastImportedSource: String
+    ) throws -> AppConfig {
+        var updatedConfig = currentConfig
+        updatedConfig.transcription.terminology.entries = Self.mergedTerminologyEntries(
+            existing: updatedConfig.transcription.terminology.entries,
+            incoming: imported.entries
+        )
+        updatedConfig.transcription.terminology.lastImportedSource = lastImportedSource
+        updatedConfig.transcription.terminology.lastImportedAt = imported.importedAt
+
+        try configStore.save(updatedConfig)
+        config = updatedConfig
+        refreshReadyState(
+            detailOverride: "Imported \(imported.entries.count) terminology terms",
+            state: .ready
+        )
+        return updatedConfig
     }
 
     private func retryRecoveryRecord(_ record: RecoveryRecord) {

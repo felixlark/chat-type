@@ -97,6 +97,8 @@ swift "$ROOT/scripts/render_app_icon.swift" "$ICONSET_DIR"
   printf '%s\n' '  <string>13.0</string>'
   printf '%s\n' '  <key>NSMicrophoneUsageDescription</key>'
   printf '%s\n' '  <string>ChatType records short dictation clips and sends them through its own ChatGPT account session.</string>'
+  printf '%s\n' '  <key>NSContactsUsageDescription</key>'
+  printf '%s\n' '  <string>ChatType imports contact nicknames into your local terminology list when you request it.</string>'
   printf '%s\n' '  <key>NSPrincipalClass</key>'
   printf '%s\n' '  <string>NSApplication</string>'
   printf '%s\n' '</dict>'
