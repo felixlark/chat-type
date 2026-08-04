@@ -100,6 +100,12 @@ enum WeixinRemarkImportError: LocalizedError, Equatable {
 }
 
 struct WeixinRemarkDatabaseImporter: Sendable {
+    private struct FileIdentity: Equatable {
+        let size: UInt64
+        let modifiedAt: Date
+        let fileNumber: UInt64
+    }
+
     private struct RuntimeConfig: Decodable {
         let decryptedDirectory: String
 
@@ -109,9 +115,11 @@ struct WeixinRemarkDatabaseImporter: Sendable {
     }
 
     private let configURLs: [URL]
+    private let temporaryDirectory: URL
 
-    init(configURLs: [URL]? = nil) {
+    init(configURLs: [URL]? = nil, temporaryDirectory: URL? = nil) {
         self.configURLs = configURLs ?? Self.defaultConfigURLs()
+        self.temporaryDirectory = temporaryDirectory ?? FileManager.default.temporaryDirectory
     }
 
     func importEntries() throws -> TerminologyImportResult {
@@ -126,7 +134,7 @@ struct WeixinRemarkDatabaseImporter: Sendable {
             throw WeixinRemarkImportError.decryptedContactDatabaseMissing
         }
 
-        let remarks = try readRemarks(from: databaseURL)
+        let remarks = try readRemarksFromStableSnapshot(of: databaseURL)
         let importedAt = ISO8601DateFormatter().string(from: Date())
         let entries = uniqueTerms(from: remarks).map {
             TerminologyEntry(
@@ -170,12 +178,84 @@ struct WeixinRemarkDatabaseImporter: Sendable {
         }
     }
 
+    private func readRemarksFromStableSnapshot(of sourceURL: URL) throws -> [String] {
+        var lastError: Error?
+
+        for _ in 0..<3 {
+            let snapshotDirectory = temporaryDirectory
+                .appendingPathComponent("ChatType-WeixinRemarks-\(UUID().uuidString)", isDirectory: true)
+
+            do {
+                let beforeCopy = try fileIdentity(at: sourceURL)
+                try FileManager.default.createDirectory(
+                    at: snapshotDirectory,
+                    withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
+                )
+                defer { try? FileManager.default.removeItem(at: snapshotDirectory) }
+
+                let snapshotURL = snapshotDirectory.appendingPathComponent("contact.db")
+                try FileManager.default.copyItem(at: sourceURL, to: snapshotURL)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: NSNumber(value: Int16(0o600))],
+                    ofItemAtPath: snapshotURL.path
+                )
+
+                guard beforeCopy == (try fileIdentity(at: sourceURL)) else {
+                    continue
+                }
+                return try readRemarks(from: snapshotURL)
+            } catch {
+                lastError = error
+            }
+        }
+
+        if let error = lastError as? WeixinRemarkImportError {
+            throw error
+        }
+        if lastError != nil {
+            throw WeixinRemarkImportError.databaseReadFailed(
+                "SQLite could not create a private snapshot of the contacts database."
+            )
+        }
+        throw WeixinRemarkImportError.databaseReadFailed(
+            "The decrypted contacts changed while ChatType was reading them. Try again."
+        )
+    }
+
+    private func fileIdentity(at url: URL) throws -> FileIdentity {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard let size = attributes[.size] as? NSNumber,
+              let modifiedAt = attributes[.modificationDate] as? Date,
+              let fileNumber = attributes[.systemFileNumber] as? NSNumber
+        else {
+            throw WeixinRemarkImportError.databaseReadFailed(
+                "SQLite could not inspect the contacts database."
+            )
+        }
+        return FileIdentity(
+            size: size.uint64Value,
+            modifiedAt: modifiedAt,
+            fileNumber: fileNumber.uint64Value
+        )
+    }
+
     private func readRemarks(from databaseURL: URL) throws -> [String] {
         var database: OpaquePointer?
+        guard var components = URLComponents(url: databaseURL, resolvingAgainstBaseURL: false) else {
+            throw WeixinRemarkImportError.databaseReadFailed("SQLite could not locate the contacts database.")
+        }
+        components.queryItems = [
+            URLQueryItem(name: "mode", value: "ro"),
+            URLQueryItem(name: "immutable", value: "1"),
+        ]
+        guard let databaseURI = components.string else {
+            throw WeixinRemarkImportError.databaseReadFailed("SQLite could not locate the contacts database.")
+        }
         let openResult = sqlite3_open_v2(
-            databaseURL.path,
+            databaseURI,
             &database,
-            SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX,
+            SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | SQLITE_OPEN_FULLMUTEX,
             nil
         )
         guard openResult == SQLITE_OK, let database else {

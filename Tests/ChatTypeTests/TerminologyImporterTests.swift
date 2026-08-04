@@ -25,12 +25,17 @@ func weixinRemarkImporterReadsOnlyRemarksFromSmartShadowDatabase() throws {
         ("wxid_empty", "只有昵称", "", 1),
     ])
     defer { fixture.remove() }
+    try fixture.makeDatabaseDirectoryReadOnly()
 
-    let result = try WeixinRemarkDatabaseImporter(configURLs: [fixture.configURL]).importEntries()
+    let result = try WeixinRemarkDatabaseImporter(
+        configURLs: [fixture.configURL],
+        temporaryDirectory: fixture.snapshotRootURL
+    ).importEntries()
 
     #expect(result.source == "smart-shadow-weixin-remark")
     #expect(result.entries.map(\.original) == ["陈老师", "研发群"])
     #expect(result.entries.allSatisfy { $0.source == "smart-shadow-weixin-remark" })
+    #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.snapshotRootURL.path).isEmpty)
 }
 
 @Test
@@ -76,13 +81,17 @@ private func terminologyTerm(_ value: String, source: String) -> TerminologyEntr
 private struct WeixinDatabaseFixture {
     let rootURL: URL
     let configURL: URL
+    let databaseDirectory: URL
+    let snapshotRootURL: URL
 
     init(rows: [(String, String, String, Int32)]) throws {
         rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("ChatType-WeixinImporter-\(UUID().uuidString)", isDirectory: true)
-        let databaseDirectory = rootURL
+        databaseDirectory = rootURL
             .appendingPathComponent("decrypted/_monitor_cache", isDirectory: true)
+        snapshotRootURL = rootURL.appendingPathComponent("snapshots", isDirectory: true)
         try FileManager.default.createDirectory(at: databaseDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: snapshotRootURL, withIntermediateDirectories: true)
         let databaseURL = databaseDirectory.appendingPathComponent("contact_contact.db")
 
         var database: OpaquePointer?
@@ -98,6 +107,9 @@ private struct WeixinDatabaseFixture {
             nil,
             nil
         ) == SQLITE_OK else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        guard sqlite3_exec(database, "PRAGMA journal_mode=WAL", nil, nil, nil) == SQLITE_OK else {
             throw CocoaError(.fileWriteUnknown)
         }
 
@@ -132,7 +144,18 @@ private struct WeixinDatabaseFixture {
         try data.write(to: configURL)
     }
 
+    func makeDatabaseDirectoryReadOnly() throws {
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o555))],
+            ofItemAtPath: databaseDirectory.path
+        )
+    }
+
     func remove() {
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o755))],
+            ofItemAtPath: databaseDirectory.path
+        )
         try? FileManager.default.removeItem(at: rootURL)
     }
 }

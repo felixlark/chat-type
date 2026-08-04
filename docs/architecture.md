@@ -39,6 +39,7 @@ The V1 architecture deliberately optimizes for a single-app workflow where ChatT
   - imports Apple Contacts nicknames through the system Contacts framework
 - `WeixinRemarkDatabaseImporter`
   - resolves Smart Shadow's configured decrypted contacts cache and reads only non-empty `remark` values from `contact.db`
+  - copies the database into a mode-`0600` temporary snapshot, opens that snapshot as immutable read-only SQLite, and removes it immediately after the import; this supports Smart Shadow's WAL-format cache without requiring its transient sidecar files
   - never reads WeChat keys, encrypted databases, messages, nicknames, phone numbers, or aliases
 - `OpenAICompatibleTextPolisher`
   - runs the optional post-ASR rewrite pass through ChatType-managed ChatGPT Auth
