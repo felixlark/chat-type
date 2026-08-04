@@ -2,6 +2,59 @@ import Foundation
 import Testing
 @testable import ChatType
 
+@Test
+func terminologyNormalizerKeepsLargeDictionaryWithinInteractiveBudget() {
+    let entries = (0..<15_000).map { index in
+        TerminologyEntry(
+            canonical: "联系人\(index)",
+            aliases: []
+        )
+    } + [TerminologyEntry(canonical: "OpenClaw", aliases: ["open cloud"])]
+
+    let normalizer = TerminologyNormalizer()
+    _ = normalizer.normalize(
+        text: "预热联系人索引。",
+        importedEntries: entries,
+        hintTerms: []
+    )
+
+    let clock = ContinuousClock()
+    let elapsed = clock.measure {
+        _ = normalizer.normalize(
+            text: "请在 Open Cloud 里联系联系人14999。",
+            importedEntries: entries,
+            hintTerms: []
+        )
+    }
+
+    #expect(
+        elapsed < .milliseconds(100),
+        "Large-dictionary normalization took \(elapsed); keep it below 100 ms."
+    )
+}
+
+@Test
+func terminologyNormalizerInvalidatesCandidateIndexWhenEntriesChange() {
+    let normalizer = TerminologyNormalizer()
+    var entries = [TerminologyEntry(canonical: "OpenClaw", aliases: ["open cloud"])]
+
+    let first = normalizer.normalize(
+        text: "请打开 open cloud。",
+        importedEntries: entries,
+        hintTerms: []
+    )
+    #expect(first.text == "请打开 OpenClaw。")
+
+    entries[0] = TerminologyEntry(canonical: "Codex", aliases: ["code x"])
+    let second = normalizer.normalize(
+        text: "请打开 code x。",
+        importedEntries: entries,
+        hintTerms: []
+    )
+
+    #expect(second.text == "请打开 Codex。")
+}
+
 private let acceptanceTranscript = "王老师 呃 我们这周三下午三点应该可以开会 你帮我发个邮件给大家 主题就是第二版预算 review 然后附件是 budget v2.xlsx"
 
 private struct FakeTranscriber: Transcriber {

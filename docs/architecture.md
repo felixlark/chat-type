@@ -34,7 +34,7 @@ The V1 architecture deliberately optimizes for a single-app workflow where ChatT
 - `TranscriptionPromptBuilder`
   - builds the fixed “directly usable text” prompt and optional hidden hint terms
 - `TerminologyNormalizer`
-  - applies deterministic terminology alignment before and after optional text polish
+  - indexes the current dictionary once, selects only exact/fuzzy candidates present in each transcript, and applies deterministic terminology alignment before and after optional text polish
 - `AppleContactRemarkImporter`
   - imports Apple Contacts nicknames through the system Contacts framework
 - `WeixinRemarkDatabaseImporter`
@@ -44,6 +44,7 @@ The V1 architecture deliberately optimizes for a single-app workflow where ChatT
 - `OpenAICompatibleTextPolisher`
   - runs the optional post-ASR rewrite pass through ChatType-managed ChatGPT Auth
   - calls the configured ChatGPT backend Responses endpoint with a ChatGPT access token
+  - defaults to the latency-balanced `gpt-5.6-terra` model with reasoning disabled, a lean outcome-first prompt, and only transcript-relevant glossary entries
 - `LatencyRecorder`
   - appends per-dictation JSONL metrics under `~/Library/Application Support/ChatType/latency.jsonl`
 - `TextInjector`

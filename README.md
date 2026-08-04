@@ -122,6 +122,8 @@ The preferred support path is GitHub Sponsors, but the public sponsor page is no
 
 The polish path is intentionally separate from ASR but uses the same ChatType-managed ChatGPT login. Settings exposes the ChatGPT backend Responses endpoint and model for inspection, but no DeepSeek, Kimi, OpenAI, or custom polish API key is stored or used.
 
+Current `main` keeps large dictionaries out of the hot path by indexing entries and matching only transcript-relevant candidates. AI Polish uses `gpt-5.6-terra` with reasoning disabled, a shorter outcome-first prompt, and a glossary clipped to terms actually present in the normalized transcript.
+
 `v0.5.1` fixes the AI Polish request shape for the current ChatGPT-backed Codex Responses endpoint and makes Settings show polish attempts, successes, and failures instead of hiding backend failures.
 
 ## Advanced Recovery Route
@@ -194,6 +196,7 @@ That means:
 - [Architecture](docs/architecture.md)
 - [Release Process](docs/release.md)
 - [Release Notes](docs/releases/v0.5.1.md)
+- [Performance Notes](docs/performance.md)
 - [Product PRD](docs/chattype-v1-prd.md)
 - [Promotion Kit](docs/promotion/README.md)
 

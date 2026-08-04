@@ -33,6 +33,46 @@ private struct FuzzyPassResult {
     let replacementCount: Int
 }
 
+private struct IndexedTerminologyEntry: Sendable {
+    let entry: TerminologyEntry
+    let exactKeys: [String]
+    let fuzzySkeletons: [String]
+}
+
+private struct TerminologyCandidateIndex: Sendable {
+    let storageIdentity: UInt
+    let sourceEntries: [TerminologyEntry]
+    let terms: [IndexedTerminologyEntry]
+}
+
+private final class TerminologyCandidateIndexCache: @unchecked Sendable {
+    static let shared = TerminologyCandidateIndexCache()
+
+    private let lock = NSLock()
+    private var cached: TerminologyCandidateIndex?
+
+    func index(
+        for entries: [TerminologyEntry],
+        build: () -> TerminologyCandidateIndex
+    ) -> TerminologyCandidateIndex {
+        let storageIdentity = entries.withUnsafeBufferPointer { buffer in
+            buffer.baseAddress.map { UInt(bitPattern: $0) } ?? 0
+        }
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let cached,
+           cached.storageIdentity == storageIdentity,
+           cached.sourceEntries.count == entries.count {
+            return cached
+        }
+
+        let index = build()
+        cached = index
+        return index
+    }
+}
+
 private extension Character {
     var isASCIIAlphanumeric: Bool {
         unicodeScalars.count == 1
@@ -61,20 +101,25 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         applied = applied || correctionPass.replacementCount > 0
         let correctionReplacementKeys = protectedCorrectionReplacementKeys(from: importedEntries)
 
+        let candidateIndex = terminologyCandidateIndex(for: importedEntries)
+        let exactCandidates = exactCandidates(in: output, index: candidateIndex)
+        let relevantHintTerms = exactHintCandidates(in: output, hintTerms: hintTerms)
+
         let exactPass = applyExactRules(
             to: output,
             rules: exactRules(
-                importedEntries: importedEntries,
-                hintTerms: hintTerms
+                importedEntries: exactCandidates,
+                hintTerms: relevantHintTerms
             ),
             protectedCanonicalKeys: correctionReplacementKeys
         )
         output = exactPass.text
         applied = applied || exactPass.replacementCount > 0
 
+        let fuzzyCandidates = fuzzyCandidates(in: output, index: candidateIndex)
         let fuzzyPass = applyFuzzyRules(
             to: output,
-            rules: fuzzyRules(from: importedEntries),
+            rules: fuzzyRules(from: fuzzyCandidates),
             protectedCanonicalKeys: correctionReplacementKeys
         )
         output = fuzzyPass.text
@@ -212,6 +257,9 @@ struct TerminologyNormalizer: TranscriptNormalizing {
             var bestForCanonical: FuzzyCandidate?
 
             for reference in rule.referenceSkeletons {
+                guard abs(candidateSkeleton.count - reference.count) <= 4 else {
+                    continue
+                }
                 let distance = damerauLevenshteinDistance(
                     Array(candidateSkeleton),
                     Array(reference)
@@ -262,6 +310,97 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         }
 
         return first
+    }
+
+    private func terminologyCandidateIndex(for entries: [TerminologyEntry]) -> TerminologyCandidateIndex {
+        return TerminologyCandidateIndexCache.shared.index(
+            for: entries
+        ) {
+            let storageIdentity = entries.withUnsafeBufferPointer { buffer in
+                buffer.baseAddress.map { UInt(bitPattern: $0) } ?? 0
+            }
+            return TerminologyCandidateIndex(
+                storageIdentity: storageIdentity,
+                sourceEntries: entries,
+                terms: entries
+                    .filter { $0.type == .term }
+                    .map { entry in
+                        let terms = normalizedTerms(from: [entry.canonical] + entry.aliases)
+                        return IndexedTerminologyEntry(
+                            entry: entry,
+                            exactKeys: Array(Set(terms.map(looseMatchKey(for:)))).filter { !$0.isEmpty },
+                            fuzzySkeletons: Array(
+                                Set(
+                                    terms
+                                        .filter { containsLatinLetters($0) }
+                                        .filter { !shouldSkipFuzzyReference($0) }
+                                        .map(collapsedLatinSkeleton(for:))
+                                        .filter { !$0.isEmpty }
+                                )
+                            )
+                        )
+                    }
+            )
+        }
+    }
+
+    private func exactCandidates(
+        in text: String,
+        index: TerminologyCandidateIndex
+    ) -> [TerminologyEntry] {
+        let textKey = looseMatchKey(for: text)
+        guard !textKey.isEmpty else {
+            return []
+        }
+
+        return index.terms.compactMap { indexed in
+            indexed.exactKeys.contains(where: textKey.contains) ? indexed.entry : nil
+        }
+    }
+
+    private func exactHintCandidates(in text: String, hintTerms: [String]) -> [String] {
+        let textKey = looseMatchKey(for: text)
+        return normalizedTerms(from: hintTerms).filter { term in
+            let key = looseMatchKey(for: term)
+            return !key.isEmpty && textKey.contains(key)
+        }
+    }
+
+    private func fuzzyCandidates(
+        in text: String,
+        index: TerminologyCandidateIndex
+    ) -> [TerminologyEntry] {
+        let candidateLengths = fuzzyCandidateSkeletons(in: text).map(\.count)
+        guard !candidateLengths.isEmpty else {
+            return []
+        }
+
+        return index.terms.compactMap { indexed in
+            indexed.fuzzySkeletons.contains { reference in
+                candidateLengths.contains { abs($0 - reference.count) <= 4 }
+            } ? indexed.entry : nil
+        }
+    }
+
+    private func fuzzyCandidateSkeletons(in text: String) -> [String] {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"(?<![\p{Latin}0-9])([\p{Latin}0-9]+(?:[ ._-]+[\p{Latin}0-9]+){0,2})(?![\p{Latin}0-9])"#,
+            options: []
+        ) else {
+            return []
+        }
+
+        return regex.matches(
+            in: text,
+            options: [],
+            range: NSRange(text.startIndex..., in: text)
+        ).compactMap { match in
+            guard let range = Range(match.range(at: 1), in: text) else {
+                return nil
+            }
+            let skeleton = collapsedLatinSkeleton(for: String(text[range]))
+            return skeleton.count >= 5 ? skeleton : nil
+        }
     }
 
     private func isAcceptedFuzzyMatch(
@@ -682,6 +821,17 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         let folded = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
         let filteredScalars = folded.lowercased().unicodeScalars.filter { scalar in
             scalar.isASCII && CharacterSet.alphanumerics.contains(scalar)
+        }
+        return String(String.UnicodeScalarView(filteredScalars))
+    }
+
+    private func looseMatchKey(for text: String) -> String {
+        let folded = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let filteredScalars = folded.lowercased().unicodeScalars.filter { scalar in
+            !CharacterSet.whitespacesAndNewlines.contains(scalar)
+                && scalar != "."
+                && scalar != "_"
+                && scalar != "-"
         }
         return String(String.UnicodeScalarView(filteredScalars))
     }

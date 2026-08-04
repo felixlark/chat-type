@@ -103,7 +103,7 @@ struct TextPolishConfig: Codable, Sendable, Equatable {
     var mode: TextPolishMode = .automaticWhenKeyAvailable
     var chatGPTAuthEnabled: Bool = true
     var chatGPTResponseURL: String = "https://chatgpt.com/backend-api/codex/responses"
-    var chatGPTResponseModel: String = "gpt-5.5"
+    var chatGPTResponseModel: String = "gpt-5.6-terra"
     var temperature: Double = 0.2
     var maxOutputTokens: Int = 1_200
     var glossaryBudgetCharacters: Int = 1_200
@@ -119,8 +119,9 @@ struct TextPolishConfig: Codable, Sendable, Equatable {
             ?? true
         chatGPTResponseURL = try container.decodeIfPresent(String.self, forKey: .chatGPTResponseURL)
             ?? "https://chatgpt.com/backend-api/codex/responses"
-        chatGPTResponseModel = try container.decodeIfPresent(String.self, forKey: .chatGPTResponseModel)
-            ?? "gpt-5.5"
+        let decodedModel = try container.decodeIfPresent(String.self, forKey: .chatGPTResponseModel)
+            ?? "gpt-5.6-terra"
+        chatGPTResponseModel = decodedModel == "gpt-5.5" ? "gpt-5.6-terra" : decodedModel
         temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0.2
         maxOutputTokens = try container.decodeIfPresent(Int.self, forKey: .maxOutputTokens) ?? 1_200
         glossaryBudgetCharacters = try container.decodeIfPresent(Int.self, forKey: .glossaryBudgetCharacters) ?? 1_200
@@ -191,7 +192,7 @@ struct TranscriptionConfig: Codable, Sendable {
     }
 
     var activeDictionaryEntries: [TerminologyEntry] {
-        terminology.entries.filter { $0.type == .term || $0.type == .correction }
+        terminology.entries
     }
 
     var promptHintTerms: [String] {

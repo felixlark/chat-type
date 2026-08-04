@@ -99,20 +99,19 @@ struct TextPolishPromptBuilder: Sendable {
         locale: String = Locale.preferredLanguages.first ?? "zh-CN"
     ) -> [TextPolishMessage] {
         let glossary = clippedGlossary(
+            transcript: transcript,
             terminologyEntries: terminologyEntries,
             budget: config.glossaryBudgetCharacters
         )
         var systemLines = [
             "You are ChatType's post-ASR rewrite engine for agent-facing dictation.",
-            "Rewrite Chinese or mixed Chinese/English speech into concise, directly usable text.",
-            "Do not summarize away requirements. Preserve every concrete request, constraint, correction, and acceptance point unless a later statement explicitly contradicts it.",
-            "For long requests, prefer an agent-friendly plan structure with short bullets / 分点, explicit goals, constraints, steps, and acceptance points when present.",
-            "For short commands, keep one compact sentence instead of forcing bullets.",
-            "Remove Chinese filler words and口头禅 such as 嗯, 呃, 啊, 然后, 就是, 那个, 这个, 怎么说, 反正, basically, like when they add no meaning.",
-            "If the speaker corrects themselves or contradicts earlier text, the later intent wins / 后面为主; delete the superseded earlier intent.",
+            "Goal: return directly usable Chinese or mixed Chinese/English text; output only the final text.",
+            "Do not summarize away requirements. Preserve every request, constraint, correction, acceptance point, and exact literal.",
+            "Later self-corrections win / 后面为主; remove superseded wording.",
+            "Remove filler words and口头禅 when they add no meaning.",
+            "Keep short commands to one sentence. For multiple spoken goals or steps, use concise 分点 in the original sequence; never invent steps.",
             "Preserve URLs, file paths, commands, flags, version numbers, emails, filenames, code symbols, and exact quoted literals.",
-            "Respect terminology casing and spelling from the glossary. Maximize recall for likely ASR/accent mistakes.",
-            "Output only the final polished text. Locale: \(locale).",
+            "Use glossary spelling and casing for likely ASR mistakes. Locale: \(locale).",
         ]
 
         if !glossary.isEmpty {
@@ -126,12 +125,25 @@ struct TextPolishPromptBuilder: Sendable {
         ]
     }
 
-    private func clippedGlossary(terminologyEntries: [TerminologyEntry], budget: Int) -> [String] {
+    private func clippedGlossary(
+        transcript: String,
+        terminologyEntries: [TerminologyEntry],
+        budget: Int
+    ) -> [String] {
         var output: [String] = []
         var seen = Set<String>()
         var count = 0
+        let transcriptKey = looseMatchKey(for: transcript)
 
         for entry in terminologyEntries {
+            let matchTerms = [entry.canonical] + entry.aliases
+            guard matchTerms.contains(where: { term in
+                let key = looseMatchKey(for: term)
+                return !key.isEmpty && transcriptKey.contains(key)
+            }) else {
+                continue
+            }
+
             let aliases = entry.aliases.isEmpty ? "" : " aliases: \(entry.aliases.joined(separator: ", "))"
             let line = "\(entry.canonical)\(aliases)"
             let key = line.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
@@ -148,6 +160,17 @@ struct TextPolishPromptBuilder: Sendable {
 
         return output
     }
+
+    private func looseMatchKey(for text: String) -> String {
+        let folded = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let filteredScalars = folded.lowercased().unicodeScalars.filter { scalar in
+            !CharacterSet.whitespacesAndNewlines.contains(scalar)
+                && scalar != "."
+                && scalar != "_"
+                && scalar != "-"
+        }
+        return String(String.UnicodeScalarView(filteredScalars))
+    }
 }
 
 struct TextPolishTokenEstimator: Sendable {
@@ -156,12 +179,13 @@ struct TextPolishTokenEstimator: Sendable {
         terminologyEntries: [TerminologyEntry],
         config: TextPolishConfig
     ) -> TextPolishEstimate {
-        let glossaryCharacters = terminologyEntries
-            .prefix(80)
-            .map { $0.canonical.count + $0.aliases.joined(separator: " ").count }
-            .reduce(0, +)
-        let promptCharacters = 1_800 + min(glossaryCharacters, config.glossaryBudgetCharacters)
-        let inputTokens = max(1, Int(ceil(Double(promptCharacters + transcript.count) / 1.8)))
+        let messages = TextPolishPromptBuilder().buildMessages(
+            transcript: transcript,
+            terminologyEntries: terminologyEntries,
+            config: config
+        )
+        let promptCharacters = messages.map(\.content.count).reduce(0, +)
+        let inputTokens = max(1, Int(ceil(Double(promptCharacters) / 1.8)))
         let outputTokens = max(120, min(config.maxOutputTokens, Int(ceil(Double(transcript.count) / 2.4))))
         return TextPolishEstimate(
             inputTokens: inputTokens,
@@ -223,13 +247,14 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
         }
 
         let token = try await chatGPTAuthProvider.bestAvailableAccessToken()
+        let messages = promptBuilder.buildMessages(
+            transcript: text,
+            terminologyEntries: allEntries,
+            config: config
+        )
         let polished = try await executeChatGPTResponsesRequest(
             token: token,
-            messages: promptBuilder.buildMessages(
-                transcript: text,
-                terminologyEntries: allEntries,
-                config: config
-            )
+            messages: messages
         )
         return TextPolishResult(
             text: polished,
@@ -277,6 +302,7 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
             ],
             "stream": true,
             "store": false,
+            "reasoning": ["effort": "none"],
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

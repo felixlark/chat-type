@@ -21,6 +21,7 @@ private struct BenchmarkRunResult: Sendable {
     let authMs: Int
     let transcribeMs: Int
     let normalizationMs: Int
+    let polishMs: Int
     let totalMs: Int
     let error: String?
 }
@@ -50,12 +51,13 @@ struct BenchmarkRunner {
         }
 
         let runs = Int(environment["CHATTYPE_BENCHMARK_RUNS"] ?? "") ?? 5
+        let skipCold = environment["CHATTYPE_BENCHMARK_SKIP_COLD"] == "1"
         var results: [BenchmarkRunResult] = []
 
         for fileURL in files {
             let audio = try recordedAudio(from: fileURL)
 
-            for _ in 0..<runs {
+            for _ in (skipCold ? 0..<0 : 0..<runs) {
                 let coldAuthManager = ChatGPTAuthManager(store: InMemoryChatGPTSessionStore())
                 let coldPipeline = DictationPipeline(
                     transcriber: ChatGPTTranscriber(
@@ -64,7 +66,12 @@ struct BenchmarkRunner {
                     ),
                     normalizer: TerminologyNormalizer(),
                     importedEntries: config.transcription.activeDictionaryEntries,
-                    hintTerms: config.transcription.hintTerms
+                    hintTerms: config.transcription.hintTerms,
+                    textPolisher: OpenAICompatibleTextPolisher(
+                        config: config.transcription.textPolish,
+                        chatGPTAuthProvider: coldAuthManager,
+                        chatGPTAuthAvailable: false
+                    )
                 )
                 let coldStarted = DispatchTime.now().uptimeNanoseconds
                 do {
@@ -76,6 +83,7 @@ struct BenchmarkRunner {
                             authMs: coldPrepared.metrics.transcription.authMs,
                             transcribeMs: coldPrepared.metrics.transcription.transcribeMs,
                             normalizationMs: coldPrepared.metrics.normalizationMs,
+                            polishMs: coldPrepared.metrics.polishMs,
                             totalMs: elapsedMilliseconds(since: coldStarted),
                             error: nil
                         )
@@ -88,6 +96,7 @@ struct BenchmarkRunner {
                             authMs: 0,
                             transcribeMs: 0,
                             normalizationMs: 0,
+                            polishMs: 0,
                             totalMs: elapsedMilliseconds(since: coldStarted),
                             error: error.localizedDescription
                         )
@@ -104,7 +113,12 @@ struct BenchmarkRunner {
                     ),
                     normalizer: TerminologyNormalizer(),
                     importedEntries: config.transcription.activeDictionaryEntries,
-                    hintTerms: config.transcription.hintTerms
+                    hintTerms: config.transcription.hintTerms,
+                    textPolisher: OpenAICompatibleTextPolisher(
+                        config: config.transcription.textPolish,
+                        chatGPTAuthProvider: authManager,
+                        chatGPTAuthAvailable: authManager.authSnapshot().state == .ready
+                    )
                 )
                 let warmStarted = DispatchTime.now().uptimeNanoseconds
                 do {
@@ -116,6 +130,7 @@ struct BenchmarkRunner {
                             authMs: warmPrepared.metrics.transcription.authMs,
                             transcribeMs: warmPrepared.metrics.transcription.transcribeMs,
                             normalizationMs: warmPrepared.metrics.normalizationMs,
+                            polishMs: warmPrepared.metrics.polishMs,
                             totalMs: elapsedMilliseconds(since: warmStarted),
                             error: nil
                         )
@@ -128,6 +143,7 @@ struct BenchmarkRunner {
                             authMs: 0,
                             transcribeMs: 0,
                             normalizationMs: 0,
+                            polishMs: 0,
                             totalMs: elapsedMilliseconds(since: warmStarted),
                             error: error.localizedDescription
                         )
@@ -168,12 +184,16 @@ struct BenchmarkRunner {
             let successes = runs.filter { $0.error == nil }
             let authValues = successes.map(\.authMs)
             let transcribeValues = successes.map(\.transcribeMs)
+            let normalizationValues = successes.map(\.normalizationMs)
+            let polishValues = successes.map(\.polishMs)
             let totalValues = successes.map(\.totalMs)
             var section = [
                 key,
                 "  successes=\(successes.count)/\(runs.count)",
                 "  auth_ms p50=\(percentile(authValues, 0.5)) p95=\(percentile(authValues, 0.95))",
                 "  transcribe_ms p50=\(percentile(transcribeValues, 0.5)) p95=\(percentile(transcribeValues, 0.95))",
+                "  normalization_ms p50=\(percentile(normalizationValues, 0.5)) p95=\(percentile(normalizationValues, 0.95))",
+                "  polish_ms p50=\(percentile(polishValues, 0.5)) p95=\(percentile(polishValues, 0.95))",
                 "  total_ms p50=\(percentile(totalValues, 0.5)) p95=\(percentile(totalValues, 0.95))",
             ]
             let uniqueErrors = Array(Set(runs.compactMap(\.error))).sorted()

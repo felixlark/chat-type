@@ -42,7 +42,7 @@ func defaultTextPolishConfigUsesOnlyChatGPTAuthAndDoesNotEncodeKeys() throws {
     #expect(config.transcription.textPolish.mode == .automaticWhenKeyAvailable)
     #expect(config.transcription.textPolish.chatGPTAuthEnabled)
     #expect(config.transcription.textPolish.chatGPTResponseURL == "https://chatgpt.com/backend-api/codex/responses")
-    #expect(config.transcription.textPolish.chatGPTResponseModel == "gpt-5.5")
+    #expect(config.transcription.textPolish.chatGPTResponseModel == "gpt-5.6-terra")
     #expect(config.transcription.textPolish.glossaryBudgetCharacters == 1_200)
 
     let data = try JSONEncoder().encode(config)
@@ -75,6 +75,17 @@ func legacyTextPolishConfigIgnoresRemovedAPIKeyProviderFields() throws {
 
     #expect(decoded.transcription.textPolish.chatGPTAuthEnabled == false)
     #expect(decoded.transcription.textPolish.chatGPTResponseModel == "gpt-5.4")
+}
+
+@Test
+func gpt55PolishConfigMigratesToLatencyBalancedGPT56Model() throws {
+    let data = Data(
+        #"{"transcription":{"textPolish":{"chatGPTResponseModel":"gpt-5.5"}}}"#.utf8
+    )
+
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
+
+    #expect(decoded.transcription.textPolish.chatGPTResponseModel == "gpt-5.6-terra")
 }
 
 @Test
@@ -111,7 +122,7 @@ func textPolishPromptRequestsAgentPlanStyleAndLaterIntentWins() {
     #expect(joined.contains("分点"))
     #expect(joined.contains("后面"))
     #expect(joined.contains("ChatType"))
-    #expect(joined.contains("TypeWhisper"))
+    #expect(joined.contains("TypeWhisper") == false)
     #expect(joined.contains("口头禅"))
     #expect(joined.contains("Do not summarize away requirements"))
 }
@@ -136,6 +147,25 @@ func textPolishPromptHandlesChineseResequenceInstruction() {
 }
 
 @Test
+func textPolishPromptIncludesOnlyTranscriptRelevantGlossaryEntries() {
+    let prompt = TextPolishPromptBuilder().buildMessages(
+        transcript: "请把 open cloud 的结果发给 ChatType。",
+        terminologyEntries: [
+            TerminologyEntry(canonical: "OpenClaw", aliases: ["open cloud"]),
+            TerminologyEntry(canonical: "ChatType", aliases: ["chat type"]),
+            TerminologyEntry(canonical: "UnrelatedProduct", aliases: []),
+        ],
+        config: TextPolishConfig(),
+        locale: "zh-CN"
+    )
+
+    let system = prompt.first?.content ?? ""
+    #expect(system.contains("OpenClaw"))
+    #expect(system.contains("ChatType"))
+    #expect(system.contains("UnrelatedProduct") == false)
+}
+
+@Test
 func textPolishTokenEstimatorClassifiesLongDictationCost() {
     let estimate = TextPolishTokenEstimator().estimate(
         transcript: String(repeating: "这是一个需要整理成长句计划的语音输入。", count: 80),
@@ -155,7 +185,7 @@ func chatGPTAuthTextPolisherUsesResponsesEndpointWithLoginToken() async throws {
     var config = TextPolishConfig()
     config.chatGPTAuthEnabled = true
     config.chatGPTResponseURL = "https://chatgpt.com/backend-api/codex/responses"
-    config.chatGPTResponseModel = "gpt-5.5"
+    config.chatGPTResponseModel = "gpt-5.6-terra"
 
     let capture = RequestCapture()
     let auth = FakeChatGPTAuthManager(bestTokens: [.success("chatgpt-token")])
@@ -190,7 +220,8 @@ func chatGPTAuthTextPolisherUsesResponsesEndpointWithLoginToken() async throws {
     #expect(capture.urls() == ["https://chatgpt.com/backend-api/codex/responses"])
     #expect(capture.authorizations() == ["Bearer chatgpt-token"])
     let body = capture.bodies().first ?? ""
-    #expect(body.contains("gpt-5.5"))
+    #expect(body.contains("gpt-5.6-terra"))
+    #expect(body.contains(#""reasoning":{"effort":"none"}"#))
     #expect(body.contains(#""stream":true"#))
     #expect(body.contains(#""store":false"#))
     #expect(body.contains("temperature") == false)
@@ -203,7 +234,7 @@ func chatGPTAuthTextPolisherRequestCarriesResequenceHint() async throws {
     var config = TextPolishConfig()
     config.chatGPTAuthEnabled = true
     config.chatGPTResponseURL = "https://chatgpt.com/backend-api/codex/responses"
-    config.chatGPTResponseModel = "gpt-5.5"
+    config.chatGPTResponseModel = "gpt-5.6-terra"
 
     let capture = RequestCapture()
     let auth = FakeChatGPTAuthManager(bestTokens: [.success("chatgpt-token")])
@@ -238,6 +269,6 @@ func chatGPTAuthTextPolisherRequestCarriesResequenceHint() async throws {
     #expect(body.contains("把大象放进去"))
     #expect(body.contains("三呢就是关上冰箱门"))
     #expect(body.contains("Do not summarize away requirements"))
-    #expect(body.contains("gpt-5.5"))
+    #expect(body.contains("gpt-5.6-terra"))
     #expect(capture.urls() == ["https://chatgpt.com/backend-api/codex/responses"])
 }
