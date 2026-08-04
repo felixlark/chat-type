@@ -29,7 +29,7 @@
    - AI Polish shows the ChatGPT Auth rewrite route without provider-key fields
    - Advanced shows the current ChatGPT account route instead of API fallback provider lists
    - text polish can produce a concise agent-plan style output for a long dictation sample
-   - terminology import is visible in Settings and succeeds against a valid plain text or CSV dictionary
+   - terminology import is visible in Settings and reads Contacts or Smart Shadow's decrypted WeChat remarks without a file picker
    - output remains directly usable when text polish is unavailable or disabled
 8. Verify advanced recovery mode:
    - switching to `OpenAI-Compatible Recovery` exposes endpoint, model, and API env settings

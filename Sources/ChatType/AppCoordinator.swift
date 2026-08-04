@@ -569,7 +569,7 @@ final class AppCoordinator {
                         return .failure(error)
                     }
                 },
-                onImportWeixinRemarks: { [weak self] currentConfig, fileURL in
+                onImportWeixinRemarks: { [weak self] currentConfig in
                     guard let self else {
                         return .failure(
                             NSError(
@@ -581,16 +581,19 @@ final class AppCoordinator {
                     }
 
                     do {
-                        let data = try Data(contentsOf: fileURL)
-                        let imported = try WeixinRemarkCSVImporter().importEntries(
-                            from: data,
-                            sourceName: fileURL.lastPathComponent
-                        )
+                        let imported = try await Task.detached {
+                            try WeixinRemarkDatabaseImporter().importEntries()
+                        }.value
                         return .success(
                             try self.persistTerminologyImport(
                                 currentConfig: currentConfig,
                                 imported: imported,
-                                lastImportedSource: fileURL.path
+                                lastImportedSource: imported.source,
+                                replacingSources: [
+                                    "weixin-contacts",
+                                    "weixin-remark-export",
+                                    "smart-shadow-weixin-remark",
+                                ]
                             )
                         )
                     } catch {
@@ -626,12 +629,14 @@ final class AppCoordinator {
     private func persistTerminologyImport(
         currentConfig: AppConfig,
         imported: TerminologyImportResult,
-        lastImportedSource: String
+        lastImportedSource: String,
+        replacingSources: Set<String> = []
     ) throws -> AppConfig {
         var updatedConfig = currentConfig
-        updatedConfig.transcription.terminology.entries = Self.mergedTerminologyEntries(
+        updatedConfig.transcription.terminology.entries = Self.refreshedTerminologyEntries(
             existing: updatedConfig.transcription.terminology.entries,
-            incoming: imported.entries
+            incoming: imported.entries,
+            replacingSources: replacingSources
         )
         updatedConfig.transcription.terminology.lastImportedSource = lastImportedSource
         updatedConfig.transcription.terminology.lastImportedAt = imported.importedAt
@@ -643,6 +648,17 @@ final class AppCoordinator {
             state: .ready
         )
         return updatedConfig
+    }
+
+    static func refreshedTerminologyEntries(
+        existing: [TerminologyEntry],
+        incoming: [TerminologyEntry],
+        replacingSources: Set<String>
+    ) -> [TerminologyEntry] {
+        mergedTerminologyEntries(
+            existing: existing.filter { !replacingSources.contains($0.source) },
+            incoming: incoming
+        )
     }
 
     private func retryRecoveryRecord(_ record: RecoveryRecord) {

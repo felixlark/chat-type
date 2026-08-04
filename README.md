@@ -42,7 +42,7 @@ It is intentionally opinionated:
 8. Put the cursor in Notes, Mail, Slack, Codex, or another editable target
 9. Press `F5`, speak, press `F5` again
 10. `ChatType` sends the recording through its own ChatGPT session to the ChatGPT backend transcription path
-11. Optional: import Apple Contacts nicknames or a WeChat remark-name CSV export in Settings
+11. Optional: import Apple Contacts nicknames or WeChat remarks from Smart Shadow's decrypted contacts in Settings
 12. Optional: enable ChatGPT Auth text polish in Settings. It uses ChatType's stored ChatGPT session and does not require a separate polish API key
 13. `ChatType` applies terminology alignment, optional AI polish, and a final protective normalization pass
 14. The result is pasted into the focused app only when an editable target is detected; otherwise it is left in the clipboard for manual `Cmd+V`
@@ -110,7 +110,7 @@ The preferred support path is GitHub Sponsors, but the public sponsor page is no
 `ChatType` keeps deterministic terminology alignment as the safety layer around optional AI polish:
 
 - import Apple Contacts nicknames through the system Contacts permission
-- import only the remark-name column from a WeChat contacts CSV export
+- import only non-empty remark names from Smart Shadow's decrypted WeChat contacts database
 - add custom terms and deterministic replacements in Settings
 - keep the glossary as ChatType-owned local config
 - align tool names, product names, and technical terms before and after the optional text-polish call
@@ -163,7 +163,7 @@ Post a release update to X through the official Chrome plugin using the signed-i
 
 Advanced terminology options:
 
-- import Apple Contacts nicknames or a WeChat remark-name CSV export
+- import Apple Contacts nicknames or WeChat remarks from Smart Shadow's decrypted contacts
 - add custom terms and replacements in Settings
 - keep `transcription.hintTerms` for exact-only hidden terms you want preserved even without importing a dictionary
 

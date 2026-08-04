@@ -1,5 +1,6 @@
 @preconcurrency import Contacts
 import Foundation
+import SQLite3
 
 struct TerminologyImportResult: Sendable, Equatable {
     let entries: [TerminologyEntry]
@@ -76,48 +77,56 @@ struct AppleContactRemarkImporter {
 }
 
 enum WeixinRemarkImportError: LocalizedError, Equatable {
-    case unreadableCSV(String)
-    case missingRemarkColumn
+    case runtimeConfigMissing
+    case invalidRuntimeConfig
+    case decryptedContactDatabaseMissing
+    case databaseReadFailed(String)
     case noRemarks
 
     var errorDescription: String? {
         switch self {
-        case .unreadableCSV(let source):
-            return "Could not read the WeChat contacts CSV: \(source)."
-        case .missingRemarkColumn:
-            return "The WeChat contacts CSV must contain a 备注名 column."
+        case .runtimeConfigMissing:
+            return "Smart Shadow's WeChat runtime is not configured on this Mac."
+        case .invalidRuntimeConfig:
+            return "Smart Shadow's WeChat runtime configuration is invalid."
+        case .decryptedContactDatabaseMissing:
+            return "Smart Shadow has not produced a decrypted WeChat contacts database yet."
+        case .databaseReadFailed(let detail):
+            return "Could not read Smart Shadow's decrypted WeChat contacts: \(detail)"
         case .noRemarks:
-            return "No WeChat remark names were found in this export."
+            return "No WeChat remark names were found in Smart Shadow's decrypted contacts."
         }
     }
 }
 
-struct WeixinRemarkCSVImporter {
-    func importEntries(from data: Data, sourceName: String) throws -> TerminologyImportResult {
-        guard let text = String(data: data, encoding: .utf8) else {
-            throw WeixinRemarkImportError.unreadableCSV(sourceName)
+struct WeixinRemarkDatabaseImporter: Sendable {
+    private struct RuntimeConfig: Decodable {
+        let decryptedDirectory: String
+
+        enum CodingKeys: String, CodingKey {
+            case decryptedDirectory = "decrypted_dir"
+        }
+    }
+
+    private let configURLs: [URL]
+
+    init(configURLs: [URL]? = nil) {
+        self.configURLs = configURLs ?? Self.defaultConfigURLs()
+    }
+
+    func importEntries() throws -> TerminologyImportResult {
+        let config = try loadRuntimeConfig()
+        let decryptedDirectory = URL(fileURLWithPath: config.decryptedDirectory, isDirectory: true)
+        let databaseURL = [
+            decryptedDirectory.appendingPathComponent("_monitor_cache/contact_contact.db"),
+            decryptedDirectory.appendingPathComponent("contact/contact.db"),
+        ].first { FileManager.default.fileExists(atPath: $0.path) }
+
+        guard let databaseURL else {
+            throw WeixinRemarkImportError.decryptedContactDatabaseMissing
         }
 
-        let rows = text
-            .split(whereSeparator: \.isNewline)
-            .map { csvFields(from: String($0)) }
-            .filter { !$0.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } }
-
-        guard let headers = rows.first else {
-            throw WeixinRemarkImportError.noRemarks
-        }
-
-        let acceptedHeaders: Set<String> = ["备注名", "微信备注名", "remark", "remarkname"]
-        guard let remarkIndex = headers.firstIndex(where: { acceptedHeaders.contains(normalizedHeader($0)) }) else {
-            throw WeixinRemarkImportError.missingRemarkColumn
-        }
-
-        let remarks = rows.dropFirst().compactMap { row -> String? in
-            guard row.indices.contains(remarkIndex) else {
-                return nil
-            }
-            return row[remarkIndex]
-        }
+        let remarks = try readRemarks(from: databaseURL)
         let importedAt = ISO8601DateFormatter().string(from: Date())
         let entries = uniqueTerms(from: remarks).map {
             TerminologyEntry(
@@ -125,7 +134,7 @@ struct WeixinRemarkCSVImporter {
                 original: $0,
                 replacement: nil,
                 aliases: [],
-                source: "weixin-remark-export",
+                source: "smart-shadow-weixin-remark",
                 usageCount: 0,
                 createdAt: importedAt
             )
@@ -137,47 +146,114 @@ struct WeixinRemarkCSVImporter {
 
         return TerminologyImportResult(
             entries: entries,
-            source: "weixin-remark-export",
+            source: "smart-shadow-weixin-remark",
             importedAt: importedAt
         )
     }
 
-    private func normalizedHeader(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "\u{feff}", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "_", with: "")
-            .replacingOccurrences(of: " ", with: "")
-    }
-
-    private func csvFields(from row: String) -> [String] {
-        var fields: [String] = []
-        var field = ""
-        var isQuoted = false
-        var index = row.startIndex
-
-        while index < row.endIndex {
-            let character = row[index]
-            if character == "\"" {
-                let next = row.index(after: index)
-                if isQuoted, next < row.endIndex, row[next] == "\"" {
-                    field.append("\"")
-                    index = row.index(after: next)
-                    continue
-                }
-                isQuoted.toggle()
-            } else if character == ",", !isQuoted {
-                fields.append(field.trimmingCharacters(in: .whitespacesAndNewlines))
-                field = ""
-            } else {
-                field.append(character)
-            }
-            index = row.index(after: index)
+    private func loadRuntimeConfig() throws -> RuntimeConfig {
+        guard let configURL = configURLs.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+            throw WeixinRemarkImportError.runtimeConfigMissing
         }
 
-        fields.append(field.trimmingCharacters(in: .whitespacesAndNewlines))
-        return fields
+        do {
+            let data = try Data(contentsOf: configURL)
+            let config = try JSONDecoder().decode(RuntimeConfig.self, from: data)
+            guard !config.decryptedDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw WeixinRemarkImportError.invalidRuntimeConfig
+            }
+            return config
+        } catch let error as WeixinRemarkImportError {
+            throw error
+        } catch {
+            throw WeixinRemarkImportError.invalidRuntimeConfig
+        }
+    }
+
+    private func readRemarks(from databaseURL: URL) throws -> [String] {
+        var database: OpaquePointer?
+        let openResult = sqlite3_open_v2(
+            databaseURL.path,
+            &database,
+            SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX,
+            nil
+        )
+        guard openResult == SQLITE_OK, let database else {
+            if let database {
+                sqlite3_close(database)
+            }
+            throw WeixinRemarkImportError.databaseReadFailed("SQLite could not open the contacts database.")
+        }
+        defer { sqlite3_close(database) }
+
+        let hasLocalType = tableHasColumn("local_type", database: database)
+        let query = hasLocalType
+            ? "SELECT remark FROM contact WHERE local_type != 3 AND trim(coalesce(remark, '')) != ''"
+            : "SELECT remark FROM contact WHERE trim(coalesce(remark, '')) != ''"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, query, -1, &statement, nil) == SQLITE_OK, let statement else {
+            throw WeixinRemarkImportError.databaseReadFailed(sqliteErrorMessage(database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var remarks: [String] = []
+        while true {
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW:
+                if let text = sqlite3_column_text(statement, 0) {
+                    remarks.append(String(cString: text))
+                }
+            case SQLITE_DONE:
+                return remarks
+            default:
+                throw WeixinRemarkImportError.databaseReadFailed(sqliteErrorMessage(database))
+            }
+        }
+    }
+
+    private func tableHasColumn(_ column: String, database: OpaquePointer) -> Bool {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "PRAGMA table_info(contact)", -1, &statement, nil) == SQLITE_OK,
+              let statement
+        else {
+            return false
+        }
+        defer { sqlite3_finalize(statement) }
+
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let text = sqlite3_column_text(statement, 1) else {
+                continue
+            }
+            if String(cString: text) == column {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func sqliteErrorMessage(_ database: OpaquePointer) -> String {
+        guard let message = sqlite3_errmsg(database) else {
+            return "Unknown SQLite error."
+        }
+        return String(cString: message)
+    }
+
+    private static func defaultConfigURLs() -> [URL] {
+        var urls: [URL] = []
+        if let override = ProcessInfo.processInfo.environment["SMART_SHADOW_WEIXIN_TOOLS_CONFIG"],
+           !override.isEmpty
+        {
+            urls.append(URL(fileURLWithPath: NSString(string: override).expandingTildeInPath))
+        }
+
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        urls.append(
+            home.appendingPathComponent("Projects/smart-shadow/var/weixin/tools/smart-shadow.json")
+        )
+        urls.append(
+            home.appendingPathComponent("Projects/Development/smart-shadow/var/weixin/tools/smart-shadow.json")
+        )
+        return urls
     }
 }
 

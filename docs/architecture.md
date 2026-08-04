@@ -37,8 +37,9 @@ The V1 architecture deliberately optimizes for a single-app workflow where ChatT
   - applies deterministic terminology alignment before and after optional text polish
 - `AppleContactRemarkImporter`
   - imports Apple Contacts nicknames through the system Contacts framework
-- `WeixinRemarkCSVImporter`
-  - imports only the validated remark-name column from an explicit WeChat contacts CSV export
+- `WeixinRemarkDatabaseImporter`
+  - resolves Smart Shadow's configured decrypted contacts cache and reads only non-empty `remark` values from `contact.db`
+  - never reads WeChat keys, encrypted databases, messages, nicknames, phone numbers, or aliases
 - `OpenAICompatibleTextPolisher`
   - runs the optional post-ASR rewrite pass through ChatType-managed ChatGPT Auth
   - calls the configured ChatGPT backend Responses endpoint with a ChatGPT access token
@@ -82,7 +83,7 @@ Behavior:
 
 - OpenAI-compatible recovery sends a fixed prompt through the official transcriptions API
 - the ChatGPT account route tries the same prompt and retries without it if the private route rejects the field
-- optional manual text or CSV imports become ChatType-owned canonical terminology entries
+- optional Contacts and Smart Shadow WeChat remark imports become ChatType-owned canonical terminology entries
 - imported terminology is aligned by a deterministic local normalizer before and after optional text polish
 - optional text polish removes filler words, prefers later corrections, and uses plan-like structure for long agent-facing dictation
 - hidden `transcription.hintTerms` remain exact-only preservation hints

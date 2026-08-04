@@ -2,7 +2,6 @@ import AppKit
 import AVFoundation
 import ApplicationServices
 import SwiftUI
-import UniformTypeIdentifiers
 
 @MainActor
 final class PreferencesWindowController: NSWindowController {
@@ -11,7 +10,7 @@ final class PreferencesWindowController: NSWindowController {
         authManager: ChatGPTAuthManager,
         onSave: @escaping (AppConfig) -> Void,
         onImportAppleContactRemarks: @escaping (AppConfig) async -> Result<AppConfig, any Error>,
-        onImportWeixinRemarks: @escaping (AppConfig, URL) -> Result<AppConfig, any Error>,
+        onImportWeixinRemarks: @escaping (AppConfig) async -> Result<AppConfig, any Error>,
         onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
         onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
         recoveryDirectoryURL: URL,
@@ -128,6 +127,7 @@ private struct PreferencesView: View {
     @State private var terminologyImportMessage: String?
     @State private var terminologyImportIsError = false
     @State private var isImportingContactRemarks = false
+    @State private var isImportingWeixinRemarks = false
     @State private var editingTerminologyIndex: Int?
     @State private var editingTerminologyType: TerminologyEntryType = .term
     @State private var editingOriginal = ""
@@ -147,7 +147,7 @@ private struct PreferencesView: View {
     let authManager: ChatGPTAuthManager
     let onSave: (AppConfig) -> Void
     let onImportAppleContactRemarks: (AppConfig) async -> Result<AppConfig, any Error>
-    let onImportWeixinRemarks: (AppConfig, URL) -> Result<AppConfig, any Error>
+    let onImportWeixinRemarks: (AppConfig) async -> Result<AppConfig, any Error>
     let onLoadRecentHistory: () -> [TranscriptionHistoryRecord]
     let onLoadRecoveryHistory: () -> [RecoveryRecord]
     let recoveryDirectoryURL: URL
@@ -159,7 +159,7 @@ private struct PreferencesView: View {
         authManager: ChatGPTAuthManager,
         onSave: @escaping (AppConfig) -> Void,
         onImportAppleContactRemarks: @escaping (AppConfig) async -> Result<AppConfig, any Error>,
-        onImportWeixinRemarks: @escaping (AppConfig, URL) -> Result<AppConfig, any Error>,
+        onImportWeixinRemarks: @escaping (AppConfig) async -> Result<AppConfig, any Error>,
         onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
         onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
         recoveryDirectoryURL: URL,
@@ -1107,8 +1107,12 @@ private struct PreferencesView: View {
             Button {
                 importWeixinRemarks()
             } label: {
-                Label("WeChat Remarks…", systemImage: "message")
+                Label(
+                    isImportingWeixinRemarks ? "Importing…" : "WeChat Remarks",
+                    systemImage: "message"
+                )
             }
+            .disabled(isImportingWeixinRemarks)
             .accessibilityIdentifier("import-weixin-remarks")
         }
         .padding(12)
@@ -1326,19 +1330,14 @@ private struct PreferencesView: View {
     }
 
     private func importWeixinRemarks() {
-        let panel = NSOpenPanel()
-        panel.title = "Import WeChat Remark Names"
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.commaSeparatedText]
-        panel.message = "Choose a WeChat contacts CSV containing a 备注名 column."
-
-        guard panel.runModal() == .OK, let fileURL = panel.url else {
-            return
+        isImportingWeixinRemarks = true
+        Task {
+            let result = await onImportWeixinRemarks(config)
+            await MainActor.run {
+                isImportingWeixinRemarks = false
+                applyTerminologyImportResult(result, sourceLabel: "WeChat")
+            }
         }
-
-        applyTerminologyImportResult(onImportWeixinRemarks(config, fileURL), sourceLabel: "WeChat")
     }
 
     private func applyTerminologyImportResult(
