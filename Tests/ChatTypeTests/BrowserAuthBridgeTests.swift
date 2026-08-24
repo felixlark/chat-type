@@ -3,31 +3,64 @@ import Testing
 @testable import ChatType
 
 @Test
-func oauthCallbackServerAcceptsMatchingStateAndCode() async throws {
-    let server = BrowserOAuthCallbackServer(state: "state-1", port: 14655, path: "/auth/callback")
-    try await server.start()
-    defer {
-        Task { await server.stop() }
-    }
+func deviceAuthorizationUsesOfficialCodexEndpointsAndSavesReturnedSession() async throws {
+    let loader = DeviceAuthStub()
+    let openedURL = URLRecorder()
+    let sleepRecorder = SleepRecorder()
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let bridge = BrowserAuthBridge(
+        timeoutSeconds: 10,
+        now: { now },
+        opener: { openedURL.record($0) },
+        dataLoader: { request in try loader.load(request) },
+        sleeper: { nanoseconds in sleepRecorder.record(nanoseconds) }
+    )
 
-    async let code = server.waitForAuthorizationCode()
-    let status = try await get("http://localhost:14655/auth/callback?code=auth-code&state=state-1")
+    let session = try await bridge.captureSession(now: now)
+    let requests = loader.recordedRequests()
 
-    #expect(status == 200)
-    #expect(try await code == "auth-code")
+    #expect(openedURL.value() == URL(string: "https://auth.openai.com/codex/device"))
+    #expect(session.accessToken == "device-access-token")
+    #expect(session.refreshToken == "device-refresh-token")
+    #expect(session.idToken == "device-id-token")
+    #expect(session.accessTokenExpiresAt == now.addingTimeInterval(3_600))
+    #expect(bridge.snapshot() == BrowserBridgeSnapshot(
+        state: .connected,
+        detail: "ChatType connected to ChatGPT via OpenAI device authorization."
+    ))
+    #expect(sleepRecorder.values() == [1_000_000_000])
+    #expect(requests.map { $0.url?.path } == [
+        "/api/accounts/deviceauth/usercode",
+        "/api/accounts/deviceauth/token",
+        "/api/accounts/deviceauth/token",
+        "/oauth/token",
+    ])
+    #expect(String(data: try #require(requests[0].httpBody), encoding: .utf8) ==
+        #"{"client_id":"app_EMoamEEZ73f0CkXaXp7hrann"}"#)
+    let pollData = try #require(requests[1].httpBody)
+    let pollBody = try #require(JSONSerialization.jsonObject(with: pollData) as? [String: String])
+    #expect(pollBody == ["device_auth_id": "device-auth-id", "user_code": "ABCD-EFGH"])
+    let tokenBody = String(data: try #require(requests[3].httpBody), encoding: .utf8) ?? ""
+    #expect(tokenBody.contains("grant_type=authorization_code"))
+    #expect(tokenBody.contains("code=device-authorization-code"))
+    #expect(tokenBody.contains("code_verifier=device-code-verifier"))
+    #expect(tokenBody.contains("redirect_uri=https%3A%2F%2Fauth.openai.com%2Fdeviceauth%2Fcallback"))
 }
 
 @Test
-func oauthCallbackServerRejectsMismatchedState() async throws {
-    let server = BrowserOAuthCallbackServer(state: "state-1", port: 14656, path: "/auth/callback")
-    try await server.start()
-    defer {
-        Task { await server.stop() }
-    }
+func deviceAuthorizationKeepsWaitingForStandardHTTP400PendingResponse() async throws {
+    let loader = DeviceAuthStub(pendingStatus: 400)
+    let bridge = BrowserAuthBridge(
+        timeoutSeconds: 10,
+        opener: { _ in },
+        dataLoader: { request in try loader.load(request) },
+        sleeper: { _ in }
+    )
 
-    let status = try await get("http://localhost:14656/auth/callback?code=auth-code&state=wrong")
+    let session = try await bridge.captureSession()
 
-    #expect(status == 400)
+    #expect(session.accessToken == "device-access-token")
+    #expect(loader.recordedRequests().filter { $0.url?.path == "/api/accounts/deviceauth/token" }.count == 2)
 }
 
 @Test
@@ -120,9 +153,101 @@ private final class RecordingBrowserAuthBridge: BrowserAuthBridging, @unchecked 
     }
 }
 
-private func get(_ urlString: String) async throws -> Int {
-    let (_, response) = try await URLSession.shared.data(from: URL(string: urlString)!)
-    return try #require(response as? HTTPURLResponse).statusCode
+private final class DeviceAuthStub: @unchecked Sendable {
+    private let lock = NSLock()
+    private let pendingStatus: Int
+    private var requests: [URLRequest] = []
+
+    init(pendingStatus: Int = 404) {
+        self.pendingStatus = pendingStatus
+    }
+
+    func load(_ request: URLRequest) throws -> (Data, URLResponse) {
+        lock.lock()
+        let index = requests.count
+        requests.append(request)
+        lock.unlock()
+
+        switch index {
+        case 0:
+            return response(
+                for: request,
+                status: 200,
+                body: #"{"device_auth_id":"device-auth-id","user_code":"ABCD-EFGH","interval":"1"}"#
+            )
+        case 1:
+            return response(
+                for: request,
+                status: pendingStatus,
+                body: #"{"error":{"message":"Device authorization is pending.","code":"deviceauth_authorization_pending"}}"#
+            )
+        case 2:
+            return response(
+                for: request,
+                status: 200,
+                body: #"{"authorization_code":"device-authorization-code","code_challenge":"device-code-challenge","code_verifier":"device-code-verifier"}"#
+            )
+        case 3:
+            return response(
+                for: request,
+                status: 200,
+                body: #"{"access_token":"device-access-token","refresh_token":"device-refresh-token","id_token":"device-id-token","expires_in":3600}"#
+            )
+        default:
+            Issue.record("Unexpected request at index \(index)")
+            return response(for: request, status: 500, body: "{}")
+        }
+    }
+
+    func recordedRequests() -> [URLRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
+    }
+
+    private func response(for request: URLRequest, status: Int, body: String) -> (Data, URLResponse) {
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: status,
+            httpVersion: "HTTP/2",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        return (Data(body.utf8), response)
+    }
+}
+
+private final class URLRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var url: URL?
+
+    func record(_ url: URL) {
+        lock.lock()
+        self.url = url
+        lock.unlock()
+    }
+
+    func value() -> URL? {
+        lock.lock()
+        defer { lock.unlock() }
+        return url
+    }
+}
+
+private final class SleepRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedValues: [UInt64] = []
+
+    func record(_ nanoseconds: UInt64) {
+        lock.lock()
+        recordedValues.append(nanoseconds)
+        lock.unlock()
+    }
+
+    func values() -> [UInt64] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedValues
+    }
 }
 
 private func makeChatGPTSession(
@@ -136,7 +261,6 @@ private func makeChatGPTSession(
         accessTokenExpiresAt: expiresAt,
         refreshToken: refreshToken,
         idToken: nil,
-        cookies: [],
         userEmail: userEmail,
         updatedAt: Date(timeIntervalSince1970: 1_800_000_000)
     )

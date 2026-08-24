@@ -277,6 +277,10 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let accountID = chatGPTAuthProvider?.chatGPTAccountID(),
+           accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            request.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-ID")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("ChatType/0.5", forHTTPHeaderField: "User-Agent")
 

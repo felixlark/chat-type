@@ -14,6 +14,8 @@
 - Install packaged app: `scripts/install_app.sh`
 - Visual acceptance: `./scripts/visual_acceptance.sh --install`
 - Installed app smoke: `scripts/check_packaged_app.sh`
+- Read-only incident doctor: `scripts/doctor.sh`
+- Incident and acceptance rules: `docs/operations.md`
 
 ## Routine Operations
 
@@ -32,6 +34,23 @@
 | HUD or hotkey interaction changed | Use official Computer Use on the installed app | `F5` starts/stops, `ESC` cancels, inline close cancels, retry/re-entry works | Fix source, rebuild, reinstall, and rerun the full interaction branch |
 | Permission flow regresses | Clean TCC state and installed app launch | Accessibility/Microphone prompts appear in the expected order | Add or update automated ordering tests, then repeat installed-app proof |
 
+## Incident Response Gates
+
+- Before changing code, run `scripts/doctor.sh` and classify the failure as installation, lifecycle/UI, ChatType login, browser callback, transcription transport, or TCC permission. Record one current hypothesis; do not modify multiple layers to chase one symptom.
+- A browser callback error does not prove ChatType login failed, and a `Ready` login state does not prove transcription works. Verify login and the business request separately.
+- Classify the first `403` with HTML/Cloudflare evidence as a challenge. Do not refresh the token or call it ordinary network fluctuation; never exceed the product's bounded policy of three automatic attempts and one attempt for an explicit manual Retry.
+- Never use `security find-generic-password -w` for diagnosis. Inspect Keychain entry metadata or use the signed installed app without logging secrets.
+- TCC and privacy flows must launch `/Applications/ChatType.app` through LaunchServices. Never validate permissions by directly executing `Contents/MacOS/ChatType`.
+- Unit tests must inject Keychain, browser, microphone, Accessibility, and network boundaries; tests may not open real system prompts.
+- Keep diagnostic output bounded: safe config fields only, 15 minutes of targeted logs, at most 20 status lines, and no full Cloudflare body or terminology dictionary.
+
+## Provider And Billing Gates
+
+- Without explicit authorization in the current request, do not call or add any metered/pay-per-use endpoint, including `api.openai.com/v1/audio/transcriptions`. A ChatGPT OAuth token is not evidence that an OpenAI Platform request is free.
+- ChatGPT OAuth tokens may go only to fixed, audited official OpenAI/ChatGPT account hosts. Never send them to a user-defined compatible endpoint.
+- Adding a provider, network domain, Cookie dependency, system permission, or data destination is a product/privacy decision. Explain billing, credentials, data movement, quality, and failure behavior and obtain Longbiao's approval before implementation.
+- Do not add proxy settings, extract browser Cookies, or automate around Cloudflare challenges.
+
 ## Verification
 
 - Verification ladder: unit tests, integration tests, then real installed-app user-flow testing. The first two are prechecks only.
@@ -39,6 +58,8 @@
 - ChatType Computer Use acceptance should cover: focus a real editable target, start with `F5`, stop with `F5`, cancel with `ESC`, cancel with inline close, retry after cancel/error, and observe paste-versus-clipboard result.
 - For closeouts, report the installed-app user flow exercised, the live verification path, the exact outcome observed, and the live ChatType state left for review.
 - After build, install, scripted visual acceptance, or interaction acceptance, relaunch `/Applications/ChatType.app` as the normal installed app and leave it running. General ship closeouts should leave the menu bar app running; Settings or Terminologies work should leave that window visible when practical.
+- Report `implemented`, `checked`, `packaged`, `installed`, `live accepted`, and `left running` as separate gates. A permission prompt, browser callback, upstream challenge, or unverified fallback makes the result partial, not complete.
+- For auth/transcription changes, use the fixed matrix in `docs/operations.md`: cold menu-bar launch, no Dock icon/window, Settings access, `Cmd+Q`, device-code UX, login persistence, real `F5` audio, truthful error classification, Retry preservation, injection/clipboard behavior, and final normal runtime.
 
 ## Release/Deploy
 
@@ -54,6 +75,7 @@
 - Keep `.notDetermined` permission paths as their own regression surface.
 - Keep the private ChatGPT backend dependency explicit in docs and UX; do not describe it as a stable public API.
 - Keep `OpenAI-Compatible` positioned as advanced recovery, not the default public story.
+- The product has exactly two transcription routes: `chatGPTManagedAuth` and user-selected `openAICompatible`. Do not add a third fallback/provider without explicit product approval.
 
 ## Known State
 

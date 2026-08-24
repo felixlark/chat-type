@@ -41,7 +41,7 @@ It is intentionally opinionated:
 7. If `ChatType` still does not appear there, click `+` in Accessibility and add `/Applications/ChatType.app`
 8. Put the cursor in Notes, Mail, Slack, Codex, or another editable target
 9. Press `F5`, speak, press `F5` again
-10. `ChatType` sends the recording through its own ChatGPT session to the ChatGPT backend transcription path
+10. `ChatType` uses its own ChatGPT session and private ChatGPT transcription path
 11. Optional: import Apple Contacts nicknames or WeChat remarks from Smart Shadow's decrypted contacts in Settings
 12. Optional: enable ChatGPT Auth text polish in Settings. It uses ChatType's stored ChatGPT session and does not require a separate polish API key
 13. `ChatType` applies terminology alignment, optional AI polish, and a final protective normalization pass
@@ -130,7 +130,7 @@ Current `main` keeps large dictionaries out of the hot path by indexing entries 
 
 If the ChatGPT account path is unavailable or you intentionally want a separate endpoint, `ChatType` still includes an advanced recovery route for OpenAI-compatible transcription APIs.
 
-The normal ChatGPT account route treats Cloudflare `403` from the private ChatGPT transcription endpoint as a retryable network fluctuation: it does not treat the ChatType session as expired, it tries the private request up to three times, and if all attempts fail it keeps the recorded audio and shows a Retry button in the HUD.
+The normal ChatGPT account route does not misclassify a Cloudflare `403` challenge as an expired session. Initial transcription uses the bounded three-attempt policy, while an explicit Retry makes one new attempt. If the private route remains blocked, ChatType preserves the recording and shows a truthful Retry action; it does not silently switch providers.
 
 That route is intentionally not part of the default onboarding. It requires:
 
@@ -189,11 +189,13 @@ That means:
 - it may break if upstream ChatGPT Web session or backend behavior changes
 - it is not positioned as an enterprise-safe or long-term stable public API integration
 - the private backend prompt path is opportunistic and falls back to plain transcription if unsupported
+- Cloudflare challenge responses remain an explicit private-backend failure; ChatType preserves the recording instead of silently switching providers
 
 ## Docs
 
 - [中文说明](README.zh-CN.md)
 - [Architecture](docs/architecture.md)
+- [Operations and incident response](docs/operations.md)
 - [Release Process](docs/release.md)
 - [Release Notes](docs/releases/v0.5.1.md)
 - [Performance Notes](docs/performance.md)

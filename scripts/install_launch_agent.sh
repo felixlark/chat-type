@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="ChatType"
-APP_BINARY="/Applications/$APP_NAME.app/Contents/MacOS/$APP_NAME"
+APP_BUNDLE_ID="me.longbiaochen.chattype"
 PLIST="$HOME/Library/LaunchAgents/me.longbiaochen.chattype.plist"
 OLD_PLIST="$HOME/Library/LaunchAgents/com.longbiao.chattype.plist"
 
@@ -20,10 +20,10 @@ cat >"$PLIST" <<PLIST
   <string>me.longbiaochen.chattype</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$APP_BINARY</string>
+    <string>/usr/bin/open</string>
+    <string>-b</string>
+    <string>$APP_BUNDLE_ID</string>
   </array>
-  <key>KeepAlive</key>
-  <true/>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>

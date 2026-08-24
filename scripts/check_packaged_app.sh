@@ -7,14 +7,20 @@ PLIST="$APP/Contents/Info.plist"
 
 "$ROOT/scripts/package_app.sh" >/dev/null
 
-if /usr/bin/plutil -extract LSUIElement raw -o - "$PLIST" >/dev/null 2>&1; then
-  echo "Packaged app must not declare LSUIElement in Info.plist; runtime should switch to accessory mode explicitly." >&2
+LSUI_ELEMENT="$(/usr/bin/plutil -extract LSUIElement raw -o - "$PLIST" 2>/dev/null || true)"
+if [[ "$LSUI_ELEMENT" != "true" ]]; then
+  echo "Packaged app must declare LSUIElement=true so normal launch has no Dock icon." >&2
   exit 1
 fi
 
 CONTACTS_DESCRIPTION="$(/usr/bin/plutil -extract NSContactsUsageDescription raw -o - "$PLIST" 2>/dev/null || true)"
 if [[ -z "$CONTACTS_DESCRIPTION" ]]; then
   echo "Packaged app is missing NSContactsUsageDescription for contact nickname import." >&2
+  exit 1
+fi
+
+if /usr/bin/plutil -extract NSSpeechRecognitionUsageDescription raw -o - "$PLIST" >/dev/null 2>&1; then
+  echo "Packaged app must not declare Speech Recognition; the product design has no Speech provider." >&2
   exit 1
 fi
 

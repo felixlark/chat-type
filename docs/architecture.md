@@ -26,7 +26,8 @@ The V1 architecture deliberately optimizes for a single-app workflow where ChatT
 - `ChatGPTSessionStore`
   - persists ChatType-owned session material in macOS Keychain
 - `ChatGPTTranscriber`
-  - calls the private ChatGPT backend transcription route with `Authorization: Bearer <token>`
+  - calls the private ChatGPT backend transcription route with the OAuth bearer token and JWT-derived `ChatGPT-Account-ID` context required by the official Codex request contract
+  - classifies Cloudflare HTML challenges separately from session expiry and preserves retryable audio
   - measures `auth_ms` and `transcribe_ms`
   - applies a fixed prompt where supported
 - `RuntimePreflight`
@@ -85,6 +86,7 @@ Behavior:
 
 - OpenAI-compatible recovery sends a fixed prompt through the official transcriptions API
 - the ChatGPT account route tries the same prompt and retries without it if the private route rejects the field
+- a Cloudflare challenge stays on the selected provider, preserves the recording, and exposes an explicit Retry action
 - optional Contacts and Smart Shadow WeChat remark imports become ChatType-owned canonical terminology entries
 - imported terminology is aligned by a deterministic local normalizer before and after optional text polish
 - optional text polish removes filler words, prefers later corrections, and uses plan-like structure for long agent-facing dictation

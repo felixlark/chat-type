@@ -7,12 +7,14 @@ private final class RequestCapture: @unchecked Sendable {
     private var requestURLs: [String] = []
     private var requestBodies: [String] = []
     private var authorizationHeaders: [String] = []
+    private var accountHeaders: [String] = []
 
     func append(_ request: URLRequest, body: String) {
         lock.lock()
         requestURLs.append(request.url?.absoluteString ?? "")
         requestBodies.append(body)
         authorizationHeaders.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
+        accountHeaders.append(request.value(forHTTPHeaderField: "ChatGPT-Account-ID") ?? "")
         lock.unlock()
     }
 
@@ -32,6 +34,12 @@ private final class RequestCapture: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return authorizationHeaders
+    }
+
+    func accounts() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return accountHeaders
     }
 }
 
@@ -188,7 +196,10 @@ func chatGPTAuthTextPolisherUsesResponsesEndpointWithLoginToken() async throws {
     config.chatGPTResponseModel = "gpt-5.6-terra"
 
     let capture = RequestCapture()
-    let auth = FakeChatGPTAuthManager(bestTokens: [.success("chatgpt-token")])
+    let auth = FakeChatGPTAuthManager(
+        bestTokens: [.success("chatgpt-token")],
+        accountID: "account-123"
+    )
     let polisher = OpenAICompatibleTextPolisher(
         config: config,
         chatGPTAuthProvider: auth,
@@ -219,6 +230,7 @@ func chatGPTAuthTextPolisherUsesResponsesEndpointWithLoginToken() async throws {
     #expect(result.text.contains("ChatType v0.5"))
     #expect(capture.urls() == ["https://chatgpt.com/backend-api/codex/responses"])
     #expect(capture.authorizations() == ["Bearer chatgpt-token"])
+    #expect(capture.accounts() == ["account-123"])
     let body = capture.bodies().first ?? ""
     #expect(body.contains("gpt-5.6-terra"))
     #expect(body.contains(#""reasoning":{"effort":"none"}"#))
