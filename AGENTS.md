@@ -70,6 +70,8 @@
 ## Guardrails
 
 - Preserve the single-trigger workflow: `F5` starts recording and `F5` stops recording.
+- Treat the existing app icon, menu-bar icon renderer, product name, colors, and other brand visuals as owner-controlled invariants. Lifecycle, authentication, transcription, and reliability fixes may not alter them without Longbiao's explicit approval in the current request.
+- A visual change requires a before/after installed-app comparison and explicit approval. Checking that a menu-bar item merely exists does not prove that its approved appearance was preserved.
 - Do not run `ChatType.app` directly from `dist`.
 - Do not end a ChatType closeout with `pkill -x ChatType`, quit, or close. `scripts/install_app.sh` may stop the old app before replacing `/Applications/ChatType.app`, and visual demo scripts may stop transient overlay-demo processes, but final closeout must restore the normal installed runtime.
 - Keep `.notDetermined` permission paths as their own regression surface.

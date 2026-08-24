@@ -11,6 +11,36 @@ extension StatusMenuUpdating {
 }
 
 @MainActor
+struct StatusMenuButtonPresentation {
+    let title: String
+    let image: NSImage
+    let imagePosition: NSControl.ImagePosition
+    let imageScaling: NSImageScaling
+    let accessibilityLabel: String
+    let toolTip: String
+
+    static func approved(for state: StatusMenuVisualState) -> StatusMenuButtonPresentation {
+        StatusMenuButtonPresentation(
+            title: "",
+            image: ChatTypeStatusIconRenderer.image(for: state),
+            imagePosition: .imageOnly,
+            imageScaling: .scaleProportionallyDown,
+            accessibilityLabel: "ChatType \(state.stateDescription)",
+            toolTip: "ChatType: \(state.stateDescription)"
+        )
+    }
+
+    func apply(to button: NSStatusBarButton) {
+        button.title = title
+        button.image = image
+        button.imagePosition = imagePosition
+        button.imageScaling = imageScaling
+        button.setAccessibilityLabel(accessibilityLabel)
+        button.toolTip = toolTip
+    }
+}
+
+@MainActor
 final class StatusMenuController: NSObject, StatusMenuUpdating {
     private static let autosaveName = "ChatTypeMenuBarItemV2"
 
@@ -33,7 +63,6 @@ final class StatusMenuController: NSObject, StatusMenuUpdating {
         super.init()
 
         statusItem.autosaveName = Self.autosaveName
-        configureButton()
         configureMenu()
         update(state: .ready, detail: "Ready. Press F5 to dictate")
         ensureVisible()
@@ -44,22 +73,16 @@ final class StatusMenuController: NSObject, StatusMenuUpdating {
     }
 
     func update(state: StatusMenuVisualState, detail: String) {
+        if let button = statusItem.button {
+            StatusMenuButtonPresentation.approved(for: state).apply(to: button)
+        }
+
         stateItem.title = "State: \(state.stateDescription)"
         detailItem.title = detail
     }
 
     func ensureVisible() {
         statusItem.isVisible = true
-    }
-
-    private func configureButton() {
-        guard let button = statusItem.button else {
-            return
-        }
-
-        button.title = "CT"
-        button.toolTip = "ChatType"
-        button.setAccessibilityLabel("ChatType")
     }
 
     private func configureMenu() {

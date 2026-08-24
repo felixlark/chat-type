@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TRANSCRIBER="$ROOT/Sources/ChatType/ChatGPTTranscriber.swift"
 BENCHMARK="$ROOT/scripts/benchmark_stt.sh"
+STATUS_MENU="$ROOT/Sources/ChatType/StatusMenuController.swift"
 
 if rg -q 'api\.openai\.com' "$TRANSCRIBER"; then
   echo "Managed ChatGPT transcriber must not contain a metered OpenAI Platform endpoint." >&2
@@ -42,6 +43,16 @@ fi
 
 if rg -q 'connectionProxyDictionary|HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|SOCKS_PROXY' "$ROOT/Sources/ChatType"; then
   echo "ChatType source must not add application-level proxy configuration." >&2
+  exit 1
+fi
+
+if rg -q 'button\.title\s*=\s*"CT"' "$STATUS_MENU"; then
+  echo "The approved dynamic menu-bar icon must not be replaced by a text label." >&2
+  exit 1
+fi
+
+if ! rg -q 'ChatTypeStatusIconRenderer\.image\(for: state\)' "$STATUS_MENU"; then
+  echo "The approved ChatType menu-bar icon renderer is no longer connected to status presentation." >&2
   exit 1
 fi
 
