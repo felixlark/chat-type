@@ -4,7 +4,7 @@
 
 `ChatType` 是一个原生 macOS 听写工具，目标就是把 `F5 -> 说话 -> 回填` 这条链路做到尽可能快、尽可能稳。
 
-公开落地页：[longbiaochen.github.io/chat-type](https://longbiao.crowdsensing.cn/chat-type/)
+公开落地页：[longbiao.crowdsensing.cn/chat-type](https://longbiao.crowdsensing.cn/chat-type/)
 
 它的产品取向很明确：
 
@@ -97,7 +97,7 @@ packaging/homebrew/Casks/chattype.rb
 
 ### Release 下载
 
-- Releases: [github.com/longbiaochen/chat-type/releases](https://github.com/felixlark/chat-type/releases)
+- Releases: [github.com/felixlark/chat-type/releases](https://github.com/felixlark/chat-type/releases)
 - 当前版本页面：[v0.5.1](https://github.com/felixlark/chat-type/releases/tag/v0.5.1)
 
 ## 支持继续维护

@@ -4,7 +4,7 @@
 
 `ChatType` is a native macOS dictation app for people who want the fastest possible `F5 -> speak -> paste` workflow with ChatGPT on the same Mac.
 
-Public landing page: [longbiaochen.github.io/chat-type](https://longbiao.crowdsensing.cn/chat-type/)
+Public landing page: [longbiao.crowdsensing.cn/chat-type](https://longbiao.crowdsensing.cn/chat-type/)
 
 It is intentionally opinionated:
 
@@ -98,7 +98,7 @@ This repo does not yet publish a dedicated Homebrew tap, but the cask file is ke
 
 ### Release Download
 
-- Releases: [github.com/longbiaochen/chat-type/releases](https://github.com/felixlark/chat-type/releases)
+- Releases: [github.com/felixlark/chat-type/releases](https://github.com/felixlark/chat-type/releases)
 - Current release page: [v0.5.1](https://github.com/felixlark/chat-type/releases/tag/v0.5.1)
 
 ## Support Development
