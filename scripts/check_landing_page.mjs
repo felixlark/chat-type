@@ -48,8 +48,8 @@ for (const id of [
   hasAnchor(id);
 }
 
-hasHref("https://github.com/longbiaochen/chat-type/releases/tag/v0.5.1");
-hasHref("https://github.com/longbiaochen/chat-type");
+hasHref("https://github.com/felixlark/chat-type/releases/tag/v0.5.1");
+hasHref("https://github.com/felixlark/chat-type");
 hasHref("#demo");
 hasHref("#download");
 

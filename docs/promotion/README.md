@@ -29,9 +29,9 @@ Do not describe the default route as a stable public API. ChatType v1 depends on
 
 ## Assets To Prepare
 
-- Landing page: `https://longbiaochen.github.io/chat-type/`
-- GitHub repo: `https://github.com/longbiaochen/chat-type`
-- Release download: `https://github.com/longbiaochen/chat-type/releases/tag/v0.1.2`
+- Landing page: `https://longbiao.crowdsensing.cn/chat-type/`
+- GitHub repo: `https://github.com/felixlark/chat-type`
+- Release download: `https://github.com/felixlark/chat-type/releases/tag/v0.1.2`
 - Xiaohongshu cover templates: `xiaohongshu-cover-cards.html`
 - Xiaohongshu source covers:
   - `assets/xhs-cover-pain-point.svg`
