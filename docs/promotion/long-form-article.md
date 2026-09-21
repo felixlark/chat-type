@@ -55,9 +55,9 @@ ChatType 面向的是已经在用 ChatGPT 的 Mac 用户。默认路径是在 Ch
 
 项目已经开源：
 
-- GitHub: https://github.com/longbiaochen/chat-type
-- Landing page: https://longbiaochen.github.io/chat-type/
-- Release: https://github.com/longbiaochen/chat-type/releases/tag/v0.1.2
+- GitHub: https://github.com/felixlark/chat-type
+- Landing page: https://longbiao.crowdsensing.cn/chat-type/
+- Release: https://github.com/felixlark/chat-type/releases/tag/v0.1.2
 
 如果你愿意试，我最想听两个反馈：
 

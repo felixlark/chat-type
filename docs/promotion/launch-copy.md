@@ -122,7 +122,7 @@ Body:
 >
 > 如果你也在 Mac 上用 ChatGPT/Codex 写需求、写邮件、写笔记，欢迎试一下，也欢迎直接提 issue。
 >
-> GitHub: https://github.com/longbiaochen/chat-type
+> GitHub: https://github.com/felixlark/chat-type
 
 Tags:
 
@@ -136,7 +136,7 @@ Tags:
 >
 > 我不想把它包装成泛用 AI SaaS。它就是解决一个日常痛点：在 Codex、ChatGPT、Notes、Slack 里想说长段中文时，不想慢慢打。
 >
-> GitHub: https://github.com/longbiaochen/chat-type
+> GitHub: https://github.com/felixlark/chat-type
 
 ## V2EX
 
@@ -166,8 +166,8 @@ Body:
 > - 不是稳定公开 API，也不是企业级集成
 > - 目前是本地签名、未 notarize 的 macOS app
 >
-> GitHub: https://github.com/longbiaochen/chat-type
-> Landing page: https://longbiaochen.github.io/chat-type/
+> GitHub: https://github.com/felixlark/chat-type
+> Landing page: https://longbiao.crowdsensing.cn/chat-type/
 >
 > 想请大家帮忙试两个点：第一，F5 这个单键录音/停止是否顺手；第二，保守粘贴/剪贴板兜底是否比“总是粘贴”更符合预期。
 
@@ -231,11 +231,11 @@ Name:
 
 Website:
 
-> https://longbiaochen.github.io/chat-type/
+> https://longbiao.crowdsensing.cn/chat-type/
 
 GitHub:
 
-> https://github.com/longbiaochen/chat-type
+> https://github.com/felixlark/chat-type
 
 Category:
 
