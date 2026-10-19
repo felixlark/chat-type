@@ -213,7 +213,9 @@ struct TerminologyConfig: Codable, Sendable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let decodedEntries = try container.decodeIfPresent([TerminologyEntry].self, forKey: .entries) ?? []
         let legacyImportedEntries = try container.decodeIfPresent([TerminologyEntry].self, forKey: .importedEntries) ?? []
-        entries = decodedEntries.isEmpty ? legacyImportedEntries : decodedEntries
+        entries = TerminologyPolicy.sanitizedEntries(
+            decodedEntries.isEmpty ? legacyImportedEntries : decodedEntries
+        )
         lastImportedSource = Self.normalizedImportedSource(
             try container.decodeIfPresent(String.self, forKey: .lastImportedSource)
         )

@@ -60,6 +60,7 @@ final class AppCoordinator {
     private var activeSessionID: UUID?
     private var recordingStartedAt: DispatchTime?
     private var pendingRetry: PendingRetry?
+    private var activeProcessingAudio: RecordedAudio?
     private var authStateObserver: NSObjectProtocol?
 
     private struct PendingRetry {
@@ -80,7 +81,7 @@ final class AppCoordinator {
         historyRecorder: any TranscriptionHistoryRecording = TranscriptionHistoryRecorder(),
         recoveryRecorder: (any RecoveryRecording)? = nil,
         soundFeedback: any SoundFeedbackPlaying = SoundFeedbackService(),
-        recorderFactory: @escaping RecorderFactory = { AudioRecorder(sampleRateHz: $0) },
+        recorderFactory: RecorderFactory? = nil,
         statusMenuFactory: @escaping StatusMenuFactory = { openSettings, openConfig, quit in
             StatusMenuController(
                 openSettingsHandler: openSettings,
@@ -120,7 +121,8 @@ final class AppCoordinator {
             directoryURL: configStore.directoryURL.appendingPathComponent("Recovery", isDirectory: true)
         )
         self.soundFeedback = soundFeedback
-        self.recorderFactory = recorderFactory
+        let recordingStore = self.recoveryRecorder as? RecoveryStore
+        self.recorderFactory = recorderFactory ?? { AudioRecorder(sampleRateHz: $0, recoveryStore: recordingStore) }
         self.statusMenuFactory = statusMenuFactory
         self.pipelineFactory = pipelineFactory
         self.launchAppContextProvider = launchAppContextProvider
@@ -155,6 +157,7 @@ final class AppCoordinator {
             switch launchMode {
             case .normal, .settings:
                 config = try configStore.load()
+                try (recoveryRecorder as? RecoveryStore)?.recoverInterruptedRecordings()
                 recorder = recorderFactory(config.transcription.sampleRateHz)
 
                 hotkeyMonitor = try HotkeyMonitor(keyCode: config.transcription.hotkeyKeyCode) { [weak self] in
@@ -239,13 +242,25 @@ final class AppCoordinator {
 
         startRecordingTask?.cancel()
         startRecordingTask = nil
+        if let audio = activeProcessingAudio {
+            do {
+                try recoveryRecorder.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: audio.fileURL,
+                    durationMs: audio.durationMs, asrText: nil, polishText: nil,
+                    appName: launchAppContext?.localizedName, appBundleIdentifier: launchAppContext?.bundleIdentifier,
+                    outcome: "cancelled", errorMessage: nil))
+            } catch {
+                logger.error("Could not update cancellation journal; raw audio remains saved: \(error.localizedDescription, privacy: .public)")
+            }
+            activeProcessingAudio = nil
+        }
         processingTask?.cancel()
         processingTask = nil
         stopRecordingLevelUpdates()
         clearPendingRetry()
 
         if state == .recording {
-            try? recorder?.cancelRecording()
+            do { try recorder?.cancelRecording() }
+            catch { notifier.notify(title: "录音保存异常", body: error.localizedDescription) }
         }
 
         state = .idle
@@ -350,8 +365,7 @@ final class AppCoordinator {
                 transcriptionConfig: transcriptionConfig,
                 injectionConfig: injectionConfig,
                 launchAppContext: launchAppContext,
-                attemptPolicy: .automatic,
-                deleteAudioWhenFinished: true
+                attemptPolicy: .automatic
             )
         } catch {
             stopRecordingLevelUpdates()
@@ -382,8 +396,7 @@ final class AppCoordinator {
             transcriptionConfig: pendingRetry.transcriptionConfig,
             injectionConfig: pendingRetry.injectionConfig,
             launchAppContext: pendingRetry.launchAppContext,
-            attemptPolicy: .manualRetry,
-            deleteAudioWhenFinished: false
+            attemptPolicy: .manualRetry
         )
     }
 
@@ -393,22 +406,20 @@ final class AppCoordinator {
         transcriptionConfig: TranscriptionConfig,
         injectionConfig: InjectionConfig,
         launchAppContext: LaunchAppContext?,
-        attemptPolicy: TranscriptionAttemptPolicy,
-        deleteAudioWhenFinished: Bool
+        attemptPolicy: TranscriptionAttemptPolicy
     ) {
         let processingStarted = DispatchTime.now().uptimeNanoseconds
+        activeProcessingAudio = audio
 
         processingTask?.cancel()
         processingTask = Task { [weak self] in
             guard let self else { return }
             defer {
-                if deleteAudioWhenFinished {
-                    try? FileManager.default.removeItem(at: audio.fileURL)
-                }
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     if self.activeSessionID == sessionID || self.activeSessionID == nil {
                         self.processingTask = nil
+                        self.activeProcessingAudio = nil
                     }
                 }
             }
@@ -579,7 +590,8 @@ final class AppCoordinator {
                             try self.persistTerminologyImport(
                                 currentConfig: currentConfig,
                                 imported: imported,
-                                lastImportedSource: imported.source
+                                lastImportedSource: imported.source,
+                                replacingSources: ["apple-contacts-nickname"]
                             )
                         )
                     } catch {
@@ -676,9 +688,11 @@ final class AppCoordinator {
         incoming: [TerminologyEntry],
         replacingSources: Set<String>
     ) -> [TerminologyEntry] {
-        mergedTerminologyEntries(
-            existing: existing.filter { !replacingSources.contains($0.source) },
-            incoming: incoming
+        TerminologyPolicy.sanitizedEntries(
+            mergedTerminologyEntries(
+                existing: existing.filter { !replacingSources.contains($0.source) },
+                incoming: incoming
+            )
         )
     }
 
@@ -706,8 +720,7 @@ final class AppCoordinator {
             transcriptionConfig: config.transcription,
             injectionConfig: config.injection,
             launchAppContext: launchAppContextProvider(),
-            attemptPolicy: .manualRetry,
-            deleteAudioWhenFinished: false
+            attemptPolicy: .manualRetry
         )
     }
 
@@ -875,7 +888,12 @@ final class AppCoordinator {
 
         recordingLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, let level = self.recorder?.currentLevel() else {
+                guard let self, self.state == .recording, let recorder = self.recorder,
+                      let level = recorder.currentLevel() else {
+                    return
+                }
+                if recorder.inputInterruptionDetected() {
+                    self.stopRecording()
                     return
                 }
                 self.overlay.updateRecording(level: level, elapsedText: self.elapsedRecordingText())
@@ -955,9 +973,7 @@ final class AppCoordinator {
     }
 
     private func clearPendingRetry() {
-        if let pendingRetry {
-            try? FileManager.default.removeItem(at: pendingRetry.audio.fileURL)
-        }
+        // Retry files are user material too; clearing UI state must not delete them.
         pendingRetry = nil
     }
 
@@ -1016,7 +1032,10 @@ final class AppCoordinator {
             injectMs: injectMs,
             totalProcessingMs: totalProcessingMs,
             resultStatus: latencyResultStatus(for: outcome),
-            errorCategory: errorCategory
+            errorCategory: errorCategory,
+            uploadedAudioBytes: prepared.metrics.transcription.uploadedBytes,
+            uploadEncodingMs: prepared.metrics.transcription.encodingMs,
+            uploadAudioFormat: prepared.metrics.transcription.uploadFormat
         )
         try? latencyRecorder.record(sample)
     }

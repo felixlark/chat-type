@@ -85,11 +85,21 @@ struct DictationPipeline: DictationPreparing {
             textPolishAttempted = true
             let polishStarted = DispatchTime.now().uptimeNanoseconds
             do {
-                let polished = try await textPolisher.polish(
+                var polished = try await textPolisher.polish(
                     text: prePolish.text,
                     terminologyEntries: importedEntries,
                     hintTerms: hintTerms
                 )
+
+                if isSuspiciousPolishTruncation(original: prePolish.text, polished: polished.text) {
+                    // The same long-form request can occasionally return a short but otherwise
+                    // successful response. Retry once before using the existing safe fallback.
+                    polished = try await textPolisher.polish(
+                        text: prePolish.text,
+                        terminologyEntries: importedEntries,
+                        hintTerms: hintTerms
+                    )
+                }
                 polishMs = elapsedMilliseconds(since: polishStarted)
                 estimatedPolishInputTokens = polished.estimatedInputTokens
                 estimatedPolishOutputTokens = polished.estimatedOutputTokens

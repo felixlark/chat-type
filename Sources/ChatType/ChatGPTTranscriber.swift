@@ -8,6 +8,8 @@ private enum TranscriptionUploadLimit {
 enum TranscriptionError: LocalizedError {
     case invalidAudio
     case payloadTooLarge
+    case noUsableAudioSignal
+    case interruptedAudioInput(capturedSignalSeconds: Int, silentTailSeconds: Int)
     case transcriptionFailed(String)
     case invalidResponse
     case missingAuthTokenEnv(String)
@@ -19,6 +21,10 @@ enum TranscriptionError: LocalizedError {
             return "录音文件无效。"
         case .payloadTooLarge:
             return "录音文件超过 \(TranscriptionUploadLimit.label)，已超过 ChatGPT/OpenAI 转写上传上限，当前不发送。"
+        case .noUsableAudioSignal:
+            return "录音中没有检测到有效麦克风信号；为避免输出空白或不完整转写，ChatType 未发送这份录音并已将其保留。请检查输入设备后重新录制。"
+        case .interruptedAudioInput(let capturedSignalSeconds, let silentTailSeconds):
+            return "麦克风输入在约 \(capturedSignalSeconds) 秒后中断，随后约 \(silentTailSeconds) 秒只有数字静音；为避免输出不完整转写，ChatType 未发送这份录音并已将其保留。请检查输入设备后重新录制。"
         case .transcriptionFailed(let message):
             return "ChatGPT 转写失败：\(message)"
         case .invalidResponse:
@@ -81,6 +87,9 @@ struct TranscriptionMetrics: Sendable, Equatable {
     let authMs: Int
     let transcribeMs: Int
     let promptIncluded: Bool
+    var encodingMs: Int = 0
+    var uploadedBytes: Int = 0
+    var uploadFormat: String = "wav"
 }
 
 struct TranscriptionResult: Sendable, Equatable {
@@ -113,6 +122,7 @@ struct ChatGPTTranscriber: Sendable {
     let promptBuilder: TranscriptionPromptBuilder
     let bridgePromptCapability: BridgePromptCapabilityStore
     let cloudflareChallengeMaxAttempts: Int
+    let uploadMode: AudioUploadMode
     let dataLoader: @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
     init(
@@ -121,6 +131,7 @@ struct ChatGPTTranscriber: Sendable {
         promptBuilder: TranscriptionPromptBuilder = .init(),
         bridgePromptCapability: BridgePromptCapabilityStore = .shared,
         cloudflareChallengeMaxAttempts: Int = 3,
+        uploadMode: AudioUploadMode = .automatic,
         dataLoader: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse) = { request in
             try await URLSession.shared.data(for: request)
         }
@@ -130,6 +141,7 @@ struct ChatGPTTranscriber: Sendable {
         self.promptBuilder = promptBuilder
         self.bridgePromptCapability = bridgePromptCapability
         self.cloudflareChallengeMaxAttempts = max(1, cloudflareChallengeMaxAttempts)
+        self.uploadMode = uploadMode
         self.dataLoader = dataLoader
     }
 
@@ -142,6 +154,18 @@ struct ChatGPTTranscriber: Sendable {
             throw TranscriptionError.payloadTooLarge
         }
 
+        switch PCMRecordingIntegrityAnalyzer().analyze(wavData: data) {
+        case .noUsableSignal:
+            throw TranscriptionError.noUsableAudioSignal
+        case .interruptedInput(let capturedSignalSeconds, let silentTailSeconds):
+            throw TranscriptionError.interruptedAudioInput(
+                capturedSignalSeconds: capturedSignalSeconds,
+                silentTailSeconds: silentTailSeconds
+            )
+        case nil:
+            break
+        }
+
         let prompt = promptBuilder.buildPrompt(
             hintTerms: config.promptHintTerms,
             speechCleanupEnabled: config.speechCleanupEnabled
@@ -149,6 +173,9 @@ struct ChatGPTTranscriber: Sendable {
 
         switch config.provider {
         case .chatGPTManagedAuth:
+            let encodingStarted = DispatchTime.now().uptimeNanoseconds
+            let payload = try AudioUploadPreparation().prepare(audio: audio, original: data, mode: uploadMode)
+            let encodingMs = elapsedMilliseconds(since: encodingStarted)
             let authStarted = DispatchTime.now().uptimeNanoseconds
             var token = try await authManager.bestAvailableAccessToken()
             var accountID = authManager.chatGPTAccountID()
@@ -157,7 +184,7 @@ struct ChatGPTTranscriber: Sendable {
             let response: (text: String, promptIncluded: Bool)
             do {
                 response = try await transcribeViaChatGPTBridgeWithCloudflareRetries(
-                    audioData: data,
+                    audioData: payload,
                     token: token,
                     accountID: accountID,
                     prompt: prompt
@@ -168,7 +195,7 @@ struct ChatGPTTranscriber: Sendable {
                 accountID = authManager.chatGPTAccountID()
                 authMs += elapsedMilliseconds(since: refreshStarted)
                 response = try await transcribeViaChatGPTBridgeWithCloudflareRetries(
-                    audioData: data,
+                    audioData: payload,
                     token: token,
                     accountID: accountID,
                     prompt: prompt
@@ -183,7 +210,10 @@ struct ChatGPTTranscriber: Sendable {
                     audioBytes: data.count,
                     authMs: authMs,
                     transcribeMs: transcribeMs,
-                    promptIncluded: response.promptIncluded
+                    promptIncluded: response.promptIncluded,
+                    encodingMs: encodingMs,
+                    uploadedBytes: payload.data.count,
+                    uploadFormat: payload.filename
                 )
             )
         case .openAICompatible:
@@ -208,7 +238,7 @@ struct ChatGPTTranscriber: Sendable {
     }
 
     private func transcribeViaChatGPTBridgeWithCloudflareRetries(
-        audioData: Data,
+        audioData: AudioUploadPayload,
         token: String,
         accountID: String?,
         prompt: String
@@ -237,7 +267,7 @@ struct ChatGPTTranscriber: Sendable {
     }
 
     private func transcribeViaChatGPTBridge(
-        audioData: Data,
+        audioData: AudioUploadPayload,
         token: String,
         accountID: String?,
         prompt: String
@@ -272,7 +302,7 @@ struct ChatGPTTranscriber: Sendable {
             throw error
         } catch let error as TranscriptionHTTPError where !error.canRetryWithoutPrompt {
             throw error
-        } catch {
+        } catch let error as TranscriptionHTTPError where error.canRetryWithoutPrompt {
             let fallbackText = try await executeTranscriptionRequest(
                 makeChatGPTBridgeRequest(
                     audioData: audioData,
@@ -288,7 +318,7 @@ struct ChatGPTTranscriber: Sendable {
     }
 
     private func makeChatGPTBridgeRequest(
-        audioData: Data,
+        audioData: AudioUploadPayload,
         token: String,
         accountID: String?,
         prompt: String?
@@ -305,7 +335,9 @@ struct ChatGPTTranscriber: Sendable {
         let boundary = request.value(forHTTPHeaderField: "Content-Type")!.split(separator: "=").last.map(String.init) ?? makeBoundary()
         request.httpBody = makeMultipartBody(
             boundary: boundary,
-            audioData: audioData,
+            audioData: audioData.data,
+            filename: audioData.filename,
+            mimeType: audioData.mimeType,
             extraFields: prompt.map { ["prompt": $0] } ?? [:]
         )
         return request
@@ -372,7 +404,7 @@ struct ChatGPTTranscriber: Sendable {
         "ChatType-\(UUID().uuidString)"
     }
 
-    private func makeMultipartBody(boundary: String, audioData: Data, extraFields: [String: String]) -> Data {
+    private func makeMultipartBody(boundary: String, audioData: Data, filename: String = "voice.wav", mimeType: String = "audio/wav", extraFields: [String: String]) -> Data {
         var body = Data()
         for (name, value) in extraFields.sorted(by: { $0.key < $1.key }) {
             body.append(contentsOf: "--\(boundary)\r\n".utf8)
@@ -380,8 +412,8 @@ struct ChatGPTTranscriber: Sendable {
             body.append(contentsOf: "\(value)\r\n".utf8)
         }
         body.append(contentsOf: "--\(boundary)\r\n".utf8)
-        body.append(contentsOf: "Content-Disposition: form-data; name=\"file\"; filename=\"voice.wav\"\r\n".utf8)
-        body.append(contentsOf: "Content-Type: audio/wav\r\n\r\n".utf8)
+        body.append(contentsOf: "Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".utf8)
+        body.append(contentsOf: "Content-Type: \(mimeType)\r\n\r\n".utf8)
         body.append(audioData)
         body.append(contentsOf: "\r\n--\(boundary)--\r\n".utf8)
         return body
