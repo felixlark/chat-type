@@ -134,12 +134,12 @@ struct TextPolishPromptBuilder: Sendable {
         var seen = Set<String>()
         var count = 0
         let transcriptKey = looseMatchKey(for: transcript)
+        let gate = EntryKeyMatchGate(textKey: transcriptKey)
 
         for entry in terminologyEntries {
             let matchTerms = [entry.canonical] + entry.aliases
             guard matchTerms.contains(where: { term in
-                let key = looseMatchKey(for: term)
-                return !key.isEmpty && transcriptKey.contains(key)
+                gate.matchesNonEmptyKey(looseMatchKey(for: term))
             }) else {
                 continue
             }

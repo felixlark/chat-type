@@ -284,3 +284,123 @@ func chatGPTAuthTextPolisherRequestCarriesResequenceHint() async throws {
     #expect(body.contains("gpt-5.6-terra"))
     #expect(capture.urls() == ["https://chatgpt.com/backend-api/codex/responses"])
 }
+
+private func referenceLooseMatchKey(_ text: String) -> String {
+    let folded = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+    let filteredScalars = folded.lowercased().unicodeScalars.filter { scalar in
+        !CharacterSet.whitespacesAndNewlines.contains(scalar)
+            && scalar != "."
+            && scalar != "_"
+            && scalar != "-"
+    }
+    return String(String.UnicodeScalarView(filteredScalars))
+}
+
+/// Mirrors `TextPolishPromptBuilder.clippedGlossary` with the original `String.contains` predicate,
+/// so the gated implementation can be compared against the pre-change matching order and budget.
+private func referenceGlossaryLines(
+    transcript: String,
+    terminologyEntries: [TerminologyEntry],
+    budget: Int
+) -> [String] {
+    var output: [String] = []
+    var seen = Set<String>()
+    var count = 0
+    let transcriptKey = referenceLooseMatchKey(transcript)
+
+    for entry in terminologyEntries {
+        let matchTerms = [entry.canonical] + entry.aliases
+        let matched = matchTerms.contains { term in
+            let key = referenceLooseMatchKey(term)
+            return !key.isEmpty && transcriptKey.contains(key)
+        }
+        guard matched else {
+            continue
+        }
+
+        let aliases = entry.aliases.isEmpty ? "" : " aliases: \(entry.aliases.joined(separator: ", "))"
+        let line = "\(entry.canonical)\(aliases)"
+        let key = line.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        guard seen.insert(key).inserted else {
+            continue
+        }
+        let nextCount = count + line.count
+        guard nextCount <= budget else {
+            break
+        }
+        output.append(line)
+        count = nextCount
+    }
+
+    return output
+}
+
+private func glossaryLines(fromSystemMessage content: String) -> [String] {
+    let lines = content.components(separatedBy: "\n")
+    guard let headerIndex = lines.firstIndex(of: "Glossary terms and aliases:") else {
+        return []
+    }
+    return lines[(headerIndex + 1)...].map { line in
+        line.hasPrefix("- ") ? String(line.dropFirst(2)) : line
+    }
+}
+
+@Test
+func textPolishGlossaryKeepsOriginalMatchOrderAndBudgetOnUnicodeCorpus() {
+    let zwjFamily = "👨\u{200D}👩\u{200D}👧"
+    let entries = [
+        TerminologyEntry(canonical: "ChatType", aliases: ["chat type"]),
+        TerminologyEntry(canonical: "ChatTypes", aliases: []),
+        TerminologyEntry(canonical: zwjFamily, aliases: ["family emoji"]),
+        TerminologyEntry(canonical: "❤\u{FE0F}", aliases: []),
+        TerminologyEntry(canonical: "❤", aliases: []),
+        TerminologyEntry(canonical: "🇨🇳", aliases: ["china flag"]),
+        TerminologyEntry(canonical: "각", aliases: []),
+        TerminologyEntry(canonical: "각", aliases: []),
+        TerminologyEntry(canonical: "café", aliases: []),
+        TerminologyEntry(canonical: "cafe\u{301}", aliases: []),
+        TerminologyEntry(canonical: "Ｃｈａｔ", aliases: ["full width chat"]),
+        TerminologyEntry(canonical: "聊天记录", aliases: []),
+        TerminologyEntry(canonical: "／Users／example", aliases: ["项目路径"]),
+        TerminologyEntry(canonical: "https://example.com/a?b=1", aliases: []),
+        TerminologyEntry(canonical: "___", aliases: ["---"]),
+    ]
+    let transcripts = [
+        "请把 ChatType 的 F5 逻辑整理成三条要点，并保留 /Users/example 与 https://example.com/a?b=1。",
+        "family \(zwjFamily) 和 ❤\u{FE0F} 与 ❤ 以及 🇨🇳 都要保留。",
+        "韩国语 각 与拆分的 각，加上 café 与 cafe\u{301} 的写法。",
+        "全角 Ｃｈａｔ 与半角 Chat 以及中文 聊天记录 都出现一次。",
+        "没有匹配词表的内容也要生成系统提示。",
+    ]
+
+    var config = TextPolishConfig()
+    let builder = TextPolishPromptBuilder()
+
+    for budget in [1_200, 60, 24, 12, 0] {
+        config.glossaryBudgetCharacters = budget
+        for transcript in transcripts {
+            let messages = builder.buildMessages(
+                transcript: transcript,
+                terminologyEntries: entries,
+                config: config
+            )
+            let referenceLines = referenceGlossaryLines(
+                transcript: transcript,
+                terminologyEntries: entries,
+                budget: budget
+            )
+
+            #expect(messages.count == 2)
+            #expect(messages[1].content == transcript)
+            #expect(
+                glossaryLines(fromSystemMessage: messages[0].content) == referenceLines,
+                "glossary mismatch for budget=\(budget) transcript=\(transcript.debugDescription)"
+            )
+
+            for line in referenceLines where line.hasPrefix("___") {
+                // Keys that fold to an empty string must never be admitted to the glossary.
+                Issue.record("empty folded key leaked into glossary: \(line)")
+            }
+        }
+    }
+}
