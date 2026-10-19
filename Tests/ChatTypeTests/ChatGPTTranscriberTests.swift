@@ -147,6 +147,71 @@ func rejectsAudioAboveOfficialTwentyFiveMegabyteLimit() async throws {
 }
 
 @Test
+func rejectsInterruptedPCMRecordingBeforeNetworkRequest() async throws {
+    var config = AppConfig().transcription
+    config.provider = .chatGPTManagedAuth
+
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("interrupted-\(UUID().uuidString).wav")
+    var samples = Data()
+    for amplitude: Int16 in [2_000, 1] {
+        let seconds = amplitude == 2_000 ? 6 : 114
+        let raw = UInt16(bitPattern: amplitude)
+        for _ in 0..<(100 * seconds) {
+            samples.append(UInt8(raw & 0xFF))
+            samples.append(UInt8((raw >> 8) & 0xFF))
+        }
+    }
+    var wav = Data("RIFF".utf8)
+    func appendUInt16(_ value: UInt16) {
+        wav.append(UInt8(value & 0xFF))
+        wav.append(UInt8((value >> 8) & 0xFF))
+    }
+    func appendUInt32(_ value: UInt32) {
+        wav.append(UInt8(value & 0xFF))
+        wav.append(UInt8((value >> 8) & 0xFF))
+        wav.append(UInt8((value >> 16) & 0xFF))
+        wav.append(UInt8((value >> 24) & 0xFF))
+    }
+    appendUInt32(UInt32(36 + samples.count))
+    wav.append(Data("WAVEfmt ".utf8))
+    appendUInt32(16)
+    appendUInt16(1)
+    appendUInt16(1)
+    appendUInt32(100)
+    appendUInt32(200)
+    appendUInt16(2)
+    appendUInt16(16)
+    wav.append(Data("data".utf8))
+    appendUInt32(UInt32(samples.count))
+    wav.append(samples)
+    try wav.write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let transcriber = ChatGPTTranscriber(
+        authManager: FakeChatGPTAuthManager(),
+        config: config,
+        bridgePromptCapability: BridgePromptCapabilityStore(),
+        dataLoader: { _ in
+            Issue.record("Interrupted recording must fail before a network request")
+            throw URLError(.badServerResponse)
+        }
+    )
+
+    var caughtError: Error?
+    do {
+        _ = try await transcriber.transcribe(
+            RecordedAudio(fileURL: url, durationMs: 120_000)
+        )
+    } catch {
+        caughtError = error
+    }
+
+    #expect(caughtError?.localizedDescription.contains("麦克风输入在约 6 秒后中断") == true)
+    #expect(caughtError?.localizedDescription.contains("未发送") == true)
+}
+
+@Test
 func openAICompatibleRouteIncludesPromptField() async throws {
     var config = AppConfig().transcription
     config.provider = .openAICompatible
@@ -380,4 +445,20 @@ func managedAuthManualRetryPolicyAttemptsCloudflareChallengeOnlyOnce() async thr
     #expect(caughtError?.localizedDescription.contains("403") == true)
     #expect(capture.urls() == [config.chatGPTURL])
     #expect(capture.authorizations() == ["Bearer desktop-token"])
+}
+
+@Test func managedAuthCancellationDoesNotRepeatUploadWithoutPrompt() async throws {
+    let count = AttemptCounter()
+    let transcriber = ChatGPTTranscriber(authManager: FakeChatGPTAuthManager(), config: AppConfig().transcription,
+        bridgePromptCapability: BridgePromptCapabilityStore(), dataLoader: { _ in
+            _ = count.next()
+            throw CancellationError()
+        })
+    let audio = try makeAudioFixture()
+    defer { try? FileManager.default.removeItem(at: audio.fileURL) }
+    do {
+        _ = try await transcriber.transcribe(audio)
+        Issue.record("Cancellation ignored")
+    } catch is CancellationError { }
+    #expect(count.next() == 2)
 }

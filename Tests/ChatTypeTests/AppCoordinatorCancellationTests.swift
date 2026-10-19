@@ -9,6 +9,7 @@ private final class FakeCoordinatorRecorder: RecordingControlling {
     private(set) var stopRecordingCallCount = 0
     var onStartRecording: (@Sendable () async -> Void)?
     var startRecordingError: (any Error)?
+    var reportsInputInterruption = false
     var nextAudio = RecordedAudio(
         fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("fake.wav"),
         durationMs: 1_000
@@ -32,6 +33,10 @@ private final class FakeCoordinatorRecorder: RecordingControlling {
 
     func currentLevel() -> CGFloat? {
         0.25
+    }
+
+    func inputInterruptionDetected() -> Bool {
+        reportsInputInterruption
     }
 }
 
@@ -110,7 +115,7 @@ private final class FakeCoordinatorInjector: TextInjecting {
 
 private struct FakeCoordinatorPipeline: DictationPreparing {
     func prepare(audio: RecordedAudio) async throws -> PreparedDictation {
-        try? Data().write(to: audio.fileURL)
+        if !FileManager.default.fileExists(atPath: audio.fileURL.path) { try? Data().write(to: audio.fileURL) }
         return PreparedDictation(
             rawText: "raw",
             finalText: "final",
@@ -151,7 +156,7 @@ private struct BlockingCoordinatorPipeline: DictationPreparing {
     let gate: CoordinatorGate
 
     func prepare(audio: RecordedAudio) async throws -> PreparedDictation {
-        try? Data().write(to: audio.fileURL)
+        if !FileManager.default.fileExists(atPath: audio.fileURL.path) { try? Data().write(to: audio.fileURL) }
         await gate.wait()
         return PreparedDictation(
             rawText: "raw",
@@ -172,6 +177,11 @@ private struct BlockingCoordinatorPipeline: DictationPreparing {
             )
         )
     }
+}
+
+private struct FakeCoordinatorHistoryRecorder: TranscriptionHistoryRecording {
+    func record(_ record: TranscriptionHistoryRecord) throws {}
+    func loadRecent(limit: Int) throws -> [TranscriptionHistoryRecord] { [] }
 }
 
 private final class FakeLatencyRecorder: LatencyRecording, @unchecked Sendable {
@@ -276,12 +286,14 @@ struct AppCoordinatorCancellationTests {
         let overlay = FakeCoordinatorOverlay()
         let statusMenu = FakeCoordinatorStatusMenu()
         let coordinator = AppCoordinator(
+            configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
             authManager: FakeChatGPTAuthManager(),
             latencyRecorder: FakeLatencyRecorder(),
+            historyRecorder: FakeCoordinatorHistoryRecorder(),
             recorderFactory: { _ in recorder },
             statusMenuFactory: { _, _, _ in statusMenu },
             pipelineFactory: { _, _, _ in FakeCoordinatorPipeline() }
@@ -312,12 +324,14 @@ struct AppCoordinatorCancellationTests {
         let statusMenu = FakeCoordinatorStatusMenu()
         let injector = FakeCoordinatorInjector()
         let coordinator = AppCoordinator(
+            configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: injector,
             overlay: overlay,
             authManager: FakeChatGPTAuthManager(),
             latencyRecorder: FakeLatencyRecorder(),
+            historyRecorder: FakeCoordinatorHistoryRecorder(),
             recorderFactory: { _ in recorder },
             statusMenuFactory: { _, _, _ in statusMenu },
             pipelineFactory: { _, _, _ in FakeCoordinatorPipeline() }
@@ -365,12 +379,14 @@ struct AppCoordinatorCancellationTests {
         let soundFeedback = FakeSoundFeedback()
         var contextWhenProcessing: LaunchAppContext?
         let coordinator = AppCoordinator(
+            configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
             authManager: FakeChatGPTAuthManager(),
             latencyRecorder: FakeLatencyRecorder(),
+            historyRecorder: FakeCoordinatorHistoryRecorder(),
             soundFeedback: soundFeedback,
             recorderFactory: { _ in recorder },
             statusMenuFactory: { _, _, _ in statusMenu },
@@ -402,12 +418,14 @@ struct AppCoordinatorCancellationTests {
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
         let coordinator = AppCoordinator(
+            configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
             authManager: FakeChatGPTAuthManager(),
             latencyRecorder: FakeLatencyRecorder(),
+            historyRecorder: FakeCoordinatorHistoryRecorder(),
             soundFeedback: soundFeedback,
             recorderFactory: { _ in recorder },
             statusMenuFactory: { _, _, _ in statusMenu },
@@ -439,12 +457,14 @@ struct AppCoordinatorCancellationTests {
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
         let coordinator = AppCoordinator(
+            configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
             authManager: FakeChatGPTAuthManager(),
             latencyRecorder: FakeLatencyRecorder(),
+            historyRecorder: FakeCoordinatorHistoryRecorder(),
             soundFeedback: soundFeedback,
             recorderFactory: { _ in recorder },
             statusMenuFactory: { _, _, _ in statusMenu },
@@ -462,6 +482,40 @@ struct AppCoordinatorCancellationTests {
     }
 
     @Test
+    func detectedInputInterruptionStopsRecordingInsteadOfContinuingSilently() async throws {
+        let recorder = FakeCoordinatorRecorder()
+        recorder.reportsInputInterruption = true
+        let overlay = FakeCoordinatorOverlay()
+        let statusMenu = FakeCoordinatorStatusMenu()
+        let processingGate = CoordinatorGate()
+        let coordinator = AppCoordinator(
+            configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            config: AppConfig(),
+            notifier: FakeCoordinatorNotifier(),
+            injector: FakeCoordinatorInjector(),
+            overlay: overlay,
+            authManager: FakeChatGPTAuthManager(),
+            latencyRecorder: FakeLatencyRecorder(),
+            historyRecorder: FakeCoordinatorHistoryRecorder(),
+            recorderFactory: { _ in recorder },
+            statusMenuFactory: { _, _, _ in statusMenu },
+            pipelineFactory: { _, _, _ in BlockingCoordinatorPipeline(gate: processingGate) }
+        )
+
+        coordinator.recorder = recorder
+        coordinator.statusMenu = statusMenu
+        coordinator.handleHotkeyPress()
+        await waitForCoordinatorState(coordinator, toBecome: .recording)
+        await waitForCoordinatorState(coordinator, toBecome: .processing)
+
+        #expect(recorder.stopRecordingCallCount == 1)
+        #expect(overlay.showProcessingCallCount >= 1)
+        #expect(statusMenu.updates.last?.0 == .processing)
+
+        await processingGate.resume()
+    }
+
+    @Test
     func recordingStartFailureDoesNotPlayFeedbackSound() async throws {
         let recorder = FakeCoordinatorRecorder()
         recorder.startRecordingError = NSError(
@@ -473,12 +527,14 @@ struct AppCoordinatorCancellationTests {
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
         let coordinator = AppCoordinator(
+            configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
             authManager: FakeChatGPTAuthManager(),
             latencyRecorder: FakeLatencyRecorder(),
+            historyRecorder: FakeCoordinatorHistoryRecorder(),
             soundFeedback: soundFeedback,
             recorderFactory: { _ in recorder },
             statusMenuFactory: { _, _, _ in statusMenu },
@@ -503,12 +559,14 @@ struct AppCoordinatorCancellationTests {
         var config = AppConfig()
         config.transcription.feedbackSoundsEnabled = false
         let coordinator = AppCoordinator(
+            configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: config,
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
             authManager: FakeChatGPTAuthManager(),
             latencyRecorder: FakeLatencyRecorder(),
+            historyRecorder: FakeCoordinatorHistoryRecorder(),
             soundFeedback: soundFeedback,
             recorderFactory: { _ in recorder },
             statusMenuFactory: { _, _, _ in statusMenu },
@@ -534,12 +592,14 @@ struct AppCoordinatorCancellationTests {
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
         let coordinator = AppCoordinator(
+            configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
             authManager: FakeChatGPTAuthManager(),
             latencyRecorder: FakeLatencyRecorder(),
+            historyRecorder: FakeCoordinatorHistoryRecorder(),
             soundFeedback: soundFeedback,
             recorderFactory: { _ in recorder },
             statusMenuFactory: { _, _, _ in statusMenu },
@@ -586,6 +646,7 @@ struct AppCoordinatorCancellationTests {
             overlay: overlay,
             authManager: FakeChatGPTAuthManager(),
             latencyRecorder: latencyRecorder,
+            historyRecorder: FakeCoordinatorHistoryRecorder(),
             recorderFactory: { _ in recorder },
             statusMenuFactory: { _, _, _ in statusMenu },
             pipelineFactory: { _, _, policy in script.makePipeline(policy: policy) },
@@ -599,7 +660,7 @@ struct AppCoordinatorCancellationTests {
         coordinator.handleHotkeyPress()
         await waitForCondition { overlay.retryableErrors.count == 1 }
 
-        #expect(FileManager.default.fileExists(atPath: originalAudioURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: originalAudioURL.path) == true)
         #expect(script.policies == [.automatic])
         #expect(script.audioPaths.count == 1)
 
@@ -610,7 +671,7 @@ struct AppCoordinatorCancellationTests {
         #expect(script.policies == [.automatic, .manualRetry])
         #expect(script.audioPaths[0] == originalAudioURL.path)
         #expect(script.audioPaths[1] != originalAudioURL.path)
-        #expect(FileManager.default.fileExists(atPath: script.audioPaths[1]) == false)
+        #expect(FileManager.default.fileExists(atPath: script.audioPaths[1]) == true)
         #expect(injector.launchContexts == [capturedContext])
         #expect(latencyRecorder.samples.map(\.resultStatus) == ["error", "pasted"])
 
@@ -618,7 +679,17 @@ struct AppCoordinatorCancellationTests {
             directoryURL: configStore.directoryURL.appendingPathComponent("Recovery", isDirectory: true)
         )
         let recoveryRecords = try recoveryStore.loadRecent(limit: 10)
-        #expect(recoveryRecords.map(\.outcome) == ["error", "pasted"])
+        #expect(recoveryRecords.count == 2)
+        #expect(Set(recoveryRecords.map(\.outcome)) == Set(["error", "pasted"]))
+        #expect(Set(recoveryRecords.map(\.id)).count == 2)
+        let failure = try #require(recoveryRecords.first { $0.outcome == "error" })
+        let success = try #require(recoveryRecords.first { $0.outcome == "pasted" })
+        #expect(failure.errorMessage?.contains("Cloudflare") == true)
+        #expect(success.asrText == "retry final")
+        for record in recoveryRecords {
+            let savedURL = record.audioURL(baseDirectory: configStore.directoryURL.appendingPathComponent("Recovery", isDirectory: true))
+            #expect(try Data(contentsOf: savedURL) == Data(contentsOf: originalAudioURL))
+        }
         #expect(RecoveryHistoryPreview.recentItems(from: recoveryRecords, kind: .audio, limit: 10).count == 2)
         #expect(
             RecoveryHistoryPreview.recentItems(from: recoveryRecords, kind: .asr, limit: 10).map(\.copyText)
@@ -650,6 +721,7 @@ struct AppCoordinatorCancellationTests {
             overlay: overlay,
             authManager: FakeChatGPTAuthManager(),
             latencyRecorder: FakeLatencyRecorder(),
+            historyRecorder: FakeCoordinatorHistoryRecorder(),
             recorderFactory: { _ in recorder },
             statusMenuFactory: { _, _, _ in statusMenu },
             pipelineFactory: { _, _, policy in script.makePipeline(policy: policy) }
@@ -672,7 +744,7 @@ struct AppCoordinatorCancellationTests {
     }
 
     @Test
-    func startingNewRecordingAfterRetryableFailureClearsSavedRetryAudio() async throws {
+    func startingNewRecordingAfterRetryableFailurePreservesSavedRetryAudio() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -693,6 +765,7 @@ struct AppCoordinatorCancellationTests {
             overlay: overlay,
             authManager: FakeChatGPTAuthManager(),
             latencyRecorder: FakeLatencyRecorder(),
+            historyRecorder: FakeCoordinatorHistoryRecorder(),
             recorderFactory: { _ in recorder },
             statusMenuFactory: { _, _, _ in statusMenu },
             pipelineFactory: { _, _, policy in script.makePipeline(policy: policy) }
@@ -712,8 +785,42 @@ struct AppCoordinatorCancellationTests {
         coordinator.handleHotkeyPress()
         let remainingRetryFiles = (try? FileManager.default.contentsOfDirectory(atPath: retryDirectory.path)) ?? []
 
-        #expect(remainingRetryFiles.isEmpty)
+        #expect(remainingRetryFiles == savedRetryFiles)
         coordinator.cancelCurrentSession()
+    }
+
+    @Test
+    func cancellingProcessingPreservesReservedAudioAndPreventsLateInjection() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = RecoveryStore(directoryURL: root.appendingPathComponent("Recovery"))
+        let url = try store.beginRecording()
+        let samples = Data("original voice bytes".utf8)
+        try samples.write(to: url)
+        try store.finishRecording(RecordedAudio(fileURL: url, durationMs: 1_000), outcome: "recorded")
+        let gate = CoordinatorGate()
+        let recorder = FakeCoordinatorRecorder()
+        recorder.nextAudio = RecordedAudio(fileURL: url, durationMs: 1_000)
+        let injector = FakeCoordinatorInjector()
+        let coordinator = AppCoordinator(configStore: ConfigStore(homeDirectoryURL: root),
+            notifier: FakeCoordinatorNotifier(), injector: injector, overlay: FakeCoordinatorOverlay(),
+            authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
+            recoveryRecorder: store, recorderFactory: { _ in recorder },
+            statusMenuFactory: { _, _, _ in FakeCoordinatorStatusMenu() },
+            pipelineFactory: { _, _, _ in BlockingCoordinatorPipeline(gate: gate) })
+        coordinator.recorder = recorder
+        coordinator.handleHotkeyPress()
+        await waitForCoordinatorState(coordinator, toBecome: .recording)
+        coordinator.handleHotkeyPress()
+        await Task.yield()
+        coordinator.cancelCurrentSession()
+        await gate.resume()
+        await Task.yield()
+        #expect(try Data(contentsOf: url) == samples)
+        let records = try store.loadRecent(limit: 10)
+        #expect(records.count == 1)
+        #expect(records.first?.outcome == "cancelled")
+        #expect(injector.injectCallCount == 0)
     }
 
     @Test
@@ -727,11 +834,13 @@ struct AppCoordinatorCancellationTests {
         )
         let statusMenu = FakeCoordinatorStatusMenu()
         let coordinator = AppCoordinator(
+            configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: FakeCoordinatorOverlay(),
             authManager: authManager,
             latencyRecorder: FakeLatencyRecorder(),
+            historyRecorder: FakeCoordinatorHistoryRecorder(),
             recorderFactory: { _ in FakeCoordinatorRecorder() },
             statusMenuFactory: { _, _, _ in statusMenu },
             pipelineFactory: { _, _, _ in FakeCoordinatorPipeline() }

@@ -6,11 +6,29 @@ import Testing
 @Test
 func appleContactRemarkImporterBuildsUniqueTermsFromNicknames() {
     let entries = AppleContactRemarkImporter.entries(
-        from: ["阿彪", " 阿彪 ", "Longbiao", ""],
+        from: [
+            "阿彪",
+            " 阿彪 ",
+            "刘鑫财 漳州龙轴组织部 部长",
+            "郑计阮-厦大车队总经理",
+            "厦门金联云投资有限合伙企业",
+            "Alice Smith",
+            "Longbiao",
+            "",
+        ],
         importedAt: "2026-08-01T00:00:00Z"
     )
 
-    #expect(entries.map(\.original) == ["阿彪", "Longbiao"])
+    #expect(entries.map(\.original) == [
+        "阿彪",
+        "刘鑫财",
+        "漳州龙轴组织部",
+        "郑计阮",
+        "厦大车队",
+        "厦门金联云投资有限合伙企业",
+        "Alice Smith",
+        "Longbiao",
+    ])
     #expect(entries.allSatisfy { $0.type == .term })
     #expect(entries.allSatisfy { $0.source == "apple-contacts-nickname" })
 }
@@ -18,9 +36,9 @@ func appleContactRemarkImporterBuildsUniqueTermsFromNicknames() {
 @Test
 func weixinRemarkImporterReadsOnlyRemarksFromSmartShadowDatabase() throws {
     let fixture = try WeixinDatabaseFixture(rows: [
-        ("wxid_one", "昵称一", "陈老师", 1),
+        ("wxid_one", "昵称一", "李俊波，厦门市政府二办三处", 1),
         ("wxid_two", "昵称二", " 研发群 ", 1),
-        ("wxid_duplicate", "昵称三", "陈老师", 1),
+        ("wxid_duplicate", "昵称三", "李俊波", 1),
         ("wxid_group_member", "群成员", "不应导入", 3),
         ("wxid_empty", "只有昵称", "", 1),
     ])
@@ -33,9 +51,33 @@ func weixinRemarkImporterReadsOnlyRemarksFromSmartShadowDatabase() throws {
     ).importEntries()
 
     #expect(result.source == "smart-shadow-weixin-remark")
-    #expect(result.entries.map(\.original) == ["陈老师", "研发群"])
+    #expect(result.entries.map(\.original) == ["李俊波", "厦门市政府二办三处", "研发群"])
     #expect(result.entries.allSatisfy { $0.source == "smart-shadow-weixin-remark" })
     #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.snapshotRootURL.path).isEmpty)
+}
+
+@Test
+func contactNameSplittingRequiresAnExplicitSeparatorAndPlausibleChineseName() {
+    let entries = AppleContactRemarkImporter.entries(
+        from: [
+            "曾文淇-芗城区住建局",
+            "吴成联 厦门金联云投资有限合伙企业",
+            "陈晋辉 福建龙轴集团 董事长",
+            "厦门金联云投资有限合伙企业",
+            "Alice Smith",
+        ],
+        importedAt: "2026-08-01T00:00:00Z"
+    )
+
+    #expect(entries.map(\.original) == [
+        "曾文淇",
+        "芗城区住建局",
+        "吴成联",
+        "厦门金联云投资有限合伙企业",
+        "陈晋辉",
+        "福建龙轴集团",
+        "Alice Smith",
+    ])
 }
 
 @Test
@@ -47,6 +89,15 @@ func weixinRemarkImporterReportsMissingRuntimeConfig() {
     #expect(throws: WeixinRemarkImportError.runtimeConfigMissing) {
         try WeixinRemarkDatabaseImporter(configURLs: [missingURL]).importEntries()
     }
+}
+
+@Test
+func weixinImporterFindsTheCurrentDocumentsSmartShadowCheckout() {
+    let home = URL(fileURLWithPath: "/Users/test", isDirectory: true)
+
+    let urls = WeixinRemarkDatabaseImporter.standardConfigURLs(homeDirectory: home)
+
+    #expect(urls.first?.path == "/Users/test/Documents/Development/smart-shadow/var/weixin/tools/smart-shadow.json")
 }
 
 @Test
@@ -64,6 +115,25 @@ func weixinRemarkRefreshReplacesLegacySourcesAndPreservesUserTerms() {
     )
 
     #expect(refreshed.map(\.original) == ["ChatType", "新微信备注"])
+}
+
+@Test
+@MainActor
+func appleContactNameRefreshReplacesPreviousCombinedEntries() {
+    let previousImport = terminologyTerm("刘鑫财 漳州龙轴组织部 部长", source: "apple-contacts-nickname")
+    let user = terminologyTerm("ChatType", source: "user")
+    let incoming = [
+        terminologyTerm("刘鑫财", source: "apple-contacts-nickname"),
+        terminologyTerm("漳州龙轴组织部", source: "apple-contacts-nickname"),
+    ]
+
+    let refreshed = AppCoordinator.refreshedTerminologyEntries(
+        existing: [previousImport, user],
+        incoming: incoming,
+        replacingSources: ["apple-contacts-nickname"]
+    )
+
+    #expect(refreshed.map(\.original) == ["ChatType", "刘鑫财", "漳州龙轴组织部"])
 }
 
 private func terminologyTerm(_ value: String, source: String) -> TerminologyEntry {

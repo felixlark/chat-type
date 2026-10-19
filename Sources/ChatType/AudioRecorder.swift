@@ -24,6 +24,11 @@ protocol RecordingControlling: AnyObject {
     func stopRecording() throws -> RecordedAudio
     func cancelRecording() throws
     func currentLevel() -> CGFloat?
+    func inputInterruptionDetected() -> Bool
+}
+
+extension RecordingControlling {
+    func inputInterruptionDetected() -> Bool { false }
 }
 
 enum MicrophonePermissionState: Sendable {
@@ -32,11 +37,12 @@ enum MicrophonePermissionState: Sendable {
     case denied
 }
 
-enum RecorderError: LocalizedError {
+enum RecorderError: LocalizedError, Equatable {
     case microphoneDenied
     case recorderInitFailed
     case recorderStartFailed
     case noActiveRecording
+    case recordingStorageFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -48,6 +54,8 @@ enum RecorderError: LocalizedError {
             return "录音启动失败。"
         case .noActiveRecording:
             return "当前没有录音中的会话。"
+        case .recordingStorageFailed(let detail):
+            return "无法安全保存录音，已停止采集；已有音频仍保留。\(detail)"
         }
     }
 }
@@ -68,10 +76,14 @@ final class AudioRecorder: RecordingControlling {
     private let permissionProvider: PermissionProvider
     private let permissionRequester: PermissionRequester
     private let sessionFactory: SessionFactory
-    private let temporaryFileURLFactory: TemporaryFileURLFactory
+    private let temporaryFileURLFactory: TemporaryFileURLFactory?
+    private let recoveryStore: RecoveryStore?
+    private var persistenceTimer: Timer?
+    private var persistenceFailure: String?
     private let fileManager: FileManager
     private var recorder: (any RecordingSessionControlling)?
     private var fileURL: URL?
+    private var inputHealthMonitor = RecordingInputHealthMonitor()
 
     init(
         sampleRateHz: Int,
@@ -90,10 +102,8 @@ final class AudioRecorder: RecordingControlling {
         sessionFactory: @escaping SessionFactory = { url, settings in
             try AVAudioRecorderSession(url: url, settings: settings)
         },
-        temporaryFileURLFactory: @escaping TemporaryFileURLFactory = {
-            FileManager.default.temporaryDirectory
-                .appendingPathComponent("chattype-\(UUID().uuidString).wav")
-        },
+        temporaryFileURLFactory: TemporaryFileURLFactory? = nil,
+        recoveryStore: RecoveryStore? = nil,
         fileManager: FileManager = .default
     ) {
         self.sampleRateHz = sampleRateHz
@@ -101,6 +111,7 @@ final class AudioRecorder: RecordingControlling {
         self.permissionRequester = permissionRequester
         self.sessionFactory = sessionFactory
         self.temporaryFileURLFactory = temporaryFileURLFactory
+        self.recoveryStore = recoveryStore ?? (temporaryFileURLFactory == nil ? RecoveryStore() : nil)
         self.fileManager = fileManager
     }
 
@@ -187,7 +198,26 @@ final class AudioRecorder: RecordingControlling {
             requestPermission: permissionRequester
         )
 
-        let tempURL = temporaryFileURLFactory()
+        try Task.checkCancellation()
+        let tempURL: URL
+        do {
+            if let recoveryStore {
+                tempURL = try recoveryStore.beginRecording()
+            } else if let temporaryFileURLFactory {
+                tempURL = temporaryFileURLFactory()
+                // Injectable test boundary; production always reserves a journaled file.
+                if !fileManager.fileExists(atPath: tempURL.path) {
+                    guard fileManager.createFile(atPath: tempURL.path, contents: Data(), attributes: [.posixPermissions: 0o600]) else {
+                        throw CocoaError(.fileWriteNoPermission)
+                    }
+                }
+                try RecoveryStore.synchronize(tempURL)
+            } else {
+                throw CocoaError(.fileWriteNoPermission)
+            }
+        } catch {
+            throw RecorderError.recordingStorageFailed(error.localizedDescription)
+        }
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
             AVSampleRateKey: sampleRateHz,
@@ -202,8 +232,22 @@ final class AudioRecorder: RecordingControlling {
             throw RecorderError.recorderStartFailed
         }
 
+        inputHealthMonitor = RecordingInputHealthMonitor()
         self.recorder = recorder
         self.fileURL = tempURL
+        self.persistenceFailure = nil
+        do {
+            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tempURL.path)
+            try RecoveryStore.synchronize(tempURL)
+        } catch {
+            recorder.stop()
+            self.recorder = nil
+            self.fileURL = nil
+            throw RecorderError.recordingStorageFailed(error.localizedDescription)
+        }
+        persistenceTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.synchronizeActiveRecording() }
+        }
     }
 
     func stopRecording() throws -> RecordedAudio {
@@ -212,25 +256,40 @@ final class AudioRecorder: RecordingControlling {
         }
 
         let durationMs = Int((recorder.currentTime * 1000).rounded())
+        persistenceTimer?.invalidate()
+        persistenceTimer = nil
         recorder.stop()
         self.recorder = nil
         self.fileURL = nil
 
-        return RecordedAudio(
-            fileURL: fileURL,
-            durationMs: durationMs
-        )
+        let audio = RecordedAudio(fileURL: fileURL, durationMs: durationMs)
+        do {
+            try recoveryStore?.finishRecording(audio, outcome: "recorded")
+            try RecoveryStore.synchronize(fileURL)
+        } catch {
+            throw RecorderError.recordingStorageFailed(error.localizedDescription)
+        }
+        if let persistenceFailure { throw RecorderError.recordingStorageFailed(persistenceFailure) }
+        return audio
     }
 
     func cancelRecording() throws {
-        guard let recorder, let fileURL else {
-            throw RecorderError.noActiveRecording
-        }
+        let audio = try stopRecording()
+        // Cancellation ends work, never ownership of the user's raw material.
+        try recoveryStore?.finishRecording(audio, outcome: "cancelled")
+    }
 
-        recorder.stop()
-        self.recorder = nil
-        self.fileURL = nil
-        try? fileManager.removeItem(at: fileURL)
+    private func synchronizeActiveRecording() {
+        guard let fileURL, let recorder, persistenceFailure == nil else { return }
+        do {
+            try RecoveryStore.synchronize(fileURL)
+        } catch {
+            persistenceFailure = error.localizedDescription
+            // Stop collection immediately rather than continuing without disk protection.
+            recorder.stop()
+            persistenceTimer?.invalidate()
+            persistenceTimer = nil
+        }
     }
 
     func currentLevel() -> CGFloat? {
@@ -239,9 +298,18 @@ final class AudioRecorder: RecordingControlling {
         }
 
         recorder.updateMeters()
-        return WaveformNormalizer.normalizedLevel(
-            fromAveragePower: recorder.averagePower(forChannel: 0)
+        let powerDBFS = recorder.averagePower(forChannel: 0)
+        inputHealthMonitor.observe(
+            powerDBFS: powerDBFS,
+            elapsedSeconds: recorder.currentTime
         )
+        return WaveformNormalizer.normalizedLevel(
+            fromAveragePower: powerDBFS
+        )
+    }
+
+    func inputInterruptionDetected() -> Bool {
+        inputHealthMonitor.interruptionDetected || persistenceFailure != nil
     }
 }
 

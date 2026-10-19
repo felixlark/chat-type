@@ -79,6 +79,24 @@ private struct FakeTextPolisher: TextPolishing {
 
 private struct FakePolishError: Error {}
 
+private actor SequencedTextPolisher: TextPolishing {
+    private var results: [Result<TextPolishResult, Error>]
+    private(set) var callCount = 0
+
+    init(results: [Result<TextPolishResult, Error>]) {
+        self.results = results
+    }
+
+    func polish(
+        text: String,
+        terminologyEntries: [TerminologyEntry],
+        hintTerms: [String]
+    ) async throws -> TextPolishResult {
+        callCount += 1
+        return try results.removeFirst().get()
+    }
+}
+
 @Test
 func terminologyNormalizerPreservesHintTermsWithoutModelRewrite() {
     let result = TerminologyNormalizer().normalize(
@@ -871,6 +889,72 @@ func dictationPipelineFallsBackWhenTextPolishSuspiciouslyTruncatesLongInput() as
     #expect(result.metrics.textPolishProvider == nil)
     #expect(result.metrics.textPolishErrorMessage?.contains("truncated") == true)
     #expect(result.metrics.estimatedPolishInputTokens == 1_500)
+}
+
+@Test
+func dictationPipelineRetriesOnceWhenFirstTextPolishResultLooksTruncated() async throws {
+    let transcript = """
+    第一点先说明厦门工学院聚生智能产业学院的背景和我担任特聘教授的缘由。第二点说明傅院长希望补充省外专家推荐函。第三点请郭院长协助联系浙江大学相关专家并帮忙牵线。第四点附上五到十位专家名单和完整调研报告。
+    """
+    let polisher = SequencedTextPolisher(results: [
+        .success(
+            TextPolishResult(
+                text: "请郭院长协助联系专家。",
+                provider: .chatGPTAuth,
+                applied: true,
+                estimatedInputTokens: 760,
+                estimatedOutputTokens: 160
+            )
+        ),
+        .success(
+            TextPolishResult(
+                text: """
+                请以我的口吻给郭院长起草微信：
+
+                1. 说明厦门工学院聚生智能产业学院的背景；
+                2. 说明傅院长希望补充省外专家推荐函；
+                3. 请郭院长协助联系浙江大学相关专家；
+                4. 附上专家名单和调研报告。
+                """,
+                provider: .chatGPTAuth,
+                applied: true,
+                estimatedInputTokens: 760,
+                estimatedOutputTokens: 160
+            )
+        ),
+    ])
+    let pipeline = DictationPipeline(
+        transcriber: FakeTranscriber(
+            result: TranscriptionResult(
+                text: transcript,
+                metrics: .init(
+                    provider: .chatGPTManagedAuth,
+                    audioDurationMs: 115_000,
+                    audioBytes: 5_500_000,
+                    authMs: 20,
+                    transcribeMs: 5_800,
+                    promptIncluded: false
+                )
+            )
+        ),
+        normalizer: TerminologyNormalizer(),
+        importedEntries: [],
+        hintTerms: ["浙江大学"],
+        textPolisher: polisher
+    )
+
+    let audio = RecordedAudio(
+        fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("fake-polish-retry.wav"),
+        durationMs: 115_000
+    )
+
+    let result = try await pipeline.prepare(audio: audio)
+
+    #expect(await polisher.callCount == 2)
+    #expect(result.finalText.contains("省外专家推荐函"))
+    #expect(result.finalText.contains("专家名单和调研报告"))
+    #expect(result.metrics.textPolishProvider == .chatGPTAuth)
+    #expect(result.metrics.textPolishErrorMessage == nil)
 }
 
 @Test

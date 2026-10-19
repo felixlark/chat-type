@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 struct RecoveryRecordInput: Sendable {
     let timestamp: Date
@@ -146,97 +147,164 @@ protocol RecoveryRecording: Sendable {
     func loadRecent(limit: Int) throws -> [RecoveryRecord]
 }
 
+/// Audio is retained independently of the recent-history display limit.
+/// A synced per-record journal exists before the microphone starts.
 final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
     private let fileManager: FileManager
     let directoryURL: URL
     private let lock = NSLock()
-    private let retainedLimit: Int
 
-    init(
-        fileManager: FileManager = .default,
-        directoryURL: URL? = nil,
-        retainedLimit: Int = 10
-    ) {
+    init(fileManager: FileManager = .default, directoryURL: URL? = nil, retainedLimit: Int = 10) {
         self.fileManager = fileManager
         self.directoryURL = directoryURL ?? fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/ChatType/Recovery", isDirectory: true)
-        self.retainedLimit = retainedLimit
+        // Kept for source compatibility; retention is now independent of display limits.
+        _ = retainedLimit
+    }
+
+    func beginRecording() throws -> URL {
+        lock.lock()
+        defer { lock.unlock() }
+        try prepareDirectories()
+        let id = UUID()
+        let url = audioDirectoryURL.appendingPathComponent("\(id.uuidString).wav")
+        guard fileManager.createFile(atPath: url.path, contents: Data(), attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        try Self.synchronize(url)
+        try synchronizeDirectory(audioDirectoryURL)
+        let record = RecoveryRecord(id: id, timestamp: Date(), audioFileName: url.lastPathComponent,
+                                    audioDurationMs: 0, asrText: nil, polishText: nil, appName: nil,
+                                    appBundleIdentifier: nil, outcome: "recording", errorMessage: nil)
+        try writeJournal(record)
+        return url
+    }
+
+    func finishRecording(_ audio: RecordedAudio, outcome: String) throws {
+        try Self.synchronize(audio.fileURL)
+        try record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: audio.fileURL,
+                                      durationMs: audio.durationMs, asrText: nil, polishText: nil,
+                                      appName: nil, appBundleIdentifier: nil,
+                                      outcome: outcome, errorMessage: nil))
+    }
+
+    static func synchronize(_ url: URL) throws {
+        let handle = try FileHandle(forUpdating: url)
+        defer { try? handle.close() }
+        try handle.synchronize()
     }
 
     func record(_ input: RecoveryRecordInput) throws {
         lock.lock()
         defer { lock.unlock() }
-
-        try fileManager.createDirectory(at: audioDirectoryURL, withIntermediateDirectories: true)
-        var records = try loadRecentUnlocked(limit: retainedLimit)
-        let id = UUID()
+        try prepareDirectories()
+        let records = try loadAllUnlocked()
+        let ownedID = input.sourceAudioURL.deletingLastPathComponent().standardizedFileURL == audioDirectoryURL.standardizedFileURL
+            ? UUID(uuidString: input.sourceAudioURL.deletingPathExtension().lastPathComponent) : nil
+        let previous = records.first { $0.id == ownedID }
+        let id = ownedID ?? UUID()
         let audioFileName = "\(id.uuidString).wav"
         let destinationURL = audioDirectoryURL.appendingPathComponent(audioFileName)
-        try fileManager.copyItem(at: input.sourceAudioURL, to: destinationURL)
-        records.append(
-            RecoveryRecord(
-                id: id,
-                timestamp: input.timestamp,
-                audioFileName: audioFileName,
-                audioDurationMs: input.durationMs,
-                asrText: input.asrText,
-                polishText: input.polishText,
-                appName: input.appName,
-                appBundleIdentifier: input.appBundleIdentifier,
-                outcome: input.outcome,
-                errorMessage: input.errorMessage
-            )
-        )
-        records = Array(records.sorted { $0.timestamp < $1.timestamp }.suffix(retainedLimit))
-        try rewrite(records)
+        if input.sourceAudioURL.standardizedFileURL != destinationURL.standardizedFileURL {
+            try fileManager.copyItem(at: input.sourceAudioURL, to: destinationURL)
+            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destinationURL.path)
+        }
+        try Self.synchronize(destinationURL)
+        try writeJournal(RecoveryRecord(
+            id: id, timestamp: previous?.timestamp ?? input.timestamp,
+            audioFileName: audioFileName, audioDurationMs: input.durationMs,
+            asrText: input.asrText ?? previous?.asrText,
+            polishText: input.polishText ?? previous?.polishText,
+            appName: input.appName ?? previous?.appName,
+            appBundleIdentifier: input.appBundleIdentifier ?? previous?.appBundleIdentifier,
+            outcome: input.outcome, errorMessage: input.errorMessage
+        ))
     }
 
     func loadRecent(limit: Int = 10) throws -> [RecoveryRecord] {
         lock.lock()
         defer { lock.unlock() }
-        return try loadRecentUnlocked(limit: limit)
+        return Array(try loadAllUnlocked().sorted { $0.timestamp < $1.timestamp }.suffix(max(0, limit)))
     }
 
-    private func loadRecentUnlocked(limit: Int) throws -> [RecoveryRecord] {
-        guard fileManager.fileExists(atPath: indexURL.path) else {
-            return []
+    /// Called once on normal launch, never while a recorder owns an open WAV.
+    func recoverInterruptedRecordings() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try prepareDirectories()
+        let records = try loadAllUnlocked()
+        let ids = Set(records.map(\.id))
+        var interrupted = records.filter { ["recording", "recorded", "processing"].contains($0.outcome) }
+        // A crash between file creation and journal creation must not hide the audio.
+        for url in try fileManager.contentsOfDirectory(at: audioDirectoryURL, includingPropertiesForKeys: [.creationDateKey])
+            where url.pathExtension == "wav" {
+            guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent), !ids.contains(id) else { continue }
+            let date = (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date()
+            interrupted.append(RecoveryRecord(id: id, timestamp: date, audioFileName: url.lastPathComponent,
+                audioDurationMs: 0, asrText: nil, polishText: nil, appName: nil, appBundleIdentifier: nil,
+                outcome: "recording", errorMessage: nil))
         }
+        for record in interrupted {
+            let url = record.audioURL(baseDirectory: directoryURL)
+            guard fileManager.fileExists(atPath: url.path) else { continue }
+            let duration = try InterruptedWAVRecovery.repair(url: url) ?? record.audioDurationMs
+            try writeJournal(RecoveryRecord(id: record.id, timestamp: record.timestamp,
+                audioFileName: record.audioFileName, audioDurationMs: duration,
+                asrText: record.asrText, polishText: record.polishText, appName: record.appName,
+                appBundleIdentifier: record.appBundleIdentifier, outcome: "interrupted",
+                errorMessage: "录音或处理被中断；已保留原始音频，可复制或重试。"))
+        }
+    }
 
-        let contents = try String(contentsOf: indexURL, encoding: .utf8)
+    private func prepareDirectories() throws {
+        for url in [directoryURL, audioDirectoryURL, journalDirectoryURL] {
+            try fileManager.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+        }
+    }
+
+    private func loadAllUnlocked() throws -> [RecoveryRecord] {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return contents
-            .split(separator: "\n")
-            .compactMap { line in
-                try? decoder.decode(RecoveryRecord.self, from: Data(line.utf8))
+        var records: [UUID: RecoveryRecord] = [:]
+        // Read the old index without pruning or rewriting the user's existing archive.
+        let indexURL = directoryURL.appendingPathComponent("recovery-history.jsonl")
+        if fileManager.fileExists(atPath: indexURL.path) {
+            for line in try String(contentsOf: indexURL, encoding: .utf8).split(separator: "\n") {
+                if let record = try? decoder.decode(RecoveryRecord.self, from: Data(line.utf8)) {
+                    records[record.id] = record
+                }
             }
-            .sorted { $0.timestamp < $1.timestamp }
-            .suffix(max(0, limit))
-            .map { $0 }
+        }
+        if fileManager.fileExists(atPath: journalDirectoryURL.path) {
+            for url in try fileManager.contentsOfDirectory(at: journalDirectoryURL, includingPropertiesForKeys: nil)
+                where url.pathExtension == "json" {
+                // An unreadable journal must not cause unrelated recordings to be removed.
+                if let data = try? Data(contentsOf: url), let record = try? decoder.decode(RecoveryRecord.self, from: data) {
+                    records[record.id] = record
+                }
+            }
+        }
+        return Array(records.values)
     }
 
-    private func rewrite(_ records: [RecoveryRecord]) throws {
-        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+    private func writeJournal(_ record: RecoveryRecord) throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        let data = try records.reduce(into: Data()) { partial, record in
-            partial.append(try encoder.encode(record))
-            partial.append(0x0A)
-        }
-        try data.write(to: indexURL, options: [.atomic])
-
-        let retainedFileNames = Set(records.map(\.audioFileName))
-        let existingAudioFiles = (try? fileManager.contentsOfDirectory(at: audioDirectoryURL, includingPropertiesForKeys: nil)) ?? []
-        for audioFile in existingAudioFiles where !retainedFileNames.contains(audioFile.lastPathComponent) {
-            try? fileManager.removeItem(at: audioFile)
-        }
+        let url = journalDirectoryURL.appendingPathComponent("\(record.id.uuidString).json")
+        try encoder.encode(record).write(to: url, options: .atomic)
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try Self.synchronize(url)
+        try synchronizeDirectory(journalDirectoryURL)
     }
 
-    private var indexURL: URL {
-        directoryURL.appendingPathComponent("recovery-history.jsonl")
+    private func synchronizeDirectory(_ url: URL) throws {
+        let descriptor = open(url.path, O_RDONLY)
+        guard descriptor >= 0 else { throw CocoaError(.fileWriteUnknown) }
+        defer { close(descriptor) }
+        guard fsync(descriptor) == 0 else { throw CocoaError(.fileWriteUnknown) }
     }
 
-    private var audioDirectoryURL: URL {
-        directoryURL.appendingPathComponent("Audio", isDirectory: true)
-    }
+    private var audioDirectoryURL: URL { directoryURL.appendingPathComponent("Audio", isDirectory: true) }
+    private var journalDirectoryURL: URL { directoryURL.appendingPathComponent("Records", isDirectory: true) }
 }

@@ -15,9 +15,9 @@ enum AppleContactRemarkImportError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .accessDenied:
-            return "Allow ChatType to access Contacts before importing contact nicknames."
+            return "Allow ChatType to access Contacts before importing contact names."
         case .noNicknames:
-            return "No contact nicknames were found in Apple Contacts."
+            return "No contact names were found in Apple Contacts."
         }
     }
 }
@@ -62,7 +62,7 @@ struct AppleContactRemarkImporter {
     }
 
     static func entries(from nicknames: [String], importedAt: String) -> [TerminologyEntry] {
-        uniqueTerms(from: nicknames).map {
+        TerminologyPolicy.contactTerms(from: nicknames).map {
             TerminologyEntry(
                 type: .term,
                 original: $0,
@@ -94,7 +94,7 @@ enum WeixinRemarkImportError: LocalizedError, Equatable {
         case .databaseReadFailed(let detail):
             return "Could not read Smart Shadow's decrypted WeChat contacts: \(detail)"
         case .noRemarks:
-            return "No WeChat remark names were found in Smart Shadow's decrypted contacts."
+            return "No WeChat names were found in Smart Shadow's decrypted contacts."
         }
     }
 }
@@ -136,7 +136,7 @@ struct WeixinRemarkDatabaseImporter: Sendable {
 
         let remarks = try readRemarksFromStableSnapshot(of: databaseURL)
         let importedAt = ISO8601DateFormatter().string(from: Date())
-        let entries = uniqueTerms(from: remarks).map {
+        let entries = TerminologyPolicy.contactTerms(from: remarks).map {
             TerminologyEntry(
                 type: .term,
                 original: $0,
@@ -195,7 +195,7 @@ struct WeixinRemarkDatabaseImporter: Sendable {
                 defer { try? FileManager.default.removeItem(at: snapshotDirectory) }
 
                 let snapshotURL = snapshotDirectory.appendingPathComponent("contact.db")
-                try FileManager.default.copyItem(at: sourceURL, to: snapshotURL)
+                try createSQLiteBackupSnapshot(from: sourceURL, to: snapshotURL)
                 try FileManager.default.setAttributes(
                     [.posixPermissions: NSNumber(value: Int16(0o600))],
                     ofItemAtPath: snapshotURL.path
@@ -221,6 +221,58 @@ struct WeixinRemarkDatabaseImporter: Sendable {
         throw WeixinRemarkImportError.databaseReadFailed(
             "The decrypted contacts changed while ChatType was reading them. Try again."
         )
+    }
+
+    private func createSQLiteBackupSnapshot(from sourceURL: URL, to destinationURL: URL) throws {
+        var sourceDatabase: OpaquePointer?
+        var destinationDatabase: OpaquePointer?
+        guard var sourceComponents = URLComponents(url: sourceURL, resolvingAgainstBaseURL: false) else {
+            throw WeixinRemarkImportError.databaseReadFailed("SQLite could not locate the contacts database.")
+        }
+        sourceComponents.queryItems = [
+            URLQueryItem(name: "mode", value: "ro"),
+            URLQueryItem(name: "immutable", value: "1"),
+        ]
+        guard let sourceURI = sourceComponents.string else {
+            throw WeixinRemarkImportError.databaseReadFailed("SQLite could not locate the contacts database.")
+        }
+
+        let sourceOpenResult = sqlite3_open_v2(
+            sourceURI,
+            &sourceDatabase,
+            SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | SQLITE_OPEN_FULLMUTEX,
+            nil
+        )
+        guard sourceOpenResult == SQLITE_OK, let sourceDatabase else {
+            if let sourceDatabase {
+                sqlite3_close(sourceDatabase)
+            }
+            throw WeixinRemarkImportError.databaseReadFailed("SQLite could not open the contacts database.")
+        }
+        defer { sqlite3_close(sourceDatabase) }
+
+        let destinationOpenResult = sqlite3_open_v2(
+            destinationURL.path,
+            &destinationDatabase,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+            nil
+        )
+        guard destinationOpenResult == SQLITE_OK, let destinationDatabase else {
+            if let destinationDatabase {
+                sqlite3_close(destinationDatabase)
+            }
+            throw WeixinRemarkImportError.databaseReadFailed("SQLite could not create a private contacts snapshot.")
+        }
+        defer { sqlite3_close(destinationDatabase) }
+
+        guard let backup = sqlite3_backup_init(destinationDatabase, "main", sourceDatabase, "main") else {
+            throw WeixinRemarkImportError.databaseReadFailed(sqliteErrorMessage(destinationDatabase))
+        }
+        let stepResult = sqlite3_backup_step(backup, -1)
+        let finishResult = sqlite3_backup_finish(backup)
+        guard stepResult == SQLITE_DONE, finishResult == SQLITE_OK else {
+            throw WeixinRemarkImportError.databaseReadFailed(sqliteErrorMessage(destinationDatabase))
+        }
     }
 
     private func fileIdentity(at url: URL) throws -> FileIdentity {
@@ -327,31 +379,15 @@ struct WeixinRemarkDatabaseImporter: Sendable {
         }
 
         let home = FileManager.default.homeDirectoryForCurrentUser
-        urls.append(
-            home.appendingPathComponent("Projects/smart-shadow/var/weixin/tools/smart-shadow.json")
-        )
-        urls.append(
-            home.appendingPathComponent("Projects/Development/smart-shadow/var/weixin/tools/smart-shadow.json")
-        )
+        urls.append(contentsOf: standardConfigURLs(homeDirectory: home))
         return urls
     }
-}
 
-private func uniqueTerms(from values: [String]) -> [String] {
-    var seen = Set<String>()
-    var output: [String] = []
-
-    for value in values {
-        let term = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !term.isEmpty else {
-            continue
-        }
-        let key = term.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-        guard seen.insert(key).inserted else {
-            continue
-        }
-        output.append(term)
+    static func standardConfigURLs(homeDirectory home: URL) -> [URL] {
+        [
+            home.appendingPathComponent("Documents/Development/smart-shadow/var/weixin/tools/smart-shadow.json"),
+            home.appendingPathComponent("Projects/smart-shadow/var/weixin/tools/smart-shadow.json"),
+            home.appendingPathComponent("Projects/Development/smart-shadow/var/weixin/tools/smart-shadow.json"),
+        ]
     }
-
-    return output
 }
