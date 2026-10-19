@@ -26,7 +26,7 @@ enum TranscriptionError: LocalizedError {
         case .missingAuthTokenEnv(let envName):
             return "缺少转写 API key，请设置环境变量 \(envName)。"
         case .retryableCloudflareChallenge(let attempts):
-            return "ChatGPT 转写连续 \(attempts) 次遇到 Cloudflare 403；这通常是网络波动，录音已保留，可以点击 Retry 再试一次。"
+            return "ChatGPT 私有转写接口连续 \(attempts) 次返回 Cloudflare 403 challenge；这不是 ChatType 会话过期。录音已保留，可以点击 Retry 再试一次。"
         }
     }
 }
@@ -151,6 +151,7 @@ struct ChatGPTTranscriber: Sendable {
         case .chatGPTManagedAuth:
             let authStarted = DispatchTime.now().uptimeNanoseconds
             var token = try await authManager.bestAvailableAccessToken()
+            var accountID = authManager.chatGPTAccountID()
             var authMs = elapsedMilliseconds(since: authStarted)
             let transcribeStarted = DispatchTime.now().uptimeNanoseconds
             let response: (text: String, promptIncluded: Bool)
@@ -158,15 +159,18 @@ struct ChatGPTTranscriber: Sendable {
                 response = try await transcribeViaChatGPTBridgeWithCloudflareRetries(
                     audioData: data,
                     token: token,
+                    accountID: accountID,
                     prompt: prompt
                 )
             } catch let error as TranscriptionHTTPError where error.shouldRefreshAuthToken {
                 let refreshStarted = DispatchTime.now().uptimeNanoseconds
                 token = try await authManager.refreshAccessToken()
+                accountID = authManager.chatGPTAccountID()
                 authMs += elapsedMilliseconds(since: refreshStarted)
                 response = try await transcribeViaChatGPTBridgeWithCloudflareRetries(
                     audioData: data,
                     token: token,
+                    accountID: accountID,
                     prompt: prompt
                 )
             }
@@ -206,6 +210,7 @@ struct ChatGPTTranscriber: Sendable {
     private func transcribeViaChatGPTBridgeWithCloudflareRetries(
         audioData: Data,
         token: String,
+        accountID: String?,
         prompt: String
     ) async throws -> (text: String, promptIncluded: Bool) {
         for attempt in 1...cloudflareChallengeMaxAttempts {
@@ -213,6 +218,7 @@ struct ChatGPTTranscriber: Sendable {
                 return try await transcribeViaChatGPTBridge(
                     audioData: audioData,
                     token: token,
+                    accountID: accountID,
                     prompt: prompt
                 )
             } catch let error as TranscriptionHTTPError where error.isCloudflareChallenge {
@@ -233,6 +239,7 @@ struct ChatGPTTranscriber: Sendable {
     private func transcribeViaChatGPTBridge(
         audioData: Data,
         token: String,
+        accountID: String?,
         prompt: String
     ) async throws -> (text: String, promptIncluded: Bool) {
         let capability = bridgePromptCapability.value()
@@ -241,6 +248,7 @@ struct ChatGPTTranscriber: Sendable {
                 makeChatGPTBridgeRequest(
                     audioData: audioData,
                     token: token,
+                    accountID: accountID,
                     prompt: nil
                 ),
                 providerLabel: "ChatGPT"
@@ -251,9 +259,10 @@ struct ChatGPTTranscriber: Sendable {
         do {
             let text = try await executeTranscriptionRequest(
                 makeChatGPTBridgeRequest(
-                    audioData: audioData,
-                    token: token,
-                    prompt: prompt
+                audioData: audioData,
+                token: token,
+                accountID: accountID,
+                prompt: prompt
                 ),
                 providerLabel: "ChatGPT"
             )
@@ -268,6 +277,7 @@ struct ChatGPTTranscriber: Sendable {
                 makeChatGPTBridgeRequest(
                     audioData: audioData,
                     token: token,
+                    accountID: accountID,
                     prompt: nil
                 ),
                 providerLabel: "ChatGPT"
@@ -280,11 +290,17 @@ struct ChatGPTTranscriber: Sendable {
     private func makeChatGPTBridgeRequest(
         audioData: Data,
         token: String,
+        accountID: String?,
         prompt: String?
     ) -> URLRequest {
         var request = URLRequest(url: URL(string: config.chatGPTURL)!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let accountID, accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            request.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-ID")
+        }
+        request.setValue("ChatType/0.5 (macOS)", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("multipart/form-data; boundary=\(makeBoundary())", forHTTPHeaderField: "Content-Type")
         let boundary = request.value(forHTTPHeaderField: "Content-Type")!.split(separator: "=").last.map(String.init) ?? makeBoundary()
         request.httpBody = makeMultipartBody(

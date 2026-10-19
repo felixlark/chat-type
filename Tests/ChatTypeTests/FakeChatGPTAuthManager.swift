@@ -8,10 +8,12 @@ final class FakeChatGPTAuthManager: ChatGPTAuthProviding, @unchecked Sendable {
     private(set) var bestCallCount = 0
     private(set) var refreshCallCount = 0
     private let snapshotValue: ChatGPTAuthSnapshot
+    private let accountIDValue: String?
 
     init(
         bestTokens: [Result<String, Error>] = [.success("desktop-token")],
         refreshTokens: [Result<String, Error>] = [.success("desktop-token")],
+        accountID: String? = nil,
         snapshot: ChatGPTAuthSnapshot = ChatGPTAuthSnapshot(
             state: .ready,
             detail: "ready",
@@ -20,11 +22,16 @@ final class FakeChatGPTAuthManager: ChatGPTAuthProviding, @unchecked Sendable {
     ) {
         self.bestTokens = bestTokens
         self.refreshTokens = refreshTokens
+        accountIDValue = accountID
         snapshotValue = snapshot
     }
 
     func authSnapshot() -> ChatGPTAuthSnapshot {
         snapshotValue
+    }
+
+    func chatGPTAccountID() -> String? {
+        accountIDValue
     }
 
     func bestAvailableAccessToken() async throws -> String {

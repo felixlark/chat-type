@@ -93,6 +93,34 @@ func managedAuthSendsAudioAboveLegacyTenMegabyteLimit() async throws {
 }
 
 @Test
+func managedAuthSendsOfficialChatGPTAccountContextHeaders() async throws {
+    var config = AppConfig().transcription
+    config.provider = .chatGPTManagedAuth
+
+    let transcriber = ChatGPTTranscriber(
+        authManager: FakeChatGPTAuthManager(accountID: "account-123"),
+        config: config,
+        bridgePromptCapability: BridgePromptCapabilityStore(),
+        dataLoader: { request in
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer desktop-token")
+            #expect(request.value(forHTTPHeaderField: "ChatGPT-Account-ID") == "account-123")
+            #expect(request.value(forHTTPHeaderField: "User-Agent") == "ChatType/0.5 (macOS)")
+            #expect(request.value(forHTTPHeaderField: "Accept") == "application/json")
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (Data(#"{"text":"account-scoped transcript"}"#.utf8), response)
+        }
+    )
+
+    let result = try await transcriber.transcribe(makeAudioFixture())
+    #expect(result.text == "account-scoped transcript")
+}
+
+@Test
 func rejectsAudioAboveOfficialTwentyFiveMegabyteLimit() async throws {
     var config = AppConfig().transcription
     config.provider = .chatGPTManagedAuth
@@ -273,6 +301,7 @@ func managedAuthReportsRetryableErrorAfterThreeCloudflareChallenges() async thro
         authManager: authManager,
         config: config,
         bridgePromptCapability: BridgePromptCapabilityStore(),
+        cloudflareChallengeMaxAttempts: 3,
         dataLoader: { request in
             capture.append(
                 request,
@@ -302,7 +331,9 @@ func managedAuthReportsRetryableErrorAfterThreeCloudflareChallenges() async thro
     }
 
     #expect(caughtError?.localizedDescription.contains("Cloudflare 403") == true)
+    #expect(caughtError?.localizedDescription.contains("这不是 ChatType 会话过期") == true)
     #expect(capture.bodies().count == 3)
+    #expect(capture.urls() == [config.chatGPTURL, config.chatGPTURL, config.chatGPTURL])
     #expect(capture.authorizations() == ["Bearer desktop-token", "Bearer desktop-token", "Bearer desktop-token"])
 }
 

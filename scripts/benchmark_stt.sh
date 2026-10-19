@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_BIN="/Applications/ChatType.app/Contents/MacOS/ChatType"
+APP_BUNDLE="/Applications/ChatType.app"
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <audio-file-1> [audio-file-2 ...]"
@@ -10,7 +10,7 @@ if [[ $# -lt 1 ]]; then
   exit 1
 fi
 
-if [[ ! -x "$APP_BIN" ]]; then
+if [[ ! -x "$APP_BUNDLE/Contents/MacOS/ChatType" ]]; then
   "$ROOT_DIR/scripts/package_app.sh" >/dev/null
   "$ROOT_DIR/scripts/install_app.sh" >/dev/null
 fi
@@ -31,7 +31,21 @@ PY
 )"
 done
 
-CHATTYPE_BENCHMARK=1 \
-CHATTYPE_BENCHMARK_AUDIO_FILES="$audio_csv" \
-CHATTYPE_BENCHMARK_RUNS="${CHATTYPE_BENCHMARK_RUNS:-5}" \
-"$APP_BIN"
+output_directory="$(mktemp -d /tmp/ChatTypeBenchmark.XXXXXX)"
+stdout_file="$output_directory/stdout.log"
+stderr_file="$output_directory/stderr.log"
+
+/usr/bin/open -n -W \
+  -o "$stdout_file" \
+  --stderr "$stderr_file" \
+  --env CHATTYPE_BENCHMARK=1 \
+  --env "CHATTYPE_BENCHMARK_AUDIO_FILES=$audio_csv" \
+  --env "CHATTYPE_BENCHMARK_RUNS=${CHATTYPE_BENCHMARK_RUNS:-5}" \
+  "$APP_BUNDLE"
+
+if [[ -s "$stdout_file" ]]; then
+  sed -n '1,400p' "$stdout_file"
+fi
+if [[ -s "$stderr_file" ]]; then
+  sed -n '1,400p' "$stderr_file" >&2
+fi

@@ -45,6 +45,64 @@ private struct TerminologyCandidateIndex: Sendable {
     let terms: [IndexedTerminologyEntry]
 }
 
+/// Cheap necessary-condition gate in front of `String.contains(_:)` for terminology keys.
+///
+/// `String.contains(_:)` matches a contiguous run of `Character` (extended grapheme cluster)
+/// values under Swift's canonical equivalence, so a positive match implies that every
+/// `Character` of `key` is present in `textKey` under that same equality. `Set<Character>` uses
+/// exactly that equality/hash pair, so a character-set miss can only occur where the substring
+/// search would have failed as well. The gate therefore never suppresses a key that the
+/// original containment check would have accepted, and it never decides a match on its own:
+/// every candidate that passes the gate still runs the original `contains` call.
+///
+/// Empty keys carry no information, so they always fall through to the original check, which
+/// keeps both original predicate shapes (`textKey.contains(key)` and
+/// `!key.isEmpty && textKey.contains(key)`) exactly reproducible.
+struct EntryKeyMatchGate {
+    private let textKey: String
+    private let textCharacters: Set<Character>
+    private let textCharacterCount: Int
+
+    init(textKey: String) {
+        self.textKey = textKey
+        self.textCharacters = Set(textKey)
+        self.textCharacterCount = textKey.count
+    }
+
+    /// Equivalent to `textKey.contains(key)`.
+    func matchesKey(_ key: String) -> Bool {
+        guard !provesAbsent(key) else {
+            return false
+        }
+        return textKey.contains(key)
+    }
+
+    /// Equivalent to `!key.isEmpty && textKey.contains(key)`.
+    func matchesNonEmptyKey(_ key: String) -> Bool {
+        guard !key.isEmpty else {
+            return false
+        }
+        return matchesKey(key)
+    }
+
+    /// Returns `true` only when `key` cannot occur in `textKey` as a contiguous character run.
+    private func provesAbsent(_ key: String) -> Bool {
+        guard !key.isEmpty else {
+            return false
+        }
+
+        var keyCharacterCount = 0
+        for character in key {
+            keyCharacterCount += 1
+            guard textCharacters.contains(character) else {
+                return true
+            }
+        }
+
+        return keyCharacterCount > textCharacterCount
+    }
+}
+
 private final class TerminologyCandidateIndexCache: @unchecked Sendable {
     static let shared = TerminologyCandidateIndexCache()
 
@@ -352,17 +410,18 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         guard !textKey.isEmpty else {
             return []
         }
+        let gate = EntryKeyMatchGate(textKey: textKey)
 
         return index.terms.compactMap { indexed in
-            indexed.exactKeys.contains(where: textKey.contains) ? indexed.entry : nil
+            indexed.exactKeys.contains(where: gate.matchesKey) ? indexed.entry : nil
         }
     }
 
     private func exactHintCandidates(in text: String, hintTerms: [String]) -> [String] {
         let textKey = looseMatchKey(for: text)
+        let gate = EntryKeyMatchGate(textKey: textKey)
         return normalizedTerms(from: hintTerms).filter { term in
-            let key = looseMatchKey(for: term)
-            return !key.isEmpty && textKey.contains(key)
+            gate.matchesNonEmptyKey(looseMatchKey(for: term))
         }
     }
 

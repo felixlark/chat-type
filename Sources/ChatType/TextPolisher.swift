@@ -134,12 +134,12 @@ struct TextPolishPromptBuilder: Sendable {
         var seen = Set<String>()
         var count = 0
         let transcriptKey = looseMatchKey(for: transcript)
+        let gate = EntryKeyMatchGate(textKey: transcriptKey)
 
         for entry in terminologyEntries {
             let matchTerms = [entry.canonical] + entry.aliases
             guard matchTerms.contains(where: { term in
-                let key = looseMatchKey(for: term)
-                return !key.isEmpty && transcriptKey.contains(key)
+                gate.matchesNonEmptyKey(looseMatchKey(for: term))
             }) else {
                 continue
             }
@@ -277,6 +277,10 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let accountID = chatGPTAuthProvider?.chatGPTAccountID(),
+           accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            request.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-ID")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("ChatType/0.5", forHTTPHeaderField: "User-Agent")
 

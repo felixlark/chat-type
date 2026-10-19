@@ -1,51 +1,24 @@
 import Foundation
 import Security
 
-struct ChatGPTStoredCookie: Codable, Sendable, Equatable {
-    var domain: String
-    var path: String
-    var name: String
-    var value: String
-    var secure: Bool
-    var expiresAt: Date?
-
-    init(cookie: HTTPCookie) {
-        domain = cookie.domain
-        path = cookie.path
-        name = cookie.name
-        value = cookie.value
-        secure = cookie.isSecure
-        expiresAt = cookie.expiresDate
-    }
-
-    init(
-        domain: String,
-        path: String,
-        name: String,
-        value: String,
-        secure: Bool,
-        expiresAt: Date?
-    ) {
-        self.domain = domain
-        self.path = path
-        self.name = name
-        self.value = value
-        self.secure = secure
-        self.expiresAt = expiresAt
-    }
-
-    var httpCookie: HTTPCookie? {
-        var properties: [HTTPCookiePropertyKey: Any] = [
-            .domain: domain,
-            .path: path,
-            .name: name,
-            .value: value,
-            .secure: secure ? "TRUE" : "FALSE",
-        ]
-        if let expiresAt {
-            properties[.expires] = expiresAt
+enum JWTClaimDecoder {
+    static func payload(from token: String?) -> [String: Any]? {
+        guard let token else {
+            return nil
         }
-        return HTTPCookie(properties: properties)
+        let segments = token.split(separator: ".")
+        guard segments.count >= 2 else {
+            return nil
+        }
+        var base64 = String(segments[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let padding = base64.count % 4
+        if padding != 0 {
+            base64 += String(repeating: "=", count: 4 - padding)
+        }
+        return Data(base64Encoded: base64)
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
     }
 }
 
@@ -54,7 +27,6 @@ struct ChatGPTSession: Codable, Sendable, Equatable {
     var accessTokenExpiresAt: Date?
     var refreshToken: String?
     var idToken: String?
-    var cookies: [ChatGPTStoredCookie]
     var userEmail: String?
     var updatedAt: Date
 
@@ -63,7 +35,6 @@ struct ChatGPTSession: Codable, Sendable, Equatable {
         accessTokenExpiresAt: Date?,
         refreshToken: String? = nil,
         idToken: String? = nil,
-        cookies: [ChatGPTStoredCookie],
         userEmail: String?,
         updatedAt: Date
     ) {
@@ -71,7 +42,6 @@ struct ChatGPTSession: Codable, Sendable, Equatable {
         self.accessTokenExpiresAt = accessTokenExpiresAt
         self.refreshToken = refreshToken
         self.idToken = idToken
-        self.cookies = cookies
         self.userEmail = userEmail
         self.updatedAt = updatedAt
     }
@@ -87,6 +57,24 @@ struct ChatGPTSession: Codable, Sendable, Equatable {
         }
 
         return accessTokenExpiresAt > now
+    }
+
+    var chatGPTAccountID: String? {
+        for token in [idToken, accessToken] {
+            guard let payload = JWTClaimDecoder.payload(from: token) else {
+                continue
+            }
+            if let auth = payload["https://api.openai.com/auth"] as? [String: Any],
+               let accountID = auth["chatgpt_account_id"] as? String,
+               accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                return accountID
+            }
+            if let accountID = payload["https://api.openai.com/auth.chatgpt_account_id"] as? String,
+               accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                return accountID
+            }
+        }
+        return nil
     }
 }
 

@@ -16,7 +16,7 @@ enum ChatGPTAuthError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .loginRequired:
-            return "请先通过默认浏览器连接 ChatGPT。"
+            return "请先在 ChatType 设置中连接 ChatGPT。"
         case .sessionExpired:
             return "ChatType 保存的 ChatGPT 会话已过期，请重新登录。"
         case .sessionUnavailable:
@@ -26,7 +26,7 @@ enum ChatGPTAuthError: LocalizedError {
         case .refreshFailed(let message):
             return "ChatType 刷新 ChatGPT 会话失败：\(message)"
         case .browserLoginFailed(let message):
-            return "ChatType 浏览器登录失败：\(message)"
+            return "ChatType 登录失败：\(message)"
         }
     }
 }
@@ -46,6 +46,7 @@ struct ChatGPTAuthSnapshot: Sendable, Equatable {
 
 protocol ChatGPTAuthProviding: Sendable {
     func authSnapshot() -> ChatGPTAuthSnapshot
+    func chatGPTAccountID() -> String?
     func bestAvailableAccessToken() async throws -> String
     func refreshAccessToken() async throws -> String
     func prewarmSession() async
@@ -75,7 +76,7 @@ final class ChatGPTAuthManager: ChatGPTAuthProviding, @unchecked Sendable {
             guard let session = try loadSession() else {
                 return ChatGPTAuthSnapshot(
                     state: .signedOut,
-                    detail: "Use Browser Login in ChatType Settings before recording.",
+                    detail: "Connect ChatGPT in ChatType Settings before recording.",
                     userEmail: nil
                 )
             }
@@ -98,6 +99,10 @@ final class ChatGPTAuthManager: ChatGPTAuthProviding, @unchecked Sendable {
                 userEmail: nil
             )
         }
+    }
+
+    func chatGPTAccountID() -> String? {
+        try? loadSession()?.chatGPTAccountID
     }
 
     func bestAvailableAccessToken() async throws -> String {

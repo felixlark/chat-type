@@ -919,3 +919,133 @@ func dictationPipelineKeepsResequenceIntendedStepsWithPolish() async throws {
     #expect(result.metrics.textPolishProvider == .chatGPTAuth)
     #expect(result.metrics.polishMs >= 0)
 }
+
+@Test
+func entryKeyMatchGateAgreesWithStringContainsAcrossUnicodeCorpus() {
+    let zwjFamily = "👨\u{200D}👩\u{200D}👧"
+    let corpus = [
+        "",
+        "a",
+        "Chat",
+        "chat",
+        "ChatType",
+        "ChatTypes",
+        " chat type ",
+        "ｃｈａｔ",
+        "Ｃｈａｔ",
+        "聊天记录",
+        "café",
+        "cafe\u{301}",
+        "e\u{301}",
+        "é",
+        "각",
+        "각",
+        "❤",
+        "❤\u{FE0F}",
+        "🇨🇳",
+        "🇨🇳🇺🇸",
+        zwjFamily,
+        "👨",
+        "Straße",
+        "STRASSE",
+        "İstanbul",
+        "istanbul",
+        "https://example.com/a?b=1",
+        "/Users/example/Projects",
+        "全角，半角.",
+        "a\nb",
+        "…",
+        "𠀀",
+        "😀",
+        "😀\u{FE0F}",
+    ]
+
+    for textKey in corpus {
+        let gate = EntryKeyMatchGate(textKey: textKey)
+        for key in corpus {
+            #expect(
+                gate.matchesKey(key) == textKey.contains(key),
+                "matchesKey mismatch for textKey=\(textKey.debugDescription) key=\(key.debugDescription)"
+            )
+            #expect(
+                gate.matchesNonEmptyKey(key) == (!key.isEmpty && textKey.contains(key)),
+                "matchesNonEmptyKey mismatch for textKey=\(textKey.debugDescription) key=\(key.debugDescription)"
+            )
+        }
+    }
+}
+
+@Test
+func entryKeyMatchGateNeverRejectsARealContainingKey() {
+    let textKey = "请把 ChatType 的 F5 逻辑整理成三条要点，保留 café 与 각 以及 ❤️ 和 👨\u{200D}👩\u{200D}👧。"
+    let gate = EntryKeyMatchGate(textKey: textKey)
+
+    for start in textKey.indices {
+        for end in textKey.indices where end >= start {
+            let key = String(textKey[start...end])
+            #expect(gate.matchesKey(key) == textKey.contains(key))
+        }
+    }
+}
+
+@Test
+func terminologyNormalizerKeepsUnicodeStressProbesStable() {
+    let zwjFamily = "👨\u{200D}👩\u{200D}👧"
+    let entries = [
+        TerminologyEntry(canonical: "ChatType", aliases: []),
+        TerminologyEntry(canonical: "ChatTypes", aliases: []),
+        TerminologyEntry(canonical: "chat type", aliases: []),
+        TerminologyEntry(canonical: zwjFamily, aliases: ["family emoji"]),
+        TerminologyEntry(canonical: "❤\u{FE0F}", aliases: []),
+        TerminologyEntry(canonical: "❤", aliases: []),
+        TerminologyEntry(canonical: "🇨🇳", aliases: ["china flag"]),
+        TerminologyEntry(canonical: "각", aliases: []),
+        TerminologyEntry(canonical: "각", aliases: []),
+        TerminologyEntry(canonical: "café", aliases: []),
+        TerminologyEntry(canonical: "cafe\u{301}", aliases: []),
+        TerminologyEntry(canonical: "Ｃｈａｔ", aliases: ["full width chat"]),
+        TerminologyEntry(canonical: "聊天记录", aliases: []),
+        TerminologyEntry(canonical: "／Users／example", aliases: []),
+        TerminologyEntry(canonical: "https://example.com/a?b=1", aliases: []),
+        TerminologyEntry(
+            type: .correction,
+            original: "gpt4o",
+            replacement: "GPT-4o",
+            aliases: [],
+            source: "user",
+            usageCount: 0,
+            createdAt: "2026-10-19T00:00:00Z"
+        ),
+    ]
+    let normalizer = TerminologyNormalizer()
+
+    let family = normalizer.normalize(
+        text: "family \(zwjFamily) 和 ❤\u{FE0F} 与 ❤ 都要保留。",
+        importedEntries: entries,
+        hintTerms: []
+    )
+    #expect(family.text == "family \(zwjFamily) 和 ❤\u{FE0F} 与 ❤ 都要保留。")
+    #expect(family.applied == false)
+
+    let hangul = normalizer.normalize(
+        text: "韩国语 각 与拆分的 각 都测试一下。",
+        importedEntries: entries,
+        hintTerms: []
+    )
+    #expect(hangul.text == "韩国语 각 与拆分的 각 都测试一下。")
+
+    let correction = normalizer.normalize(
+        text: "请把 gpt4o 写成规范形式，然后再说 chat type 与 ChatTypes 的差别。",
+        importedEntries: entries,
+        hintTerms: []
+    )
+    #expect(correction.text == "请把 GPT-4o 写成规范形式，然后再说 chat type 与 ChatTypes 的差别。")
+    #expect(correction.exactReplacementCount == 1)
+
+    let width = normalizer.normalize(
+        text: "全角 Ｃｈａｔ 与半角 Chat 以及中文 聊天记录 都出现一次。",
+        importedEntries: entries,
+        hintTerms: []
+    )
+    #expect(width.text == "全角 Ｃｈａｔ 与半角 Chat 以及中文 聊天记录 都出现一次。")
+}

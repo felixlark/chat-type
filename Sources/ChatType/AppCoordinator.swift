@@ -152,19 +152,10 @@ final class AppCoordinator {
                 return
             }
 
-            statusMenu = statusMenuFactory(
-                { [weak self] in self?.openSettings() },
-                { [weak self] in self?.openConfigFolder() },
-                { NSApplication.shared.terminate(nil) }
-            )
-
             switch launchMode {
             case .normal, .settings:
                 config = try configStore.load()
                 recorder = recorderFactory(config.transcription.sampleRateHz)
-                refreshReadyState()
-                checkLaunchLoginState()
-                prewarmAuthIfNeeded()
 
                 hotkeyMonitor = try HotkeyMonitor(keyCode: config.transcription.hotkeyKeyCode) { [weak self] in
                     Task { @MainActor in
@@ -172,15 +163,21 @@ final class AppCoordinator {
                     }
                 }
                 notifier.ensureAuthorization()
+                installStatusMenuIfNeeded()
+                refreshReadyState()
+                checkLaunchLoginState()
+                prewarmAuthIfNeeded()
                 if launchMode == .settings {
                     openSettings()
                 }
             case .overlayDemo:
                 config = (try? configStore.load()) ?? config
+                installStatusMenuIfNeeded()
                 runOverlayDemo()
                 return
             case .overlayDemoState(let demoState):
                 config = (try? configStore.load()) ?? config
+                installStatusMenuIfNeeded()
                 runOverlayDemoState(demoState)
                 return
             case .benchmark:
@@ -202,8 +199,22 @@ final class AppCoordinator {
         } catch {
             NSSound.beep()
             notifier.notify(title: "ChatType launch failed", body: error.localizedDescription)
+            installStatusMenuIfNeeded()
             statusMenu?.update(state: .error, detail: error.localizedDescription)
         }
+    }
+
+    private func installStatusMenuIfNeeded() {
+        guard statusMenu == nil else {
+            return
+        }
+
+        statusMenu = statusMenuFactory(
+            { [weak self] in self?.openSettings() },
+            { [weak self] in self?.openConfigFolder() },
+            { NSApplication.shared.terminate(nil) }
+        )
+        statusMenu?.ensureVisible()
     }
 
     func handleHotkeyPress() {
@@ -215,6 +226,10 @@ final class AppCoordinator {
         case .processing:
             NSSound.beep()
         }
+    }
+
+    func showSettings() {
+        openSettings()
     }
 
     func cancelCurrentSession() {
@@ -519,6 +534,8 @@ final class AppCoordinator {
     }
 
     private func openSettings(focusRecoveryHistory: Bool = false) {
+        statusMenu?.ensureVisible()
+
         if focusRecoveryHistory {
             preferencesWindowController = nil
         }
@@ -619,11 +636,15 @@ final class AppCoordinator {
                 onOpenConfigFolder: { [weak self] in
                     self?.openConfigFolder()
                 },
-                focusRecoveryHistory: focusRecoveryHistory
+                focusRecoveryHistory: focusRecoveryHistory,
+                onClose: { [weak self] in
+                    self?.statusMenu?.ensureVisible()
+                }
             )
         }
 
         preferencesWindowController?.show()
+        statusMenu?.ensureVisible()
     }
 
     private func persistTerminologyImport(

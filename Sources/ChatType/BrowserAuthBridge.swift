@@ -1,8 +1,5 @@
 import AppKit
-import CryptoKit
 import Foundation
-import Network
-import Security
 
 enum BrowserBridgeState: Sendable, Equatable {
     case available
@@ -14,34 +11,29 @@ enum BrowserBridgeState: Sendable, Equatable {
 struct BrowserBridgeSnapshot: Sendable, Equatable {
     var state: BrowserBridgeState
     var detail: String
+    var userCode: String? = nil
 
     static let available = BrowserBridgeSnapshot(
         state: .available,
-        detail: "Use the default browser ChatGPT OAuth flow to connect ChatType."
+        detail: "Use OpenAI device authorization to connect ChatType."
     )
 }
 
 enum BrowserAuthBridgeError: LocalizedError, Equatable {
     case timedOut
-    case invalidRequest
-    case invalidState
-    case missingAuthorizationCode
-    case listenerFailed(String)
+    case deviceCodeRequestFailed(String)
+    case deviceAuthorizationFailed(String)
     case tokenExchangeFailed(String)
     case invalidTokenResponse
 
     var errorDescription: String? {
         switch self {
         case .timedOut:
-            return "Browser login timed out. Finish the ChatGPT authorization page and try again if it expired."
-        case .invalidRequest:
-            return "Browser login sent an invalid callback."
-        case .invalidState:
-            return "Browser login was rejected because the one-time state did not match."
-        case .missingAuthorizationCode:
-            return "Browser login finished without an authorization code."
-        case .listenerFailed(let message):
-            return "Browser login callback server could not start: \(message)"
+            return "Device login timed out. Request a new code and try again."
+        case .deviceCodeRequestFailed(let message):
+            return "ChatGPT device login could not start: \(message)"
+        case .deviceAuthorizationFailed(let message):
+            return "ChatGPT device authorization failed: \(message)"
         case .tokenExchangeFailed(let message):
             return "ChatGPT OAuth token exchange failed: \(message)"
         case .invalidTokenResponse:
@@ -59,32 +51,44 @@ protocol BrowserAuthBridging: Sendable {
 final class BrowserAuthBridge: BrowserAuthBridging, @unchecked Sendable {
     private static let clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
     private static let issuer = "https://auth.openai.com"
-    private static let callbackPort: UInt16 = 1455
-    private static let callbackPath = "/auth/callback"
-    private static let originator = "chattype_desktop"
-    private static let scopes = "openid profile email offline_access"
+    static let deviceVerificationURL = URL(string: "https://auth.openai.com/codex/device")!
+    private static let deviceRedirectURI = "https://auth.openai.com/deviceauth/callback"
 
     private let timeoutNanoseconds: UInt64
     private let opener: @MainActor @Sendable (URL) -> Void
     private let dataLoader: @Sendable (URLRequest) async throws -> (Data, URLResponse)
+    private let sleeper: @Sendable (UInt64) async throws -> Void
     private let nowProvider: @Sendable () -> Date
     private let lock = NSLock()
     private var bridgeSnapshot = BrowserBridgeSnapshot.available
 
     init(
-        timeoutSeconds: TimeInterval = 600,
+        timeoutSeconds: TimeInterval = 900,
         now: @escaping @Sendable () -> Date = Date.init,
         opener: @escaping @MainActor @Sendable (URL) -> Void = { url in
-            NSWorkspace.shared.open(url)
+            if let chromeURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") {
+                NSWorkspace.shared.open(
+                    [url],
+                    withApplicationAt: chromeURL,
+                    configuration: NSWorkspace.OpenConfiguration(),
+                    completionHandler: nil
+                )
+            } else {
+                NSWorkspace.shared.open(url)
+            }
         },
         dataLoader: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse) = { request in
             try await URLSession.shared.data(for: request)
+        },
+        sleeper: @escaping @Sendable (UInt64) async throws -> Void = { nanoseconds in
+            try await Task.sleep(nanoseconds: nanoseconds)
         }
     ) {
         timeoutNanoseconds = UInt64(max(1, timeoutSeconds) * 1_000_000_000)
         nowProvider = now
         self.opener = opener
         self.dataLoader = dataLoader
+        self.sleeper = sleeper
     }
 
     func snapshot() -> BrowserBridgeSnapshot {
@@ -94,42 +98,24 @@ final class BrowserAuthBridge: BrowserAuthBridging, @unchecked Sendable {
     }
 
     func captureSession(now: Date = Date()) async throws -> ChatGPTSession {
-        let state = Self.randomBase64URL(bytes: 32)
-        let pkce = Self.makePKCE()
-        let callbackServer = BrowserOAuthCallbackServer(
-            state: state,
-            port: Self.callbackPort,
-            path: Self.callbackPath
-        )
-
         do {
-            try await callbackServer.start()
-            setSnapshot(.waiting, "Waiting for ChatGPT authorization in your default browser.")
-            await opener(Self.authorizationURL(state: state, codeChallenge: pkce.codeChallenge))
-
-            let code = try await withThrowingTaskGroup(of: String.self) { group in
-                group.addTask {
-                    try await callbackServer.waitForAuthorizationCode()
-                }
-                group.addTask { [timeoutNanoseconds] in
-                    try await Task.sleep(nanoseconds: timeoutNanoseconds)
-                    throw BrowserAuthBridgeError.timedOut
-                }
-
-                guard let result = try await group.next() else {
-                    throw BrowserAuthBridgeError.timedOut
-                }
-                group.cancelAll()
-                return result
-            }
-
-            let response = try await exchangeAuthorizationCode(code, codeVerifier: pkce.codeVerifier)
+            let deviceCode = try await requestDeviceCode()
+            setSnapshot(
+                .waiting,
+                "Enter this one-time code in the OpenAI page. It expires in 15 minutes.",
+                userCode: deviceCode.userCode
+            )
+            await opener(Self.deviceVerificationURL)
+            let authorization = try await pollForDeviceAuthorization(deviceCode)
+            let response = try await exchangeAuthorizationCode(
+                authorization.authorizationCode,
+                codeVerifier: authorization.codeVerifier,
+                redirectURI: Self.deviceRedirectURI
+            )
             let session = makeSession(from: response, now: nowProvider())
-            setSnapshot(.connected, "ChatType connected to ChatGPT via browser OAuth.")
-            await callbackServer.stop()
+            setSnapshot(.connected, "ChatType connected to ChatGPT via OpenAI device authorization.")
             return session
         } catch {
-            await callbackServer.stop()
             setSnapshot(.failed(error.localizedDescription), error.localizedDescription)
             throw error
         }
@@ -140,11 +126,62 @@ final class BrowserAuthBridge: BrowserAuthBridging, @unchecked Sendable {
         return makeSession(from: response, now: now)
     }
 
-    private func exchangeAuthorizationCode(_ code: String, codeVerifier: String) async throws -> OAuthTokenResponse {
+    private func requestDeviceCode() async throws -> DeviceCodeResponse {
+        var request = URLRequest(url: URL(string: "\(Self.issuer)/api/accounts/deviceauth/usercode")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(DeviceCodeRequest(clientID: Self.clientID))
+
+        let (data, response) = try await dataLoader(request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw BrowserAuthBridgeError.deviceCodeRequestFailed("Invalid HTTP response.")
+        }
+        guard httpResponse.statusCode >= 200 && httpResponse.statusCode < 300 else {
+            throw BrowserAuthBridgeError.deviceCodeRequestFailed(Self.failureDetail(data: data, response: httpResponse))
+        }
+        return try JSONDecoder().decode(DeviceCodeResponse.self, from: data)
+    }
+
+    private func pollForDeviceAuthorization(_ deviceCode: DeviceCodeResponse) async throws -> DeviceAuthorizationResponse {
+        let intervalNanoseconds = max(1, deviceCode.interval) * 1_000_000_000
+        let maximumAttempts = max(1, Int(timeoutNanoseconds / intervalNanoseconds) + 1)
+
+        for attempt in 0..<maximumAttempts {
+            var request = URLRequest(url: URL(string: "\(Self.issuer)/api/accounts/deviceauth/token")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(DeviceAuthorizationRequest(
+                deviceAuthID: deviceCode.deviceAuthID,
+                userCode: deviceCode.userCode
+            ))
+
+            let (data, response) = try await dataLoader(request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw BrowserAuthBridgeError.deviceAuthorizationFailed("Invalid HTTP response.")
+            }
+            if httpResponse.statusCode >= 200 && httpResponse.statusCode < 300 {
+                return try JSONDecoder().decode(DeviceAuthorizationResponse.self, from: data)
+            }
+            if Self.isDeviceAuthorizationPending(data: data, response: httpResponse) == false {
+                throw BrowserAuthBridgeError.deviceAuthorizationFailed(Self.failureDetail(data: data, response: httpResponse))
+            }
+            if attempt + 1 < maximumAttempts {
+                try await sleeper(intervalNanoseconds)
+            }
+        }
+
+        throw BrowserAuthBridgeError.timedOut
+    }
+
+    private func exchangeAuthorizationCode(
+        _ code: String,
+        codeVerifier: String,
+        redirectURI: String
+    ) async throws -> OAuthTokenResponse {
         try await requestToken([
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": Self.redirectURI,
+            "redirect_uri": redirectURI,
             "client_id": Self.clientID,
             "code_verifier": codeVerifier,
         ])
@@ -188,70 +225,53 @@ final class BrowserAuthBridge: BrowserAuthBridging, @unchecked Sendable {
                 ?? Self.parseJWTExpiry(accessToken),
             refreshToken: response.refreshToken,
             idToken: response.idToken,
-            cookies: [],
             userEmail: Self.parseUserEmail(accessToken: accessToken, idToken: response.idToken),
             updatedAt: now
         )
     }
 
-    private static var redirectURI: String {
-        "http://localhost:\(callbackPort)\(callbackPath)"
+    private static func failureDetail(data: Data, response: HTTPURLResponse) -> String {
+        if response.value(forHTTPHeaderField: "cf-mitigated") == "challenge" {
+            return "Cloudflare returned an HTML challenge instead of JSON."
+        }
+        let body = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let body, body.isEmpty == false, body.first != "<" {
+            return "\(response.statusCode) \(body)"
+        }
+        return "HTTP \(response.statusCode)"
     }
 
-    private static func authorizationURL(state: String, codeChallenge: String) -> URL {
-        var components = URLComponents(string: "\(issuer)/oauth/authorize")!
-        components.queryItems = [
-            URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "client_id", value: clientID),
-            URLQueryItem(name: "redirect_uri", value: redirectURI),
-            URLQueryItem(name: "scope", value: scopes),
-            URLQueryItem(name: "code_challenge", value: codeChallenge),
-            URLQueryItem(name: "code_challenge_method", value: "S256"),
-            URLQueryItem(name: "id_token_add_organizations", value: "true"),
-            URLQueryItem(name: "codex_cli_simplified_flow", value: "true"),
-            URLQueryItem(name: "state", value: state),
-            URLQueryItem(name: "originator", value: originator),
-        ]
-        return components.url!
-    }
+    private static func isDeviceAuthorizationPending(data: Data, response: HTTPURLResponse) -> Bool {
+        if response.statusCode == 403 || response.statusCode == 404 {
+            return true
+        }
 
-    private static func makePKCE() -> (codeVerifier: String, codeChallenge: String) {
-        let verifier = randomBase64URL(bytes: 32)
-        let digest = SHA256.hash(data: Data(verifier.utf8))
-        return (verifier, Data(digest).base64URLEncodedString())
-    }
+        guard response.statusCode == 400 || response.statusCode == 429,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
 
-    private static func randomBase64URL(bytes count: Int) -> String {
-        var bytes = [UInt8](repeating: 0, count: count)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        return Data(bytes).base64URLEncodedString()
+        let error = object["error"]
+        let errorCode = (error as? String)
+            ?? (error as? [String: Any])?["code"] as? String
+        return errorCode == "authorization_pending"
+            || errorCode == "deviceauth_authorization_pending"
+            || errorCode == "slow_down"
     }
 
     private static func parseUserEmail(accessToken: String, idToken: String?) -> String? {
-        if let email = parseJWTPayload(idToken)?["email"] as? String, !email.isEmpty {
+        if let email = JWTClaimDecoder.payload(from: idToken)?["email"] as? String, !email.isEmpty {
             return email
         }
-        let profile = parseJWTPayload(accessToken)?["https://api.openai.com/profile"] as? [String: Any]
+        let profile = JWTClaimDecoder.payload(from: accessToken)?["https://api.openai.com/profile"] as? [String: Any]
         return profile?["email"] as? String
     }
 
     private static func parseJWTExpiry(_ token: String) -> Date? {
-        guard let exp = parseJWTPayload(token)?["exp"] as? TimeInterval else {
+        guard let exp = JWTClaimDecoder.payload(from: token)?["exp"] as? TimeInterval else {
             return nil
         }
         return Date(timeIntervalSince1970: exp)
-    }
-
-    private static func parseJWTPayload(_ token: String?) -> [String: Any]? {
-        guard let token else {
-            return nil
-        }
-        let segments = token.split(separator: ".")
-        guard segments.count >= 2 else {
-            return nil
-        }
-        return Data(base64URLEncoded: String(segments[1]))
-            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
     }
 
     private func formEncoded(_ parameters: [String: String]) -> String {
@@ -268,11 +288,67 @@ final class BrowserAuthBridge: BrowserAuthBridging, @unchecked Sendable {
         return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
-    private func setSnapshot(_ state: BrowserBridgeState, _ detail: String) {
+    private func setSnapshot(_ state: BrowserBridgeState, _ detail: String, userCode: String? = nil) {
         lock.lock()
-        bridgeSnapshot = BrowserBridgeSnapshot(state: state, detail: detail)
+        bridgeSnapshot = BrowserBridgeSnapshot(state: state, detail: detail, userCode: userCode)
         lock.unlock()
         NotificationCenter.default.post(name: .chatGPTAuthStateDidChange, object: nil)
+    }
+}
+
+private struct DeviceCodeRequest: Encodable, Sendable, Equatable {
+    var clientID: String
+
+    private enum CodingKeys: String, CodingKey {
+        case clientID = "client_id"
+    }
+}
+
+private struct DeviceCodeResponse: Decodable, Sendable, Equatable {
+    var deviceAuthID: String
+    var userCode: String
+    var interval: UInt64
+
+    private enum CodingKeys: String, CodingKey {
+        case deviceAuthID = "device_auth_id"
+        case userCode = "user_code"
+        case interval
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        deviceAuthID = try container.decode(String.self, forKey: .deviceAuthID)
+        userCode = try container.decode(String.self, forKey: .userCode)
+        if let value = try? container.decode(UInt64.self, forKey: .interval) {
+            interval = value
+        } else if let value = try? container.decode(String.self, forKey: .interval),
+                  let parsed = UInt64(value.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            interval = parsed
+        } else {
+            interval = 5
+        }
+    }
+}
+
+private struct DeviceAuthorizationRequest: Encodable, Sendable, Equatable {
+    var deviceAuthID: String
+    var userCode: String
+
+    private enum CodingKeys: String, CodingKey {
+        case deviceAuthID = "device_auth_id"
+        case userCode = "user_code"
+    }
+}
+
+private struct DeviceAuthorizationResponse: Decodable, Sendable, Equatable {
+    var authorizationCode: String
+    var codeChallenge: String
+    var codeVerifier: String
+
+    private enum CodingKeys: String, CodingKey {
+        case authorizationCode = "authorization_code"
+        case codeChallenge = "code_challenge"
+        case codeVerifier = "code_verifier"
     }
 }
 
@@ -287,201 +363,5 @@ private struct OAuthTokenResponse: Codable, Sendable, Equatable {
         case refreshToken = "refresh_token"
         case idToken = "id_token"
         case expiresIn = "expires_in"
-    }
-}
-
-final class BrowserOAuthCallbackServer: @unchecked Sendable {
-    private let state: String
-    private let port: UInt16
-    private let path: String
-    private let queue = DispatchQueue(label: "me.longbiaochen.chattype.oauth-callback")
-    private let lock = NSLock()
-    private var listener: NWListener?
-    private var continuation: CheckedContinuation<String, Error>?
-    private var completedResult: Result<String, Error>?
-
-    init(state: String, port: UInt16, path: String) {
-        self.state = state
-        self.port = port
-        self.path = path
-    }
-
-    func start() async throws {
-        let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
-        self.listener = listener
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let box = VoidContinuationBox(continuation: continuation)
-            listener.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    box.resume(.success(()))
-                case .failed(let error):
-                    box.resume(.failure(BrowserAuthBridgeError.listenerFailed(error.localizedDescription)))
-                default:
-                    break
-                }
-            }
-            listener.newConnectionHandler = { [weak self] connection in
-                self?.handle(connection)
-            }
-            listener.start(queue: queue)
-        }
-    }
-
-    func waitForAuthorizationCode() async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            if let completedResult {
-                lock.unlock()
-                continuation.resume(with: completedResult)
-                return
-            }
-            self.continuation = continuation
-            lock.unlock()
-        }
-    }
-
-    func stop() async {
-        listener?.cancel()
-        listener = nil
-    }
-
-    private func handle(_ connection: NWConnection) {
-        connection.start(queue: queue)
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, _, error in
-            guard let self else { return }
-            if let error {
-                self.complete(.failure(error))
-                self.respond(to: connection, status: 400, body: "Bad Request")
-                return
-            }
-            do {
-                let request = try HTTPRequest(data: data ?? Data())
-                let code = try self.parseCode(from: request)
-                self.respond(to: connection, status: 200, body: "ChatType authorization completed. Return to ChatType.")
-                self.complete(.success(code))
-            } catch {
-                self.respond(to: connection, status: 400, body: error.localizedDescription)
-                self.complete(.failure(error))
-            }
-        }
-    }
-
-    private func parseCode(from request: HTTPRequest) throws -> String {
-        guard request.method == "GET", request.path == path else {
-            throw BrowserAuthBridgeError.invalidRequest
-        }
-        guard request.query["state"] == state else {
-            throw BrowserAuthBridgeError.invalidState
-        }
-        if let error = request.query["error"] {
-            let detail = request.query["error_description"] ?? error
-            throw BrowserAuthBridgeError.tokenExchangeFailed(detail)
-        }
-        guard let code = request.query["code"], !code.isEmpty else {
-            throw BrowserAuthBridgeError.missingAuthorizationCode
-        }
-        return code
-    }
-
-    private func respond(to connection: NWConnection, status: Int, body: String) {
-        let reason = status == 200 ? "OK" : "Bad Request"
-        let bodyData = Data(body.utf8)
-        var response = [
-            "HTTP/1.1 \(status) \(reason)",
-            "Content-Length: \(bodyData.count)",
-            "Content-Type: text/plain; charset=utf-8",
-            "Connection: close",
-            "",
-            "",
-        ].joined(separator: "\r\n").data(using: .utf8)!
-        response.append(bodyData)
-        connection.send(content: response, completion: .contentProcessed { _ in
-            connection.cancel()
-        })
-    }
-
-    private func complete(_ result: Result<String, Error>) {
-        lock.lock()
-        guard completedResult == nil else {
-            lock.unlock()
-            return
-        }
-        completedResult = result
-        let continuation = self.continuation
-        self.continuation = nil
-        lock.unlock()
-        continuation?.resume(with: result)
-    }
-}
-
-private final class VoidContinuationBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private let continuation: CheckedContinuation<Void, Error>
-    private var didResume = false
-
-    init(continuation: CheckedContinuation<Void, Error>) {
-        self.continuation = continuation
-    }
-
-    func resume(_ result: Result<Void, Error>) {
-        lock.lock()
-        guard didResume == false else {
-            lock.unlock()
-            return
-        }
-        didResume = true
-        lock.unlock()
-        continuation.resume(with: result)
-    }
-}
-
-private struct HTTPRequest {
-    let method: String
-    let path: String
-    let query: [String: String]
-
-    init(data: Data) throws {
-        guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)) else {
-            throw BrowserAuthBridgeError.invalidRequest
-        }
-        let header = String(decoding: data[..<headerEnd.lowerBound], as: UTF8.self)
-        guard let requestLine = header.components(separatedBy: "\r\n").first else {
-            throw BrowserAuthBridgeError.invalidRequest
-        }
-        let requestParts = requestLine.split(separator: " ").map(String.init)
-        guard requestParts.count >= 2 else {
-            throw BrowserAuthBridgeError.invalidRequest
-        }
-        method = requestParts[0]
-
-        let rawTarget = requestParts[1]
-        let components = URLComponents(string: rawTarget)
-        path = components?.path ?? rawTarget
-        query = Dictionary(
-            uniqueKeysWithValues: (components?.queryItems ?? []).compactMap { item in
-                item.value.map { (item.name, $0) }
-            }
-        )
-    }
-}
-
-private extension Data {
-    init?(base64URLEncoded value: String) {
-        var base64 = value
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let padding = base64.count % 4
-        if padding != 0 {
-            base64 += String(repeating: "=", count: 4 - padding)
-        }
-        self.init(base64Encoded: base64)
-    }
-
-    func base64URLEncodedString() -> String {
-        base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 }

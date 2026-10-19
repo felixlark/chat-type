@@ -494,7 +494,7 @@ final class OverlayController: OverlayControlling {
             return false
         }
 
-        hitView.performClick(nil)
+        _ = hitView.sendAction(hitView.action, to: hitView.target)
         return true
     }
 
@@ -512,7 +512,7 @@ final class OverlayController: OverlayControlling {
             return false
         }
 
-        hitView.performClick(nil)
+        _ = hitView.sendAction(hitView.action, to: hitView.target)
         return true
     }
 

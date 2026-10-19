@@ -95,6 +95,8 @@ swift "$ROOT/scripts/render_app_icon.swift" "$ICONSET_DIR"
   printf '  <string>%s</string>\n' "$CHATTYPE_BUILD"
   printf '%s\n' '  <key>LSMinimumSystemVersion</key>'
   printf '%s\n' '  <string>13.0</string>'
+  printf '%s\n' '  <key>LSUIElement</key>'
+  printf '%s\n' '  <true/>'
   printf '%s\n' '  <key>NSMicrophoneUsageDescription</key>'
   printf '%s\n' '  <string>ChatType records short dictation clips and sends them through its own ChatGPT account session.</string>'
   printf '%s\n' '  <key>NSContactsUsageDescription</key>'

@@ -3,6 +3,12 @@
 ## Next
 
 - Removed the stale provider-key fallback matrix from shipped config and Settings; AI Polish is ChatGPT Auth only
+- Restored menu-bar-only startup, Settings access, and `Cmd+Q` lifecycle behavior without a Dock icon or an unsolicited launch window
+- Moved ChatGPT sign-in to the official device-code flow and surfaced the code, copy action, and user guidance inside ChatType
+- Added the OAuth account-context request contract required by the private ChatGPT transcription path and preserved recordings when Cloudflare returns a challenge
+- Removed the unapproved macOS Speech fallback so the product retains only ChatGPT Managed Auth and user-selected OpenAI-Compatible recovery
+- Added bounded incident diagnostics, billing/provider policy checks, and an installed-app acceptance matrix
+- Restored the approved dynamic menu-bar icon after an unauthorized text-label regression and added visual-ownership regression gates
 
 ## 0.5.1
 

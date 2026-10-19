@@ -1,10 +1,13 @@
 import AppKit
 import AVFoundation
 import ApplicationServices
+import Combine
 import SwiftUI
 
 @MainActor
-final class PreferencesWindowController: NSWindowController {
+final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
+    private let onClose: () -> Void
+
     init(
         config: AppConfig,
         authManager: ChatGPTAuthManager,
@@ -16,8 +19,10 @@ final class PreferencesWindowController: NSWindowController {
         recoveryDirectoryURL: URL,
         onRetryRecoveryRecord: @escaping (RecoveryRecord) -> Void,
         onOpenConfigFolder: @escaping () -> Void,
-        focusRecoveryHistory: Bool = false
+        focusRecoveryHistory: Bool = false,
+        onClose: @escaping () -> Void = {}
     ) {
+        self.onClose = onClose
         let view = PreferencesView(
             initialConfig: config,
             authManager: authManager,
@@ -37,7 +42,8 @@ final class PreferencesWindowController: NSWindowController {
             contentRect: NSRect(x: 0, y: 0, width: 980, height: 720),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
-            defer: false
+            defer: false,
+            onQuit: { NSApp.terminate(nil) }
         )
         window.title = "ChatType Settings"
         window.isReleasedWhenClosed = false
@@ -46,6 +52,7 @@ final class PreferencesWindowController: NSWindowController {
         window.contentViewController = hostingController
 
         super.init(window: window)
+        window.delegate = self
     }
 
     @available(*, unavailable)
@@ -55,17 +62,52 @@ final class PreferencesWindowController: NSWindowController {
 
     func show() {
         window?.makeKeyAndOrderFront(nil)
+        window?.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        onClose()
     }
 }
 
-private final class CommandClosingWindow: NSWindow {
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        let isCommandW = event.type == .keyDown
-            && event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command)
-            && event.charactersIgnoringModifiers?.lowercased() == "w"
+final class CommandClosingWindow: NSWindow {
+    private let onQuit: () -> Void
 
-        if isCommandW {
+    init(
+        contentRect: NSRect,
+        styleMask style: NSWindow.StyleMask,
+        backing backingStoreType: NSWindow.BackingStoreType,
+        defer flag: Bool,
+        onQuit: @escaping () -> Void
+    ) {
+        self.onQuit = onQuit
+        super.init(
+            contentRect: contentRect,
+            styleMask: style,
+            backing: backingStoreType,
+            defer: flag
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting(.capsLock)
+        let isCommandOnly = modifiers == .command
+        let key = event.charactersIgnoringModifiers?.lowercased()
+
+        if event.type == .keyDown, isCommandOnly, key == "q" {
+            onQuit()
+            return true
+        }
+
+        if event.type == .keyDown, isCommandOnly, key == "w" {
             close()
             return true
         }
@@ -135,6 +177,7 @@ private struct PreferencesView: View {
     @State private var authSnapshot: ChatGPTAuthSnapshot
     @State private var browserBridgeSnapshot: BrowserBridgeSnapshot
     @State private var isConnectingBrowserLogin = false
+    @State private var copiedDeviceCode: String?
     @State private var selectedSection: SettingsSection = .account
     @State private var textPolishUsage: [TextPolishProviderID: TextPolishUsage] = [:]
     @State private var textPolishMessage: String?
@@ -172,6 +215,7 @@ private struct PreferencesView: View {
         _terminologyImportMessage = State(initialValue: Self.terminologyStatusMessage(for: initialConfig))
         _authSnapshot = State(initialValue: authManager.authSnapshot())
         _browserBridgeSnapshot = State(initialValue: authManager.browserBridgeSnapshot())
+        _copiedDeviceCode = State(initialValue: nil)
         _textPolishUsage = State(initialValue: Self.loadTextPolishUsage())
         _selectedSection = State(initialValue: focusRecoveryHistory ? .recovery : .account)
         self.authManager = authManager
@@ -301,7 +345,10 @@ private struct PreferencesView: View {
             refreshRecentHistory()
             refreshRecoveryHistory()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .chatGPTAuthStateDidChange)) { _ in
+        .onReceive(
+            NotificationCenter.default.publisher(for: .chatGPTAuthStateDidChange)
+                .receive(on: RunLoop.main)
+        ) { _ in
             authSnapshot = authManager.authSnapshot()
             browserBridgeSnapshot = authManager.browserBridgeSnapshot()
             refreshTextPolishStatus()
@@ -968,11 +1015,11 @@ private struct PreferencesView: View {
             }
 
             HStack(spacing: 10) {
-                Button(isConnectingBrowserLogin ? "Waiting for Browser" : "Use Browser Login") {
+                Button(browserLoginIsInProgress ? "Waiting for Authorization" : "Connect ChatGPT") {
                     connectViaBrowser()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isConnectingBrowserLogin || config.transcription.provider == .openAICompatible)
+                .disabled(browserLoginIsInProgress || config.transcription.provider == .openAICompatible)
 
                 Button("Refresh Session") {
                     Task {
@@ -996,33 +1043,45 @@ private struct PreferencesView: View {
                 }
                 .buttonStyle(.bordered)
             }
+
+            if let userCode = browserBridgeSnapshot.userCode {
+                deviceAuthorizationCard(userCode: userCode)
+            }
         }
         .padding(.vertical, 4)
     }
 
     private func connectViaBrowser() {
+        guard browserLoginIsInProgress == false else {
+            return
+        }
+
         isConnectingBrowserLogin = true
         browserBridgeSnapshot = authManager.browserBridgeSnapshot()
-        Task {
+
+        Task { @MainActor in
             do {
                 _ = try await authManager.connectViaDefaultBrowser()
-                await MainActor.run {
-                    authSnapshot = authManager.authSnapshot()
-                    browserBridgeSnapshot = authManager.browserBridgeSnapshot()
-                    isConnectingBrowserLogin = false
-                    terminologyImportMessage = "Browser login connected. ChatType saved the ChatGPT session locally."
-                    terminologyImportIsError = false
-                }
+                authSnapshot = authManager.authSnapshot()
+                browserBridgeSnapshot = authManager.browserBridgeSnapshot()
+                isConnectingBrowserLogin = false
+                terminologyImportMessage = "ChatGPT connected. ChatType saved the session locally."
+                terminologyImportIsError = false
             } catch {
-                await MainActor.run {
-                    authSnapshot = authManager.authSnapshot()
-                    browserBridgeSnapshot = authManager.browserBridgeSnapshot()
-                    isConnectingBrowserLogin = false
-                    terminologyImportMessage = error.localizedDescription
-                    terminologyImportIsError = true
-                }
+                authSnapshot = authManager.authSnapshot()
+                browserBridgeSnapshot = authManager.browserBridgeSnapshot()
+                isConnectingBrowserLogin = false
+                terminologyImportMessage = error.localizedDescription
+                terminologyImportIsError = true
             }
         }
+    }
+
+    private var browserLoginIsInProgress: Bool {
+        if case .waiting = browserBridgeSnapshot.state {
+            return true
+        }
+        return isConnectingBrowserLogin
     }
 
     private func statusPill(for state: ChatGPTAuthState) -> some View {
@@ -1057,7 +1116,7 @@ private struct PreferencesView: View {
         let color: Color
         switch state {
         case .available:
-            label = "OAuth Ready"
+            label = "Device Login Ready"
             color = .secondary
         case .waiting:
             label = "Waiting"
@@ -1422,44 +1481,129 @@ private struct PreferencesView: View {
     }
 
     private var chatGPTSetupActions: some View {
-        HStack(spacing: 10) {
-            if authSnapshot.state == .ready {
-                Button("Use Browser Login") {
-                    connectViaBrowser()
-                }
-                .buttonStyle(.bordered)
-            } else {
-                Button("Use Browser Login") {
-                    connectViaBrowser()
-                }
-                .buttonStyle(.borderedProminent)
-            }
-
-            Button("Refresh") {
-                Task {
-                    _ = try? await authManager.refreshAccessToken()
-                    await MainActor.run {
-                        authSnapshot = authManager.authSnapshot()
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                if authSnapshot.state == .ready {
+                    Button(browserLoginIsInProgress ? "Waiting for Authorization" : "Connect ChatGPT") {
+                        connectViaBrowser()
                     }
+                    .buttonStyle(.bordered)
+                    .disabled(browserLoginIsInProgress)
+                } else {
+                    Button(browserLoginIsInProgress ? "Waiting for Authorization" : "Connect ChatGPT") {
+                        connectViaBrowser()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(browserLoginIsInProgress)
                 }
-            }
-            .buttonStyle(.bordered)
-            .disabled(config.transcription.provider == .openAICompatible)
 
-            if authSnapshot.state == .ready || authSnapshot.state == .expired {
-                Button("Sign out") {
-                    do {
-                        try authManager.signOut()
-                        authSnapshot = authManager.authSnapshot()
-                    } catch {
-                        terminologyImportMessage = error.localizedDescription
-                        terminologyImportIsError = true
+                Button("Refresh") {
+                    Task {
+                        _ = try? await authManager.refreshAccessToken()
+                        await MainActor.run {
+                            authSnapshot = authManager.authSnapshot()
+                        }
                     }
                 }
                 .buttonStyle(.bordered)
+                .disabled(config.transcription.provider == .openAICompatible)
+
+                if authSnapshot.state == .ready || authSnapshot.state == .expired {
+                    Button("Sign out") {
+                        do {
+                            try authManager.signOut()
+                            authSnapshot = authManager.authSnapshot()
+                        } catch {
+                            terminologyImportMessage = error.localizedDescription
+                            terminologyImportIsError = true
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            if let userCode = browserBridgeSnapshot.userCode {
+                deviceAuthorizationCard(userCode: userCode)
             }
         }
         .padding(.top, 6)
+    }
+
+    private func deviceAuthorizationCard(userCode: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Finish sign-in in the OpenAI page", systemImage: "rectangle.and.hand.point.up.left")
+                .font(.system(size: 13, weight: .semibold))
+
+            Text("1. Copy this one-time code.")
+                .font(.system(size: 12))
+
+            HStack(spacing: 12) {
+                Text(userCode)
+                    .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+
+                Button(copiedDeviceCode == userCode ? "Copied" : "Copy Device Code") {
+                    copyDeviceCode(userCode)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button(chromeApplicationURL == nil ? "Open Login Page" : "Open in Chrome") {
+                    openDeviceAuthorizationPage()
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Text("2. Paste all 9 characters into the browser.  3. Click Continue.  4. Return here; ChatType will finish automatically.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("The code expires after 15 minutes. If it fails, click Connect ChatGPT again to generate a new code.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(Color.accentColor.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.accentColor.opacity(0.28), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func copyDeviceCode(_ userCode: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(userCode, forType: .string)
+        copiedDeviceCode = userCode
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            if copiedDeviceCode == userCode {
+                copiedDeviceCode = nil
+            }
+        }
+    }
+
+    private var chromeApplicationURL: URL? {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome")
+    }
+
+    private func openDeviceAuthorizationPage() {
+        guard let chromeApplicationURL else {
+            NSWorkspace.shared.open(BrowserAuthBridge.deviceVerificationURL)
+            return
+        }
+
+        NSWorkspace.shared.open(
+            [BrowserAuthBridge.deviceVerificationURL],
+            withApplicationAt: chromeApplicationURL,
+            configuration: NSWorkspace.OpenConfiguration(),
+            completionHandler: nil
+        )
     }
 
     private var terminologyTypeBinding: Binding<TerminologyEntryType> {
