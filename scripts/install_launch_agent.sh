@@ -4,10 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="ChatType"
 APP_BUNDLE_ID="me.longbiaochen.chattype"
+APP_PATH="/Applications/$APP_NAME.app"
 PLIST="$HOME/Library/LaunchAgents/me.longbiaochen.chattype.plist"
 OLD_PLIST="$HOME/Library/LaunchAgents/com.longbiao.chattype.plist"
 
-if [[ ! -x "$APP_BINARY" ]]; then
+if [[ ! -d "$APP_PATH" ]]; then
   "$ROOT/scripts/install_app.sh" >/dev/null
 fi
 
