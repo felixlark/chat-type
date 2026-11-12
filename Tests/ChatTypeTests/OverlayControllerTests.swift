@@ -8,9 +8,9 @@ func minimalOverlayPresetUsesNineBarVoiceGlyph() {
 
     #expect(preset.pillHeight == 44)
     #expect(preset.cornerRadius == 15)
-    #expect(preset.bottomInset == 8)
+    #expect(preset.topInset == 24)
     #expect(preset.waveformBarCount == 9)
-    #expect(preset.showsTranscriptPreview == false)
+    #expect(preset.showsTranscriptPreview == true)
     #expect(preset.inlineCancelControlSize == 14)
     #expect(preset.timerFontSize == 10)
 }
@@ -131,23 +131,67 @@ func overlayRecordingWidthExpandsToFitTimer() {
 
 @MainActor
 @Test
-func overlayPanelPlacementStaysNearBottomEdge() {
+func overlayPanelPlacementDefaultsToBottomSafeArea() {
     let preset = OverlayStylePreset.typeWhisperIndicator
     let visibleFrame = CGRect(x: 40, y: 30, width: 1440, height: 860)
     let frame = OverlayController.panelFrame(
         for: CGSize(width: preset.width(for: .processing), height: preset.pillHeight),
         in: visibleFrame,
-        bottomInset: preset.bottomInset
+        topInset: preset.topInset
     )
 
-    #expect(frame.minY == visibleFrame.minY + preset.bottomInset)
+    #expect(frame.minY == visibleFrame.minY + 16)
     #expect(abs(frame.midX - visibleFrame.midX) < 0.0001)
+    #expect(visibleFrame.contains(frame))
+}
+
+@MainActor
+@Test
+func overlayPanelPlacementFitsSmallAndOffsetScreens() {
+    let visibleFrame = CGRect(x: -800, y: 900, width: 180, height: 50)
+    let frame = OverlayController.panelFrame(
+        for: CGSize(width: 286, height: 44), in: visibleFrame, topInset: 24
+    )
+    #expect(visibleFrame.contains(frame))
+    #expect(frame.width == 180)
+    #expect(frame.minY == visibleFrame.maxY - frame.height)
+    #expect(frame.midX == visibleFrame.midX)
+}
+
+@Test
+func overlayPlacementPinsScreenUntilNextSession() {
+    let first = CGRect(x: 0, y: 0, width: 1440, height: 875)
+    let second = CGRect(x: 1440, y: 0, width: 1920, height: 1055)
+    var session = OverlayPlacementSession()
+    #expect(session.resolve { first } == first)
+    var lookups = 0
+    #expect(session.resolve { lookups += 1; return second } == first)
+    #expect(lookups == 0)
+    session.reset()
+    #expect(session.resolve { second } == second)
+}
+
+@Test
+func overlayPlacementSelectsFocusedWindowScreenByLargestOverlap() {
+    let screens = [CGRect(x: 0, y: 0, width: 1440, height: 900), CGRect(x: -1920, y: 200, width: 1920, height: 1080)]
+    #expect(OverlayPlacementSession.screenIndex(for: CGRect(x: -1000, y: 250, width: 1200, height: 600), screens: screens) == 1)
+    #expect(OverlayPlacementSession.screenIndex(for: CGRect(x: 200, y: 30, width: 900, height: 800), screens: screens) == 0)
+    #expect(OverlayPlacementSession.screenIndex(for: CGRect(x: 5000, y: 0, width: 300, height: 300), screens: screens) == nil)
+    #expect(OverlayPlacementSession.screenIndex(for: .zero, screens: []) == nil)
+}
+
+@Test
+func overlayPlacementConvertsAXCoordinatesForVerticallyOffsetDisplays() {
+    let frame = OverlayPlacementSession.appKitFrame(
+        fromAccessibility: CGRect(x: -1800, y: -300, width: 1000, height: 600), primaryScreenTop: 900
+    )
+    #expect(frame == CGRect(x: -1800, y: 600, width: 1000, height: 600))
 }
 
 @MainActor
 @Test
 func overlayControllerUsesIntegratedSessionControlInsideMainPanel() {
-    let overlay = OverlayController()
+    let overlay = OverlayController(presentsPanel: false)
     let snapshot = overlay.debugSnapshot
 
     #expect(snapshot.usesIntegratedSessionControl == true)
@@ -158,7 +202,7 @@ func overlayControllerUsesIntegratedSessionControlInsideMainPanel() {
 @MainActor
 @Test
 func overlayControllerOnlyShowsInlineCancelControlForActiveSessionStates() {
-    let overlay = OverlayController()
+    let overlay = OverlayController(presentsPanel: false)
 
     overlay.showRecording(elapsedText: "00:04")
     #expect(overlay.debugSnapshot.isCancelControlVisible == true)
@@ -176,7 +220,7 @@ func overlayControllerOnlyShowsInlineCancelControlForActiveSessionStates() {
 @MainActor
 @Test
 func overlayControllerRetryableErrorShowsRetryControlOnly() {
-    let overlay = OverlayController()
+    let overlay = OverlayController(presentsPanel: false)
 
     overlay.showRetryableError("Cloudflare 403")
 
@@ -190,7 +234,7 @@ func overlayControllerCancelControlRoutesClickIntoOnCancel() {
     var cancelCallCount = 0
     let overlay = OverlayController(onCancel: {
         cancelCallCount += 1
-    })
+    }, presentsPanel: false)
 
     overlay.showRecording(elapsedText: "00:04")
 
@@ -204,10 +248,104 @@ func overlayControllerRetryControlRoutesClickIntoOnRetry() {
     var retryCallCount = 0
     let overlay = OverlayController(onRetry: {
         retryCallCount += 1
-    })
+    }, presentsPanel: false)
 
     overlay.showRetryableError("Cloudflare 403")
 
     #expect(overlay.debugSimulateRetryControlClick() == true)
     #expect(retryCallCount == 1)
+}
+
+@MainActor
+@Test func livePreviewSurvivesMeterUpdatesAndResetsOnNewRecording() {
+    let overlay = OverlayController(presentsPanel: false)
+    overlay.showRecording(elapsedText: "00:00")
+    overlay.updateTranscriptPreview("这是一段正在更新的文字")
+    overlay.updateRecording(level: 0.5, elapsedText: "00:01")
+    #expect(overlay.debugSnapshot.transcript == "这是一段正在更新的文字")
+    #expect(overlay.debugSnapshot.panelWidth == 480)
+    overlay.showProcessing()
+    overlay.showRecording(elapsedText: "00:00")
+    #expect(overlay.debugSnapshot.transcript.isEmpty)
+    overlay.hide()
+}
+
+private actor OverlayDeadlineGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var start: CheckedContinuation<Double, Never>?
+    private var delay: Double?
+
+    func sleep(seconds: Double) async {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            delay = seconds
+            start?.resume(returning: seconds)
+            start = nil
+        }
+    }
+
+    func started() async -> Double {
+        if let delay { return delay }
+        return await withCheckedContinuation { start = $0 }
+    }
+
+    func fire() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+@MainActor
+@Test func overlayDeadlineSurvivesProductionGeometryRefreshEntry() async {
+    for isError in [false, true] {
+        let gate = OverlayDeadlineGate()
+        let overlay = OverlayController(presentsPanel: false, hideDelay: { await gate.sleep(seconds: $0) })
+        overlay.showRecording(elapsedText: "00:00")
+        overlay.updateTranscriptPreview("保留全文直到终态结束。")
+        if isError { overlay.showError("普通错误") }
+        else { overlay.showResult(text: "完成", outcome: .pasted) }
+        let duration = await gate.started()
+        #expect(duration == (isError ? 2 : 1.2))
+        let deadline = overlay.debugHideTask
+        for _ in 0..<8 { overlay.refreshGeometry() }
+        overlay.updateRecording(level: 0.8, elapsedText: "00:09")
+        overlay.updateTranscriptPreview("晚到的实时文字")
+        #expect(!overlay.debugSnapshot.isCancelControlVisible)
+        #expect(overlay.debugSnapshot.transcript == "保留全文直到终态结束。")
+        #expect(overlay.debugSnapshot.isPresented)
+        await gate.fire()
+        await deadline?.value
+        #expect(!overlay.debugSnapshot.isPresented)
+        #expect(!overlay.debugSnapshot.isCancelControlVisible)
+        #expect(overlay.debugHideTask == nil)
+    }
+}
+
+@MainActor
+@Test func overlayOldDeadlineCannotHideNewRecording() async {
+    let gate = OverlayDeadlineGate()
+    let overlay = OverlayController(presentsPanel: false, hideDelay: { await gate.sleep(seconds: $0) })
+    overlay.showResult(text: "完成", outcome: .copiedToClipboard(reason: .noEditableTarget))
+    _ = await gate.started()
+    let oldDeadline = overlay.debugHideTask
+    overlay.showRecording(elapsedText: "00:00")
+    overlay.updateTranscriptPreview("新会话")
+    await gate.fire()
+    await oldDeadline?.value
+    for _ in 0..<8 { overlay.refreshGeometry() }
+    #expect(overlay.debugSnapshot.isPresented)
+    #expect(overlay.debugSnapshot.isCancelControlVisible)
+    #expect(overlay.debugSnapshot.transcript == "新会话")
+    overlay.hide()
+}
+
+@MainActor
+@Test func overlayRetryableErrorRemainsVisibleAcrossRefreshes() {
+    let overlay = OverlayController(presentsPanel: false)
+    overlay.showRetryableError("请重试")
+    for _ in 0..<12 { overlay.refreshGeometry() }
+    #expect(overlay.debugHideTask == nil)
+    #expect(overlay.debugSnapshot.isPresented)
+    #expect(overlay.debugSnapshot.isRetryControlVisible)
+    overlay.hide()
 }

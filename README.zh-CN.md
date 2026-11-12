@@ -11,22 +11,27 @@
 - 全局 `F5` 热键
 - 原生菜单栏应用
 - 默认由 ChatType 自己登录 ChatGPT 并维护本地会话，不要求额外 API key
-- ChatGPT ASR 后可选 AI 文本润色，面向长段、给 agent 的计划型输出
+- macOS 26+ 使用本地实时预览；完整录音上传原 ChatGPT 账户完成最终转写，随后术语对齐和原有整段润色
 - 回填策略保守：只有检测到可编辑目标时才粘贴，不行就留在剪贴板
 - 默认保留最后一次转写结果在剪贴板里，方便光标丢失时手动 `Cmd+V`
-- 支持导入通讯录昵称和 Smart Shadow 已解密的微信备注名，并添加自定义术语和修正
-- 长句 AI 文本润色只走 ChatGPT Auth，不需要单独的润色 API key
+- 支持导入通讯录完整姓名、昵称和微信备注名、昵称，并添加自定义术语和修正
+- AI 整段润色默认走 ChatGPT Auth；可在 Account 中选择 GLM-4.7-Flash 或 Qwen Flash，独立标准 API Key 存入 Keychain
 - `OpenAI-Compatible Recovery` 只作为高级恢复路径
+
+
+可选 Qwen Flash 北京润色路线已接入；本机配对速度更快，完整语义保真验收失败，当前默认继续 ChatGPT。详见[Qwen 验收记录](docs/qwen-flash-polish-2026-11-10.md)。
 
 ## 产品承诺
 
 - 不额外订阅新的听写服务
 - 默认 ASR 路径不要求 API key
-- 长句润色走 ChatType 保存的 ChatGPT 登录态，不单独配置文本模型 key
-- 不要求下载或维护本地模型
+- 默认长句润色复用 ChatType 保存的 ChatGPT 登录态；智谱为需独立 Key 的可选路线
+- macOS 26+ 的本地语言资源由系统管理，无需手动维护第三方模型
 - 在这台 Mac 上装好 ChatType，并在应用内登录 ChatGPT，按下 `F5` 就能开始用
 
 ## 当前版本
+
+本地迭代108加入底部多行预览、滚动回看、稳定拖动和终态自动收起。可选智谱润色只发送整段转写文本及相关术语，最终转写沿用原 ChatGPT 账户录音上传；免费模型仍可能限流，失败沿用规范化文本回退。本机配对实测中智谱耗时更长且遇到限流，当前默认保留 ChatGPT，详见[迭代108记录](docs/iteration-108.md)。
 
 `ChatType` `v0.5.1` 是当前公开版本。`./scripts/package_app.sh` 会生成本地签名、未 notarize 的 `.app`，以及 GitHub Release 用的 `.zip` 和 `.dmg`。
 
@@ -42,7 +47,7 @@
 8. 把光标放到 Notes、Mail、Slack、Codex 等可编辑位置
 9. 按一次 `F5` 开始录音，再按一次 `F5` 结束录音
 10. `ChatType` 通过自己维护的 ChatGPT 会话把音频送到 ChatGPT 转写路径
-11. 可选：在设置页里导入通讯录昵称或 Smart Shadow 已解密的微信备注名
+11. 可选：在设置页里导入通讯录姓名或微信名称
 12. 可选：在设置页启用 ChatGPT Auth 文本润色；它使用 ChatType 已保存的 ChatGPT 会话，不需要单独的润色 API key
 13. `ChatType` 会先做术语对齐，再按需 AI 润色，最后再做保护性术语归一化
 14. 只有检测到可编辑目标时，结果才会直接回填到当前输入位置；否则保留在剪贴板，方便手动 `Cmd+V`
@@ -108,18 +113,22 @@ packaging/homebrew/Casks/chattype.rb
 
 `ChatType` 保留本地确定性术语对齐，并把它作为 AI 润色前后的安全层：
 
-- 通过系统通讯录权限导入通讯录昵称
-- 从 Smart Shadow 的微信解密联系人库中只导入非空备注名
+- 通过系统通讯录权限导入完整姓名和昵称
+- 通过现有 wechat-decrypt 的 get_contacts 只读接口导入微信备注名和昵称；排除系统账号、公众号和群聊
 - 在设置页里添加自定义术语和确定性替换
 - 导入后的词表由 ChatType 自己保存在本地配置里
 - 在 STT 和可选 AI 润色之后，对工具名、产品名和技术术语做本地对齐
 - `transcription.hintTerms` 仍然保留，用于文件名等关键字的 exact-only 保留
 
+macOS 输入快捷码由系统管理。旧版导入的快捷码规则会迁移成目标标准词条，原配置先以 0600 权限备份。Replacement 只处理显式文本修正，在整段润色后运行一次；英文按完整词匹配，中文按精确文字匹配，并保护代码、路径和链接。词库支持搜索、来源筛选与虚拟列表。
+
+控制面板收敛为 Account、Dictation、Terminology、History、Settings。Account 统一服务、凭据和模型；Dictation 展示录音 → 识别 → 词条对齐 → 文字润色 → 文本修正 → 粘贴流程；Settings 提供系统登录项、权限与剪贴板偏好。
+
 ## AI 文本润色
 
 `v0.5.x` 新增可选的 ASR 后文本润色引擎，主要面向长段口述给 agent 的场景：去掉口头禅，按后文修正后的意图为准，保留术语大小写，并在长输入时整理成更像计划的分点输出。
 
-润色路径和 ASR 分开，但只使用 ChatType 自己维护的 ChatGPT 登录态。设置页会展示可检查的 ChatGPT backend Responses endpoint 和模型；不再保存或调用 DeepSeek、Kimi、OpenAI、自定义 provider 的文本润色 key。
+润色与 ASR 分开选择。ChatGPT Auth 复用 ChatType 登录态和私有账户后端；可选 GLM-4.7-Flash 和 Qwen Flash 分别使用固定的智谱和北京 DashScope 接口，独立 Key 只存 Keychain。Qwen Flash 关闭思考，按账户有效免费额度优先、之后按量计费，录音按 Dictation 所选转写路线处理。设置页显示凭据就绪状态，provider 变更从下一次录音生效；两条润色路线共用整段提示、术语保护和失败回退。
 
 `v0.5.1` 修复了 AI Polish 与当前 ChatGPT/Codex Responses 私有入口请求格式不匹配的问题，并让设置页显示润色尝试、成功和失败次数，不再把后端失败隐藏起来。
 
@@ -150,7 +159,7 @@ swift test --package-path .
 ./scripts/benchmark_stt.sh ~/bench/3s.wav ~/bench/10s.wav ~/bench/30s.wav
 ```
 
-如果你要发 X，现在走官方 Chrome plugin，使用已登录的 X web app 或默认 Chrome profile。只有打开 profile 并看到新帖文本和新的 `/status/` URL 后，才算发布完成。
+如果你要发 X，使用已批准的 `longbiao-x-post-workflow` / `xurl-ops` 路径。如果当前任务明确要求 X Web 界面，先用 IAB；只有任务依赖常用 Chrome profile 的现有登录态时才使用官方 Chrome 扩展。发布后必须读回帖子，并确认新的 `/status/` URL。
 
 ## 配置
 
@@ -162,7 +171,7 @@ swift test --package-path .
 
 术语相关的高级选项：
 
-- 导入通讯录昵称或 Smart Shadow 已解密的微信备注名
+- 导入通讯录姓名或微信名称
 - 在设置页里添加自定义术语和替换
 - 用 `transcription.hintTerms` 保留不想被改动的 exact-only 隐藏术语
 
@@ -199,3 +208,6 @@ swift test --package-path .
 ## License
 
 MIT。见 [LICENSE](LICENSE)。
+
+
+本地构建109恢复个人词库来源及中文近音姓名提示：本地预览用于挑选少量相关姓名供原账户ASR提示，正式转写再挑选相关词进入原整段润色。读音检索仅提供候选，同音姓名保留歧义；整段预览和整本通讯录保留本机。

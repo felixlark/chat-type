@@ -2,13 +2,13 @@ import Foundation
 import Testing
 
 @Test
-func printModeDescribesOfficialChromePluginWorkflow() throws {
+func printModeDescribesApprovedXurlWorkflow() throws {
     let result = try runPostScript(arguments: ["--print", "ChatType update"])
 
     #expect(result.status == 0, Comment(rawValue: result.stderr))
-    #expect(result.stdout.contains("official Chrome plugin"))
-    #expect(result.stdout.contains("signed-in Chrome/default profile"))
-    #expect(result.stdout.contains("https://x.com/compose/post"))
+    #expect(result.stdout.contains("longbiao-x-post-workflow / xurl-ops"))
+    #expect(result.stdout.contains("xurl-ops status"))
+    #expect(result.stdout.contains("xurl-ops post"))
     #expect(result.stdout.contains("/status/ URL"))
     #expect(!result.stdout.contains("chrome-auth"))
     #expect(!result.stdout.contains("auth-cdp"))
@@ -20,7 +20,7 @@ func liveModeRefusesLegacyCliPosting() throws {
 
     #expect(result.status == 2)
     #expect(result.stderr.contains("Live X posting from scripts/post_x.sh is disabled."))
-    #expect(result.stderr.contains("official Chrome plugin"))
+    #expect(result.stderr.contains("longbiao-x-post-workflow / xurl-ops"))
     #expect(result.stdout.isEmpty)
 }
 

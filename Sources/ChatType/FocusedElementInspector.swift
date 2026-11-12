@@ -25,7 +25,7 @@ enum FocusedElementInspector {
             AXIsProcessTrusted(),
             let launchAppContext,
             launchAppContext.processIdentifier > 0,
-            let element = preferredFocusedElement(in: launchAppContext)
+            let element = focusedElement(in: launchAppContext)
         else {
             return false
         }
@@ -35,27 +35,19 @@ enum FocusedElementInspector {
 
     private static func isEditableTextFocus(_ element: AXUIElement) -> Bool {
         var roleValue: CFTypeRef?
-        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue) == .success,
-           let role = roleValue as? String,
-           textRoles.contains(role) {
-            return true
-        }
+        _ = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue)
+        var enabledValue: CFTypeRef?
+        _ = AXUIElementCopyAttributeValue(element, kAXEnabledAttribute as CFString, &enabledValue)
+        return isEditableTextFocus(
+            role: roleValue as? String,
+            valueIsSettable: isAttributeSettable(kAXValueAttribute, on: element),
+            enabled: (enabledValue as? Bool) ?? true
+        )
+    }
 
-        var selectedTextRange: CFTypeRef?
-        if AXUIElementCopyAttributeValue(
-            element,
-            kAXSelectedTextRangeAttribute as CFString,
-            &selectedTextRange
-        ) == .success {
-            return true
-        }
-
-        var selectedText: CFTypeRef?
-        return AXUIElementCopyAttributeValue(
-            element,
-            kAXSelectedTextAttribute as CFString,
-            &selectedText
-        ) == .success
+    static func isEditableTextFocus(role: String?, valueIsSettable: Bool, enabled: Bool = true) -> Bool {
+        guard let role else { return false }
+        return enabled && textRoles.contains(role) && valueIsSettable
     }
 
     private static func focusedElement(in launchAppContext: LaunchAppContext) -> AXUIElement? {
@@ -72,78 +64,6 @@ enum FocusedElementInspector {
 
         let element = focusedElement as! AXUIElement
         return element
-    }
-
-    private static func preferredFocusedElement(in launchAppContext: LaunchAppContext) -> AXUIElement? {
-        if let element = focusedElement(in: launchAppContext),
-           isEditableTextFocus(element) {
-            return element
-        }
-
-        guard let focusedWindow = focusedWindow(in: launchAppContext) else {
-            return nil
-        }
-
-        return firstEditableDescendant(in: focusedWindow)
-    }
-
-    private static func focusedWindow(in launchAppContext: LaunchAppContext) -> AXUIElement? {
-        let appElement = AXUIElementCreateApplication(launchAppContext.processIdentifier)
-        var focusedWindow: CFTypeRef?
-        let status = AXUIElementCopyAttributeValue(
-            appElement,
-            kAXFocusedWindowAttribute as CFString,
-            &focusedWindow
-        )
-        guard status == .success, let focusedWindow else {
-            return nil
-        }
-
-        return (focusedWindow as! AXUIElement)
-    }
-
-    private static func firstEditableDescendant(in root: AXUIElement) -> AXUIElement? {
-        var queue: [AXUIElement] = [root]
-        var seen = Set<CFHashCode>()
-
-        while !queue.isEmpty {
-            let element = queue.removeFirst()
-            let hash = CFHash(element)
-            guard !seen.contains(hash) else {
-                continue
-            }
-            seen.insert(hash)
-
-            if isEditableCandidate(element) {
-                return element
-            }
-
-            queue.append(contentsOf: childElements(of: element, attribute: "AXChildrenInNavigationOrder"))
-            queue.append(contentsOf: childElements(of: element, attribute: kAXChildrenAttribute as String))
-        }
-
-        return nil
-    }
-
-    private static func isEditableCandidate(_ element: AXUIElement) -> Bool {
-        var roleValue: CFTypeRef?
-        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue) == .success,
-           let role = roleValue as? String,
-           textRoles.contains(role) {
-            return true
-        }
-
-        return isAttributeSettable(kAXValueAttribute, on: element) &&
-            isAttributeSettable(kAXSelectedTextRangeAttribute, on: element)
-    }
-
-    private static func childElements(of element: AXUIElement, attribute: String) -> [AXUIElement] {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
-            return []
-        }
-
-        return (value as? [AXUIElement]) ?? []
     }
 
     private static func focusedElement() -> AXUIElement? {

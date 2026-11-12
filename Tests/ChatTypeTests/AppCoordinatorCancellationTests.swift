@@ -286,6 +286,7 @@ struct AppCoordinatorCancellationTests {
         let overlay = FakeCoordinatorOverlay()
         let statusMenu = FakeCoordinatorStatusMenu()
         let coordinator = AppCoordinator(
+            microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
@@ -324,6 +325,7 @@ struct AppCoordinatorCancellationTests {
         let statusMenu = FakeCoordinatorStatusMenu()
         let injector = FakeCoordinatorInjector()
         let coordinator = AppCoordinator(
+            microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
@@ -379,6 +381,7 @@ struct AppCoordinatorCancellationTests {
         let soundFeedback = FakeSoundFeedback()
         var contextWhenProcessing: LaunchAppContext?
         let coordinator = AppCoordinator(
+            microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
@@ -418,6 +421,7 @@ struct AppCoordinatorCancellationTests {
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
         let coordinator = AppCoordinator(
+            microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
@@ -457,6 +461,7 @@ struct AppCoordinatorCancellationTests {
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
         let coordinator = AppCoordinator(
+            microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
@@ -489,6 +494,7 @@ struct AppCoordinatorCancellationTests {
         let statusMenu = FakeCoordinatorStatusMenu()
         let processingGate = CoordinatorGate()
         let coordinator = AppCoordinator(
+            microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
@@ -527,6 +533,7 @@ struct AppCoordinatorCancellationTests {
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
         let coordinator = AppCoordinator(
+            microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
@@ -559,6 +566,7 @@ struct AppCoordinatorCancellationTests {
         var config = AppConfig()
         config.transcription.feedbackSoundsEnabled = false
         let coordinator = AppCoordinator(
+            microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: config,
             notifier: FakeCoordinatorNotifier(),
@@ -592,6 +600,7 @@ struct AppCoordinatorCancellationTests {
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
         let coordinator = AppCoordinator(
+            microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
@@ -639,6 +648,7 @@ struct AppCoordinatorCancellationTests {
         ])
         let configStore = ConfigStore(fileManager: .default, homeDirectoryURL: root)
         let coordinator = AppCoordinator(
+            microphoneAccessRequester: {},
             configStore: configStore,
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
@@ -714,6 +724,7 @@ struct AppCoordinatorCancellationTests {
             .retryableCloudflare(1),
         ])
         let coordinator = AppCoordinator(
+            microphoneAccessRequester: {},
             configStore: ConfigStore(fileManager: .default, homeDirectoryURL: root),
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
@@ -758,6 +769,7 @@ struct AppCoordinatorCancellationTests {
         let script = CoordinatorPipelineScript(outcomes: [.retryableCloudflare(3)])
         let configStore = ConfigStore(fileManager: .default, homeDirectoryURL: root)
         let coordinator = AppCoordinator(
+            microphoneAccessRequester: {},
             configStore: configStore,
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
@@ -802,7 +814,7 @@ struct AppCoordinatorCancellationTests {
         let recorder = FakeCoordinatorRecorder()
         recorder.nextAudio = RecordedAudio(fileURL: url, durationMs: 1_000)
         let injector = FakeCoordinatorInjector()
-        let coordinator = AppCoordinator(configStore: ConfigStore(homeDirectoryURL: root),
+        let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
             notifier: FakeCoordinatorNotifier(), injector: injector, overlay: FakeCoordinatorOverlay(),
             authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
             recoveryRecorder: store, recorderFactory: { _ in recorder },
@@ -834,6 +846,7 @@ struct AppCoordinatorCancellationTests {
         )
         let statusMenu = FakeCoordinatorStatusMenu()
         let coordinator = AppCoordinator(
+            microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
@@ -850,5 +863,56 @@ struct AppCoordinatorCancellationTests {
         coordinator.checkLaunchLoginState()
 
         #expect(statusMenu.updates.contains { $0.0 == .setupRequired && $0.1 == "Sign in first" })
+    }
+}
+
+@MainActor
+@Test func recordingAndManualRetryUseTheF5StartTerminologySnapshot() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let url = root.appendingPathComponent("snapshot.wav")
+    try Data("recorded-audio".utf8).write(to: url)
+    let recorder = FakeCoordinatorRecorder()
+    recorder.nextAudio = RecordedAudio(fileURL: url, durationMs: 1_000, previewText: "请联系林锦猜")
+    let overlay = FakeCoordinatorOverlay()
+    let observed = SnapshotConfigCapture()
+    let previews = SnapshotConfigCapture()
+    var initial = AppConfig()
+    initial.transcription.hintTerms = ["pstack", "SmartShadow"]
+    let coordinator = AppCoordinator(microphoneAccessRequester: {},
+        configStore: ConfigStore(homeDirectoryURL: root), config: initial,
+        notifier: FakeCoordinatorNotifier(), injector: FakeCoordinatorInjector(), overlay: overlay,
+        authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
+        historyRecorder: FakeCoordinatorHistoryRecorder(), recorderFactory: { _ in recorder },
+        statusMenuFactory: { _, _, _ in FakeCoordinatorStatusMenu() },
+        pipelineFactory: { config, _, _ in
+            observed.append(config.hintTerms)
+            return SnapshotPreviewCapturingPipeline(captured: previews)
+        })
+    coordinator.recorder = recorder
+    coordinator.handleHotkeyPress()
+    await waitForCoordinatorState(coordinator, toBecome: .recording)
+    coordinator.config.transcription.hintTerms = ["ChangedAfterStart"]
+    coordinator.handleHotkeyPress()
+    await waitForCondition { overlay.retryableErrors.count == 1 }
+    overlay.onRetry?()
+    await waitForCondition { overlay.retryableErrors.count == 2 }
+    #expect(observed.values == [["pstack", "SmartShadow"], ["pstack", "SmartShadow"]])
+    #expect(previews.values == [["请联系林锦猜"], ["请联系林锦猜"]])
+}
+
+private final class SnapshotConfigCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [[String]] = []
+    func append(_ terms: [String]) { lock.withLock { stored.append(terms) } }
+    var values: [[String]] { lock.withLock { stored } }
+}
+
+private struct SnapshotPreviewCapturingPipeline: DictationPreparing {
+    let captured: SnapshotConfigCapture
+    func prepare(audio: RecordedAudio) async throws -> PreparedDictation {
+        captured.append([audio.previewText])
+        throw TranscriptionError.retryableCloudflareChallenge(attempts: 1)
     }
 }

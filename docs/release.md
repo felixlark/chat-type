@@ -3,7 +3,7 @@
 ## Local Release Checklist
 
 1. Run `./scripts/check.sh`
-2. Run `./scripts/package_app.sh`
+2. Run `./scripts/package_app.sh` (optimized release configuration; artifacts remain under `dist/`, which may point to the configured cache directory)
 3. Confirm the release assets exist:
    - `dist/ChatType-0.5.1-macos-arm64.zip`
    - `dist/ChatType-0.5.1-macos-arm64.dmg`
@@ -25,11 +25,11 @@
    - Accessibility guidance opens the correct page and shows the drag-to-authorize helper for the packaged app
    - paste only reports success when an editable focus target exists
    - clipboard fallback keeps the latest transcript available for manual `Cmd+V`
-   - Settings exposes the workflow sidebar with Account, Dictation, AI Polish, Terminology, Paste, and Advanced sections
-   - AI Polish shows the ChatGPT Auth rewrite route without provider-key fields
-   - Advanced shows the current ChatGPT account route instead of API fallback provider lists
+   - Settings exposes Account, Dictation, Terminology, History, and Settings; each destination opens at the top
+   - AI Polish defaults to ChatGPT Auth and offers the approved GLM-4.7-Flash and Beijing Qwen Flash routes with independent secure Keychain input; confirm missing-key save behavior and text-only data-flow disclosure; paid-provider tests require their own authorization
+   - Account shows the actual audio route and model disclosure, while Dictation shows the six processing steps
    - text polish can produce a concise agent-plan style output for a long dictation sample
-   - terminology import is visible in Settings and reads Contacts or Smart Shadow's decrypted WeChat remarks without a file picker
+   - terminology import is visible in Settings as Import names → From Contacts / From WeChat, reads the supported contact-name sources without a file picker, and splits explicit Chinese `name + affiliation` values into separate terms
    - output remains directly usable when text polish is unavailable or disabled
 8. Verify advanced recovery mode:
    - switching to `OpenAI-Compatible Recovery` exposes endpoint, model, and API env settings
@@ -52,7 +52,7 @@
    - update `docs/index.html`
    - confirm the primary download link points at the new GitHub Release tag
    - keep the landing page value proposition aligned with the current README and release notes
-12. If you are announcing the release on X, preview the outgoing post first and send it through the official Chrome plugin using the signed-in X web app or default Chrome profile.
+12. If you are announcing the release on X, preview the outgoing post first and use the approved `longbiao-x-post-workflow` / `xurl-ops` path. If the current task explicitly requires the X web UI, use IAB first and use the official Chrome extension only for a verified regular-profile dependency.
    - create the post in one composer session
    - click `Post` once
    - treat the post as complete only after opening the profile and finding the new post text plus a fresh `/status/` URL
@@ -104,3 +104,5 @@ If the asset filename or release URL format changes, update the cask in the same
 - publish a dedicated Homebrew tap
 - broaden first-run diagnostics for desktop-host failures
 - keep benchmark samples around for 3s / 10s / 30s regression checks
+
+Qwen Flash acceptance: secure key storage and real API requests passed; the 2026-11-10 paired test passed latency and failed complete semantic fidelity. Keep ChatGPT selected by default. See [the Qwen record](qwen-flash-polish-2026-11-10.md).

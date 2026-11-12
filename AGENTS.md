@@ -78,6 +78,7 @@
 - Keep the private ChatGPT backend dependency explicit in docs and UX; do not describe it as a stable public API.
 - Keep `OpenAI-Compatible` positioned as advanced recovery, not the default public story.
 - The product has exactly two transcription routes: `chatGPTManagedAuth` and user-selected `openAICompatible`. Do not add a third fallback/provider without explicit product approval.
+- Longbiao approved Stage A quality restoration on 2026-11-10: on macOS 26+, Apple SpeechAnalyzer provides live preview; the complete recording is uploaded to the original ChatGPT account for final transcription, followed by the existing terminology alignment and whole-transcript ChatGPT polish. This supersedes B0 local final ASR. Earlier macOS versions and explicitly selected compatible recovery retain their existing paths. Keep `fastResults` with `volatileResults` for live text. Model capability must be checked by actual preparation; an AssetInventory status alone must not block an available engine. Further cloud polish providers require their own credentials/data destination decision.
 
 ## Known State
 
@@ -85,5 +86,5 @@
 - `/Applications/ChatType.app` is the app path for launch, permission, LaunchAgent, and user-flow proof.
 
 ## Browser Automation Constraint
-- Follow the global `~/.codex/AGENTS.md` official browser/GUI policy: Browser plugin for unauthenticated local/public rendering, Chrome plugin for signed-in/default-profile browser state, and Computer Use only for native desktop boundaries.
+- Follow the global `~/.codex/AGENTS.md` browser/GUI routing. Keep only this project's URL, account, extension, fixture, viewport, and acceptance details here; do not promote Chrome or `chrome-use` to a project-wide default.
 - Keep only repo-specific verification surfaces here; do not copy the full global policy block into this runbook.

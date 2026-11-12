@@ -18,7 +18,7 @@ final class AppCoordinator {
         case processing
     }
 
-    typealias RecorderFactory = @MainActor (Int) -> any RecordingControlling
+    typealias RecorderFactory = @MainActor (TranscriptionConfig) -> any RecordingControlling
     typealias StatusMenuFactory = @MainActor (
         @escaping () -> Void,
         @escaping () -> Void,
@@ -50,6 +50,7 @@ final class AppCoordinator {
     var recorder: (any RecordingControlling)?
     var statusMenu: (any StatusMenuUpdating)?
     private var preferencesWindowController: PreferencesWindowController?
+    private let microphoneAccessRequester: (@MainActor () async throws -> Void)?
     private var microphonePermissionWindowController: MicrophonePermissionWindowController?
     var state: State = .idle
     private var recordingLevelTimer: Timer?
@@ -59,6 +60,7 @@ final class AppCoordinator {
     private var startRecordingTask: Task<Void, Never>?
     private var activeSessionID: UUID?
     private var recordingStartedAt: DispatchTime?
+    private var recordingConfig: AppConfig?
     private var pendingRetry: PendingRetry?
     private var activeProcessingAudio: RecordedAudio?
     private var authStateObserver: NSObjectProtocol?
@@ -71,6 +73,7 @@ final class AppCoordinator {
     }
 
     init(
+        microphoneAccessRequester: (@MainActor () async throws -> Void)? = nil,
         configStore: ConfigStore = ConfigStore(),
         config: AppConfig = AppConfig(),
         notifier: any NotificationDispatching = Notifier(),
@@ -94,11 +97,12 @@ final class AppCoordinator {
                 transcriber: ChatGPTTranscriber(
                     authManager: authManager,
                     config: transcriptionConfig,
-                    cloudflareChallengeMaxAttempts: attemptPolicy.cloudflareChallengeMaxAttempts
+                    cloudflareChallengeMaxAttempts: attemptPolicy.cloudflareChallengeMaxAttempts,
+                    usesLocalSpeechForFiles: false
                 ),
                 normalizer: TerminologyNormalizer(),
                 importedEntries: transcriptionConfig.activeDictionaryEntries,
-                hintTerms: transcriptionConfig.hintTerms,
+                hintTerms: transcriptionConfig.prioritizedHintTerms,
                 textPolisher: OpenAICompatibleTextPolisher(
                     config: transcriptionConfig.textPolish,
                     chatGPTAuthProvider: authManager,
@@ -108,6 +112,7 @@ final class AppCoordinator {
         },
         launchAppContextProvider: @escaping LaunchAppContextProvider = { LaunchAppContext.current() }
     ) {
+        self.microphoneAccessRequester = microphoneAccessRequester
         self.configStore = configStore
         self.config = config
         self.notifier = notifier
@@ -122,7 +127,12 @@ final class AppCoordinator {
         )
         self.soundFeedback = soundFeedback
         let recordingStore = self.recoveryRecorder as? RecoveryStore
-        self.recorderFactory = recorderFactory ?? { AudioRecorder(sampleRateHz: $0, recoveryStore: recordingStore) }
+        self.recorderFactory = recorderFactory ?? { current in
+            if #available(macOS 26.0, *), current.provider == .chatGPTManagedAuth {
+                return LocalSpeechRecorder(sampleRateHz: current.sampleRateHz, store: recordingStore ?? RecoveryStore(), finalizationTimeoutSeconds: current.localFinalizationTimeoutSeconds, hintTerms: current.hintTerms)
+            }
+            return AudioRecorder(sampleRateHz: current.sampleRateHz, recoveryStore: recordingStore)
+        }
         self.statusMenuFactory = statusMenuFactory
         self.pipelineFactory = pipelineFactory
         self.launchAppContextProvider = launchAppContextProvider
@@ -158,7 +168,7 @@ final class AppCoordinator {
             case .normal, .settings:
                 config = try configStore.load()
                 try (recoveryRecorder as? RecoveryStore)?.recoverInterruptedRecordings()
-                recorder = recorderFactory(config.transcription.sampleRateHz)
+                recorder = recorderFactory(config.transcription)
 
                 hotkeyMonitor = try HotkeyMonitor(keyCode: config.transcription.hotkeyKeyCode) { [weak self] in
                     Task { @MainActor in
@@ -272,7 +282,10 @@ final class AppCoordinator {
     }
 
     private func startRecording() {
-        guard let recorder else { return }
+        let sessionConfig = config
+        recordingConfig = sessionConfig
+        let recorder = recorderFactory(sessionConfig.transcription)
+        self.recorder = recorder
 
         clearPendingRetry()
         logger.info("Start recording requested from hotkey")
@@ -293,7 +306,7 @@ final class AppCoordinator {
                 logger.info("Microphone access stage completed")
 
                 let issues = RuntimePreflight.issues(
-                    for: self.config,
+                    for: sessionConfig,
                     environment: ProcessInfo.processInfo.environment,
                     authSnapshotProvider: { self.authManager.authSnapshot() }
                 )
@@ -356,8 +369,10 @@ final class AppCoordinator {
             overlay.showProcessing()
             soundFeedback.play(.recordingStopped, enabled: config.transcription.feedbackSoundsEnabled)
 
-            let transcriptionConfig = config.transcription
-            let injectionConfig = config.injection
+            let sessionConfig = recordingConfig ?? config
+            let transcriptionConfig = sessionConfig.transcription
+            let injectionConfig = sessionConfig.injection
+            recordingConfig = nil
             let launchAppContext = self.launchAppContext
             startProcessing(
                 audio: audio,
@@ -562,72 +577,24 @@ final class AppCoordinator {
                 config: config,
                 authManager: authManager,
                 onSave: { [weak self] newConfig in
-                    guard let self else { return }
+                    guard let self else { return .failure(CocoaError(.userCancelled)) }
                     do {
                         try self.configStore.save(newConfig)
                         self.config = newConfig
                         self.refreshReadyState(detailOverride: "Settings saved", state: .ready)
                         self.prewarmAuthIfNeeded()
-                    } catch {
-                        self.overlay.showError(error.localizedDescription)
-                        self.notifier.notify(title: "ChatType", body: error.localizedDescription)
-                    }
+                        return .success(())
+                    } catch { return .failure(error) }
                 },
-                onImportAppleContactRemarks: { [weak self] currentConfig in
-                    guard let self else {
-                        return .failure(
-                            NSError(
-                                domain: "ChatType.Preferences",
-                                code: 1,
-                                userInfo: [NSLocalizedDescriptionKey: "ChatType settings are no longer available."]
-                            )
-                        )
-                    }
-
-                    do {
-                        let imported = try await AppleContactRemarkImporter().importEntries()
-                        return .success(
-                            try self.persistTerminologyImport(
-                                currentConfig: currentConfig,
-                                imported: imported,
-                                lastImportedSource: imported.source,
-                                replacingSources: ["apple-contacts-nickname"]
-                            )
-                        )
-                    } catch {
-                        return .failure(error)
-                    }
+                onImportAppleContactRemarks: {
+                    do { return .success(try await AppleContactRemarkImporter().importEntries()) }
+                    catch { return .failure(error) }
                 },
-                onImportWeixinRemarks: { [weak self] currentConfig in
-                    guard let self else {
-                        return .failure(
-                            NSError(
-                                domain: "ChatType.Preferences",
-                                code: 1,
-                                userInfo: [NSLocalizedDescriptionKey: "ChatType settings are no longer available."]
-                            )
-                        )
-                    }
-
+                onImportWeixinRemarks: {
                     do {
-                        let imported = try await Task.detached {
-                            try WeixinRemarkDatabaseImporter().importEntries()
-                        }.value
-                        return .success(
-                            try self.persistTerminologyImport(
-                                currentConfig: currentConfig,
-                                imported: imported,
-                                lastImportedSource: imported.source,
-                                replacingSources: [
-                                    "weixin-contacts",
-                                    "weixin-remark-export",
-                                    "smart-shadow-weixin-remark",
-                                ]
-                            )
-                        )
-                    } catch {
-                        return .failure(error)
-                    }
+                        let imported = try await Task.detached { try WeixinNameImporter().importEntries() }.value
+                        return .success(imported)
+                    } catch { return .failure(error) }
                 },
                 onLoadRecentHistory: { [weak self] in
                     guard let self else {
@@ -659,39 +626,20 @@ final class AppCoordinator {
         statusMenu?.ensureVisible()
     }
 
-    private func persistTerminologyImport(
-        currentConfig: AppConfig,
-        imported: TerminologyImportResult,
-        lastImportedSource: String,
-        replacingSources: Set<String> = []
-    ) throws -> AppConfig {
-        var updatedConfig = currentConfig
-        updatedConfig.transcription.terminology.entries = Self.refreshedTerminologyEntries(
-            existing: updatedConfig.transcription.terminology.entries,
-            incoming: imported.entries,
-            replacingSources: replacingSources
-        )
-        updatedConfig.transcription.terminology.lastImportedSource = lastImportedSource
-        updatedConfig.transcription.terminology.lastImportedAt = imported.importedAt
-
-        try configStore.save(updatedConfig)
-        config = updatedConfig
-        refreshReadyState(
-            detailOverride: "Imported \(imported.entries.count) terminology terms",
-            state: .ready
-        )
-        return updatedConfig
-    }
-
     static func refreshedTerminologyEntries(
         existing: [TerminologyEntry],
         incoming: [TerminologyEntry],
         replacingSources: Set<String>
     ) -> [TerminologyEntry] {
-        TerminologyPolicy.sanitizedEntries(
+        let userShortcuts = Set(existing.filter { $0.source == "user" && $0.type == .correction }
+            .map { $0.original.lowercased() })
+        let allowed = incoming.filter {
+            $0.source != "macos-text-replacements" || !userShortcuts.contains($0.original.lowercased())
+        }
+        return TerminologyPolicy.sanitizedEntries(
             mergedTerminologyEntries(
                 existing: existing.filter { !replacingSources.contains($0.source) },
-                incoming: incoming
+                incoming: allowed
             )
         )
     }
@@ -711,8 +659,9 @@ final class AppCoordinator {
         let sessionID = UUID()
         activeSessionID = sessionID
         state = .processing
-        let audio = RecordedAudio(fileURL: audioURL, durationMs: record.audioDurationMs)
-        statusMenu?.update(state: .processing, detail: "Retrying saved audio")
+        let audio = RecordedAudio(fileURL: audioURL, durationMs: record.audioDurationMs,
+            previewText: record.asrText ?? "")
+        statusMenu?.update(state: .processing, detail: "Recognizing saved audio with current terms")
         overlay.showProcessing()
         startProcessing(
             audio: audio,
@@ -781,6 +730,7 @@ final class AppCoordinator {
     }
 
     private func requestMicrophoneAccess() async throws {
+        if let microphoneAccessRequester { try await microphoneAccessRequester(); return }
         let status = AudioRecorder.microphonePermissionState()
         let app = NSApplication.shared
         let previousActivationPolicy = app.activationPolicy()
@@ -866,6 +816,7 @@ final class AppCoordinator {
         case .recording:
             overlay.showRecording(elapsedText: "00:07")
             overlay.updateRecording(level: 0.72, elapsedText: "00:07")
+            overlay.updateTranscriptPreview(String(repeating: "请把这段语音整理成清晰的文字。保留 ChatType、API 和所有数字。只修改设置页面，先不要发布。后面说的周五为准。实时文字自动换行，长段可以向上滚动回看，再点击回到最新继续跟随。", count: 4))
         case .processing:
             overlay.showProcessing()
         case .result:
@@ -877,7 +828,7 @@ final class AppCoordinator {
         }
 
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            try? await Task.sleep(nanoseconds: 180_000_000_000)
             NSApplication.shared.terminate(nil)
         }
     }
@@ -897,6 +848,7 @@ final class AppCoordinator {
                     return
                 }
                 self.overlay.updateRecording(level: level, elapsedText: self.elapsedRecordingText())
+                self.overlay.updateTranscriptPreview(recorder.liveTranscript)
             }
         }
     }
@@ -933,6 +885,11 @@ final class AppCoordinator {
     }
 
     private func prewarmAuthIfNeeded() {
+        let entries = config.transcription.activeDictionaryEntries
+        Task.detached(priority: .utility) {
+            _ = VocabularyIndexCache.shared.index(for: entries)
+            PersonalNameHints.prewarm(entries: entries)
+        }
         guard config.transcription.provider == .chatGPTManagedAuth else {
             return
         }
@@ -965,7 +922,7 @@ final class AppCoordinator {
         let retryURL = retryDirectory.appendingPathComponent("retry-\(UUID().uuidString).wav")
         try FileManager.default.copyItem(at: audio.fileURL, to: retryURL)
         pendingRetry = PendingRetry(
-            audio: RecordedAudio(fileURL: retryURL, durationMs: audio.durationMs),
+            audio: RecordedAudio(fileURL: retryURL, durationMs: audio.durationMs, previewText: audio.previewText),
             launchAppContext: launchAppContext,
             transcriptionConfig: transcriptionConfig,
             injectionConfig: injectionConfig
@@ -978,10 +935,11 @@ final class AppCoordinator {
     }
 
     private func isRetryableTranscriptionError(_ error: Error) -> Bool {
+        if error is LocalTranscriptionFailure { return true }
         if case TranscriptionError.retryableCloudflareChallenge = error {
             return true
         }
-        return false
+        return ChatGPTTranscriber.isRetryable(error)
     }
 
     private func recordTranscriptionFailure(
@@ -1035,7 +993,8 @@ final class AppCoordinator {
             errorCategory: errorCategory,
             uploadedAudioBytes: prepared.metrics.transcription.uploadedBytes,
             uploadEncodingMs: prepared.metrics.transcription.encodingMs,
-            uploadAudioFormat: prepared.metrics.transcription.uploadFormat
+            uploadAudioFormat: prepared.metrics.transcription.uploadFormat,
+            processingTiming: prepared.metrics.timing
         )
         try? latencyRecorder.record(sample)
     }
@@ -1089,7 +1048,7 @@ final class AppCoordinator {
                 timestamp: Date(),
                 sourceAudioURL: audio.fileURL,
                 durationMs: audio.durationMs,
-                asrText: nil,
+                asrText: (error as? LocalTranscriptionFailure)?.partialText,
                 polishText: nil,
                 appName: launchAppContext?.localizedName,
                 appBundleIdentifier: launchAppContext?.bundleIdentifier,
@@ -1121,6 +1080,7 @@ final class AppCoordinator {
     }
 
     private func refreshReadyState(detailOverride: String? = nil, state: StatusMenuVisualState = .ready) {
+        guard self.state == .idle else { return }
         let issues = RuntimePreflight.issues(
             for: config,
             environment: ProcessInfo.processInfo.environment,

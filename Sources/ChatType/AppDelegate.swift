@@ -5,7 +5,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let authManager = ChatGPTAuthManager()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        coordinator = AppCoordinator(authManager: authManager)
+        if AcceptanceTranscriptionDeadline.requested(arguments: ProcessInfo.processInfo.arguments) {
+            let deadline = AcceptanceTranscriptionDeadline()
+            coordinator = AppCoordinator(authManager: authManager, pipelineFactory: { config, auth, policy in
+                deadline.pipeline(config, auth, policy)
+            })
+        } else {
+            coordinator = AppCoordinator(authManager: authManager)
+        }
         coordinator?.start(
             launchMode: AppLaunchMode.resolve(
                 environment: ProcessInfo.processInfo.environment,

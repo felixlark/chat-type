@@ -3,6 +3,7 @@ import Foundation
 enum TerminologyPolicy {
     private static let contactSources: Set<String> = [
         "apple-contacts-nickname",
+        "apple-contacts-names",
         "macos-contacts",
         "smart-shadow-weixin-remark",
         "weixin-contacts",
@@ -33,9 +34,19 @@ enum TerminologyPolicy {
         var output: [TerminologyEntry] = []
         var indexByKey: [String: Int] = [:]
 
-        for entry in entries {
+        for var entry in entries {
             guard !isRetiredBulkSource(entry.source) else {
                 continue
+            }
+
+            // Keyboard shortcuts and input-method codes are never speech correction rules.
+            if entry.source == "macos-text-replacements", entry.type == .correction {
+                guard let value = entry.replacement?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !value.isEmpty else { continue }
+                entry.type = .term
+                entry.original = value
+                entry.replacement = nil
+                entry.aliases = []
             }
 
             let normalizedEntries: [TerminologyEntry]
@@ -70,11 +81,17 @@ enum TerminologyPolicy {
         var seen = Set<String>()
 
         for value in values {
-            for term in normalizedContactTerms(from: value) {
-                let key = term.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-                guard seen.insert(key).inserted else {
+            var pending = [value]
+            while let candidate = pending.popLast() {
+                let normalized = normalizedContactTerms(from: candidate)
+                // Fully normalize split fragments now, so loading saved entries is idempotent.
+                guard normalized == [candidate] else {
+                    pending.append(contentsOf: normalized.reversed())
                     continue
                 }
+                let term = normalized[0]
+                let key = term.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                guard seen.insert(key).inserted else { continue }
                 output.append(term)
             }
         }

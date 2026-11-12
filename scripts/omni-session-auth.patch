@@ -1,0 +1,117 @@
+diff --git a/sglang_omni_mlx/native/src/common/http.h b/sglang_omni_mlx/native/src/common/http.h
+index 61233ef..faea475 100644
+--- a/sglang_omni_mlx/native/src/common/http.h
++++ b/sglang_omni_mlx/native/src/common/http.h
+@@ -27,6 +27,8 @@ std::string ReadBody(mg_connection *connection);
+ std::optional<std::string> ReadBody(mg_connection *connection,
+                                     size_t max_bytes);
+ bool IsPost(mg_connection *connection);
++// ChatType: supervised child sessions authenticate HTTP and WebSocket requests.
++int SessionSocketConnect(const mg_connection *connection, void *);
+ 
+ // As often as the CUDA server checks whether a speech client disconnected.
+ constexpr auto kClientPollInterval = std::chrono::milliseconds(50);
+diff --git a/sglang_omni_mlx/native/src/common/service.cpp b/sglang_omni_mlx/native/src/common/service.cpp
+index 47b84e5..b28e911 100644
+--- a/sglang_omni_mlx/native/src/common/service.cpp
++++ b/sglang_omni_mlx/native/src/common/service.cpp
+@@ -24,8 +24,17 @@ namespace {
+ struct ServerState {
+   Service *service;
+   std::string model_name;
++  std::string session_secret;
+ };
+ 
++bool SessionAuthorized(const mg_connection *connection) {
++  const auto *state = static_cast<const ServerState *>(
++      mg_get_user_data(mg_get_context(connection)));
++  const char *provided = mg_get_header(connection, "X-ChatType-Session");
++  return state->session_secret.empty() ||
++         (provided != nullptr && state->session_secret == provided);
++}
++
+ int HandleHealth(mg_connection *connection, void *data) {
+   const auto *state = static_cast<ServerState *>(data);
+   Json states = Json::object();
+@@ -192,6 +201,10 @@ private:
+ 
+ } // namespace
+ 
++int SessionSocketConnect(const mg_connection *connection, void *) {
++  return SessionAuthorized(connection) ? 0 : 1;
++}
++
+ int Serve(int argc, char **argv, const std::vector<ServedKind> &kinds) {
+   const auto started = std::chrono::steady_clock::now();
+   // Note (Jiaxin Deng): stop signals go to one waiting thread, not to
+@@ -210,6 +223,22 @@ int Serve(int argc, char **argv, const std::vector<ServedKind> &kinds) {
+     std::cerr << argv[0] << ": " << error.what() << "\n";
+     return 2;
+   }
++  std::string session_secret;
++  if (arguments.supervised) {
++    std::string initial_control;
++    if (arguments.host != "127.0.0.1" ||
++        !std::getline(std::cin, initial_control)) {
++      return 2;
++    }
++    try {
++      session_secret = Json::parse(initial_control).at("session_secret").get<std::string>();
++    } catch (const Json::exception &) {
++      return 2;
++    }
++    if (session_secret.size() < 32) {
++      return 2;
++    }
++  }
+   StopSignal stop;
+   std::thread([&stop, stop_signals]() {
+     int signal_number = 0;
+@@ -267,7 +296,7 @@ int Serve(int argc, char **argv, const std::vector<ServedKind> &kinds) {
+   }
+   loader.join();
+ 
+-  ServerState state{service.get(), arguments.model_name};
++  ServerState state{service.get(), arguments.model_name, session_secret};
+   mg_init_library(0);
+   const std::string listening =
+       arguments.host + ":" + std::to_string(arguments.port);
+@@ -283,6 +312,12 @@ int Serve(int argc, char **argv, const std::vector<ServedKind> &kinds) {
+                            "3600000",
+                            nullptr};
+   mg_callbacks callbacks{};
++  callbacks.begin_request = [](mg_connection *connection) -> int {
++    if (SessionAuthorized(connection)) {
++      return 0;
++    }
++    return WriteJson(connection, 401, {{"detail", "Session authentication required"}});
++  };
+   mg_context *context = mg_start(&callbacks, &state, options);
+   if (context == nullptr) {
+     if (arguments.supervised) {
+diff --git a/sglang_omni_mlx/native/src/qwen3_asr/asr_service.cpp b/sglang_omni_mlx/native/src/qwen3_asr/asr_service.cpp
+index 9b28799..711f23a 100644
+--- a/sglang_omni_mlx/native/src/qwen3_asr/asr_service.cpp
++++ b/sglang_omni_mlx/native/src/qwen3_asr/asr_service.cpp
+@@ -319,7 +319,7 @@ std::optional<float> NumberField(const FormFields &form,
+ }
+ 
+ void AddRealtimeHandler(mg_context *context, const RealtimeFactory &factory) {
+-  mg_set_websocket_handler(context, "/v1/realtime", nullptr, SocketReady,
++  mg_set_websocket_handler(context, "/v1/realtime", omni_server::SessionSocketConnect, SocketReady,
+                            SocketData, SocketClosed,
+                            const_cast<RealtimeFactory *>(&factory));
+ }
+diff --git a/sglang_omni_mlx/native/src/silero_vad/vad_service.cpp b/sglang_omni_mlx/native/src/silero_vad/vad_service.cpp
+index 670eac3..93588cf 100644
+--- a/sglang_omni_mlx/native/src/silero_vad/vad_service.cpp
++++ b/sglang_omni_mlx/native/src/silero_vad/vad_service.cpp
+@@ -214,7 +214,7 @@ VADService::VADService(const std::filesystem::path &model_directory)
+ void VADService::Register(mg_context *context) {
+   mg_set_request_handler(context, "/v1/vad/speech_timestamps$",
+                          HandleSpeechTimestamps, this);
+-  mg_set_websocket_handler(context, "/v1/vad/stream", nullptr, SocketReady,
++  mg_set_websocket_handler(context, "/v1/vad/stream", omni_server::SessionSocketConnect, SocketReady,
+                            SocketData, SocketClosed, this);
+ }
+ 

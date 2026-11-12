@@ -3,17 +3,40 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="ChatType"
-BUILD_DIR="$ROOT/.build/debug"
-APP_DIR="$ROOT/dist/$APP_NAME.app"
+DIST_ROOT="${CHATTYPE_DIST_PATH:-$ROOT/dist}"
+BUILD_SCRATCH_DIR="${CHATTYPE_SCRATCH_PATH:-$HOME/Library/Caches/chat-type/swiftpm}"
+BUILD_DIR="$BUILD_SCRATCH_DIR/release"
+DIST_APP_DIR="$DIST_ROOT/$APP_NAME.app"
+PACKAGE_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ChatType-package.XXXXXX")"
+APP_DIR="$PACKAGE_WORK_DIR/$APP_NAME.app"
 EXECUTABLE="$APP_DIR/Contents/MacOS/$APP_NAME"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
 PLIST="$APP_DIR/Contents/Info.plist"
 VERSION_ENV="$ROOT/version.env"
-ICONSET_DIR="$ROOT/dist/AppIcon.iconset"
+ICONSET_DIR="$DIST_ROOT/AppIcon.iconset"
 ICON_FILE="$RESOURCES_DIR/AppIcon.icns"
-ENTITLEMENTS_FILE="$ROOT/dist/ChatType.entitlements"
+ENTITLEMENTS_FILE="$DIST_ROOT/ChatType.entitlements"
 SIGNING_IDENTITY="${CHATTYPE_CODESIGN_IDENTITY:-}"
 ALLOW_ADHOC_SIGNING="${CHATTYPE_ALLOW_ADHOC_SIGNING:-0}"
+
+cleanup() {
+  rm -rf "$PACKAGE_WORK_DIR"
+}
+trap cleanup EXIT
+
+verify_dist_bundle() {
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    /usr/bin/xattr -cr "$DIST_APP_DIR"
+    /usr/bin/xattr -d com.apple.FinderInfo "$DIST_APP_DIR" 2>/dev/null || true
+    /usr/bin/xattr -d 'com.apple.fileprovider.fpfs#P' "$DIST_APP_DIR" 2>/dev/null || true
+    if /usr/bin/codesign --verify --deep --strict "$DIST_APP_DIR" 2>/dev/null; then
+      return 0
+    fi
+  done
+
+  /usr/bin/codesign --verify --deep --strict "$DIST_APP_DIR"
+}
 
 resolve_signing_identity() {
   if [[ -n "$SIGNING_IDENTITY" ]]; then
@@ -44,13 +67,13 @@ source "$VERSION_ENV"
 : "${CHATTYPE_BUILD:?CHATTYPE_BUILD is required}"
 
 ARCH="$(uname -m)"
-ZIP_PATH="$ROOT/dist/${APP_NAME}-${CHATTYPE_VERSION}-macos-${ARCH}.zip"
-DMG_PATH="$ROOT/dist/${APP_NAME}-${CHATTYPE_VERSION}-macos-${ARCH}.dmg"
-DMG_STAGING_DIR="$ROOT/dist/.dmg-staging"
-DMG_RAW_PATH="$ROOT/dist/.${APP_NAME}-${CHATTYPE_VERSION}-macos-${ARCH}.raw.dmg"
+ZIP_PATH="$DIST_ROOT/${APP_NAME}-${CHATTYPE_VERSION}-macos-${ARCH}.zip"
+DMG_PATH="$DIST_ROOT/${APP_NAME}-${CHATTYPE_VERSION}-macos-${ARCH}.dmg"
+DMG_STAGING_DIR="$DIST_ROOT/.dmg-staging"
+DMG_RAW_PATH="$DIST_ROOT/.${APP_NAME}-${CHATTYPE_VERSION}-macos-${ARCH}.raw.dmg"
 
-mkdir -p "$ROOT/dist"
-rm -rf "$APP_DIR"
+mkdir -p "$DIST_ROOT"
+rm -rf "$DIST_APP_DIR"
 rm -f "$ZIP_PATH"
 rm -f "$DMG_PATH"
 rm -f "$DMG_RAW_PATH"
@@ -59,7 +82,7 @@ rm -rf "$DMG_STAGING_DIR"
 rm -rf "$ICONSET_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$RESOURCES_DIR"
 
-swift build --package-path "$ROOT"
+swift build -c release --package-path "$ROOT" --scratch-path "$BUILD_SCRATCH_DIR" --cache-path "$HOME/Library/Caches/chat-type/swiftpm-cache"
 cp "$BUILD_DIR/$APP_NAME" "$EXECUTABLE"
 chmod +x "$EXECUTABLE"
 if [[ -d "$ROOT/Sources/ChatType/Resources" ]]; then
@@ -100,7 +123,7 @@ swift "$ROOT/scripts/render_app_icon.swift" "$ICONSET_DIR"
   printf '%s\n' '  <key>NSMicrophoneUsageDescription</key>'
   printf '%s\n' '  <string>ChatType records short dictation clips and sends them through its own ChatGPT account session.</string>'
   printf '%s\n' '  <key>NSContactsUsageDescription</key>'
-  printf '%s\n' '  <string>ChatType imports contact nicknames into your local terminology list when you request it.</string>'
+  printf '%s\n' '  <string>ChatType imports contact names and nicknames into your local vocabulary. Relevant names may accompany dictation sent to your selected transcription and polish services.</string>'
   printf '%s\n' '  <key>NSPrincipalClass</key>'
   printf '%s\n' '  <string>NSApplication</string>'
   printf '%s\n' '</dict>'
@@ -114,6 +137,8 @@ swift "$ROOT/scripts/render_app_icon.swift" "$ICONSET_DIR"
   printf '%s\n' '<dict>'
   printf '%s\n' '  <key>com.apple.security.device.audio-input</key>'
   printf '%s\n' '  <true/>'
+  printf '%s\n' '  <key>com.apple.security.personal-information.addressbook</key>'
+  printf '%s\n' '  <true/>'
   printf '%s\n' '</dict>'
   printf '%s\n' '</plist>'
 } >"$ENTITLEMENTS_FILE"
@@ -121,7 +146,7 @@ swift "$ROOT/scripts/render_app_icon.swift" "$ICONSET_DIR"
 SIGNING_IDENTITY="$(resolve_signing_identity)"
 CODESIGN_ARGS=(--force)
 if [[ -n "$SIGNING_IDENTITY" ]]; then
-  CODESIGN_ARGS+=(--sign "$SIGNING_IDENTITY" --options runtime --timestamp=none --entitlements "$ENTITLEMENTS_FILE")
+  CODESIGN_ARGS+=(--sign "$SIGNING_IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS_FILE")
   SIGNING_SUMMARY="$SIGNING_IDENTITY"
 elif [[ "$ALLOW_ADHOC_SIGNING" == "1" ]]; then
   CODESIGN_ARGS+=(--sign - --entitlements "$ENTITLEMENTS_FILE")
@@ -134,7 +159,16 @@ else
   exit 1
 fi
 
+# Files copied from synced or Finder-managed locations can carry metadata that
+# codesign rejects as resource-fork detritus. Strip it only from the fresh bundle.
+/usr/bin/xattr -cr "$APP_DIR"
 /usr/bin/codesign "${CODESIGN_ARGS[@]}" "$APP_DIR" >/dev/null
+/usr/bin/codesign --verify --deep --strict "$APP_DIR"
+/usr/bin/ditto --noextattr --noqtn "$APP_DIR" "$DIST_APP_DIR"
+# Finder/File Provider can attach bundle-level metadata while placing the
+# signed app back under Documents. Remove it after the copy and retry the
+# verification across the short attachment race.
+verify_dist_bundle
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$ZIP_PATH"
 mkdir -p "$DMG_STAGING_DIR"
 cp -R "$APP_DIR" "$DMG_STAGING_DIR/"
@@ -149,7 +183,7 @@ rm -rf "$ICONSET_DIR"
 rm -f "$ENTITLEMENTS_FILE"
 rm -f "$DMG_RAW_PATH"
 
-echo "Packaged $APP_DIR"
+echo "Packaged $DIST_APP_DIR"
 echo "Signed with $SIGNING_SUMMARY"
 echo "Created $ZIP_PATH"
 echo "Created $DMG_PATH"

@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-11T12:30:19+08:00",
+  "title": "Design System: ChatType Control Panel",
+  "extensions": {
+    "nativePlatform": {
+      "platform": "macOS",
+      "implementation": "AppKit window hosting SwiftUI",
+      "sourceVersion": "0.5.1 (122)",
+      "units": "points",
+      "colorSerialization": "DESIGN.md colors are dynamic native API identifiers, intentionally not CSS values. Resolve them with AppKit/SwiftUI.",
+      "previewPolicy": "No HTML/CSS replicas or synthetic tonal ramps: they would freeze or misrepresent macOS-native rendering. Component entries document native implementation and are not browser-renderable previews.",
+      "sources": [
+        "Sources/ChatType/PreferencesWindowController.swift",
+        "Sources/ChatType/TerminologyEditor.swift",
+        "Sources/ChatType/ProcessingFlowView.swift"
+      ]
+    },
+    "typographyMeta": {
+      "product-title": {
+        "displayName": "Product title",
+        "purpose": "App identity in the settings sidebar."
+      },
+      "page-title": {
+        "displayName": "Page title",
+        "purpose": "Current control-panel destination."
+      },
+      "section-title": {
+        "displayName": "Section title",
+        "purpose": "Grouped card heading."
+      },
+      "body": {
+        "displayName": "Compact form body",
+        "purpose": "Settings-card content; native semantic defaults remain elsewhere."
+      },
+      "row-title": {
+        "displayName": "Fact title",
+        "purpose": "Compact service and status emphasis."
+      },
+      "detail": {
+        "displayName": "Supporting detail",
+        "purpose": "Secondary explanation and row provenance."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "copy-feedback-in",
+        "value": "SwiftUI.Animation.easeOut(duration: 0.12)",
+        "purpose": "Fade in local Copied feedback."
+      },
+      {
+        "name": "copy-feedback-out",
+        "value": "SwiftUI.Animation.easeOut(duration: 0.18)",
+        "purpose": "Fade out Copied feedback after approximately 1.6 seconds."
+      }
+    ],
+    "breakpoints": [],
+    "nativeComponentTreatments": {
+      "sidebar-selection": {
+        "fill": "Color.accentColor.opacity(0.14)",
+        "shape": "RoundedRectangle(cornerRadius: 8)"
+      },
+      "stage-selection": {
+        "fill": "Color.accentColor.opacity(0.12)",
+        "shape": "RoundedRectangle(cornerRadius: 8)"
+      },
+      "device-sign-in": {
+        "fill": "Color.accentColor.opacity(0.08)",
+        "stroke": "Color.accentColor.opacity(0.28), lineWidth: 1",
+        "shape": "RoundedRectangle(cornerRadius: 10)"
+      }
+    }
+  },
+  "components": [
+    {
+      "name": "Native action button",
+      "kind": "button",
+      "description": "SwiftUI default/bordered actions; borderedProminent for connection or code actions. Native interaction states."
+    },
+    {
+      "name": "Native field",
+      "kind": "input",
+      "description": "TextField or SecureField; roundedBorder for vocabulary search. Native focus and disabled behavior."
+    },
+    {
+      "name": "Settings sidebar",
+      "kind": "nav",
+      "refersTo": "sidebar",
+      "description": "Five plain icon-and-label buttons, accent-tinted active destination and native foreground."
+    },
+    {
+      "name": "Settings card",
+      "kind": "card",
+      "refersTo": "settings-card",
+      "description": "Semibold heading and stacked compact content on a dynamic grouped surface."
+    },
+    {
+      "name": "Fact/readiness row",
+      "kind": "custom",
+      "refersTo": "information-row",
+      "description": "Native inset surface with primary fact, secondary detail and meaningful status symbol or label."
+    },
+    {
+      "name": "Processing inspector",
+      "kind": "custom",
+      "refersTo": "processing-inspector",
+      "description": "Six selectable stages and a fact inspector describing input, execution destination and output."
+    },
+    {
+      "name": "Vocabulary editor",
+      "kind": "custom",
+      "description": "Segmented library selection, native fields, source filter and paged inset list with row actions."
+    },
+    {
+      "name": "Configuration save bar",
+      "kind": "custom",
+      "refersTo": "save-bar",
+      "description": "Persistent native footer; single configuration save-status location and default-action Save Settings."
+    }
+  ],
+  "narrative": {
+    "northStar": "Native personal studio",
+    "overview": "ChatType’s control panel is a useful, candid personal studio: readable service facts, restrained navigation and native macOS controls. Its AppKit window hosts SwiftUI content. System typography, dynamic system colors and SF Symbols (Apple’s system icon library) support everyday operation while the existing product name and brand assets remain owner-controlled.\n\nThis document records the implemented settings surface of 0.5.1 (122), using `PreferencesWindowController.swift`, `TerminologyEditor.swift` and `ProcessingFlowView.swift`. It covers the reusable control-panel language, not the recording overlay or a new visual direction. Page strategy remains in `docs/control-panel-surface.md`; product commitments remain in `PRODUCT.md`.",
+    "keyCharacteristics": [
+      "Dynamic macOS semantic surfaces and one system accent.",
+      "Compact system typography with a clear title, section and detail hierarchy.",
+      "Flat grouped content, small rounded rows and native control behavior.",
+      "Local feedback beside its action; configuration save state in the persistent bottom bar."
+    ],
+    "rules": [
+      {
+        "name": "Native Color Rule",
+        "body": "Keep system colors dynamic; resolve appearance through AppKit and SwiftUI rather than freezing sampled light-mode RGB values.",
+        "section": "colors"
+      },
+      {
+        "name": "Native Type Rule",
+        "body": "Use the macOS system font and the observed semantic or point-size roles; preserve the native title hierarchy.",
+        "section": "typography"
+      },
+      {
+        "name": "Flat Grouping Rule",
+        "body": "Use semantic background contrast and native dividers for structure; content cards and rows do not add custom shadows.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do preserve the product name, app icon, dynamic menu-bar icon and existing brand colors.",
+      "Do use native buttons, fields, pickers, toggles, focus treatment and disabled states.",
+      "Do accompany readiness and errors with meaningful labels or symbols.",
+      "Do show operation feedback near the action and configuration save status in the bottom bar.",
+      "Do reset the page scroll position when changing sidebar destinations."
+    ],
+    "donts": [
+      "Don’t freeze dynamic semantic colors into sampled hex values.",
+      "Don’t substitute decorative display fonts for the native operating interface.",
+      "Don’t invent custom hover colors, shadows or motion for controls that use system defaults.",
+      "Don’t treat a local “Read names” result as proof that configuration was saved.",
+      "Don’t change owner-controlled brand visuals without explicit approval."
+    ]
+  }
+}

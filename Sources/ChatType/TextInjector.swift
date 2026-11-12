@@ -113,14 +113,13 @@ final class TextInjector: TextInjecting {
         editableTextSnapshot _: EditableTextSnapshot?,
         fallbackEditableTextSnapshot _: EditableTextSnapshot?,
         hasEditableTextFocus: Bool,
-        hasFallbackEditableTextFocus: Bool,
-        hasLaunchAppContext: Bool = false
+        hasFallbackEditableTextFocus: Bool
     ) -> TextInsertionPlan {
         guard accessibilityTrusted else {
             return .clipboardFallback(reason: .accessibilityPermissionRequired)
         }
 
-        guard hasEditableTextFocus || hasFallbackEditableTextFocus || hasLaunchAppContext else {
+        guard hasEditableTextFocus || hasFallbackEditableTextFocus else {
             return .clipboardFallback(reason: .noEditableTarget)
         }
 
@@ -147,8 +146,7 @@ final class TextInjector: TextInjecting {
             editableTextSnapshot: nil,
             fallbackEditableTextSnapshot: nil,
             hasEditableTextFocus: hasEditableTextFocus,
-            hasFallbackEditableTextFocus: hasFallbackEditableTextFocus,
-            hasLaunchAppContext: launchAppContext != nil
+            hasFallbackEditableTextFocus: hasFallbackEditableTextFocus
         )
 
         logger.info(
@@ -188,6 +186,10 @@ final class TextInjector: TextInjecting {
         copyToPasteboard(text)
         usleep(60_000)
 
+        guard isPasteTargetReady(launchAppContext: launchAppContext) else {
+            return .copiedToClipboard(reason: .noEditableTarget)
+        }
+
         guard
             let source = CGEventSource(stateID: .hidSystemState),
             let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
@@ -225,18 +227,21 @@ final class TextInjector: TextInjecting {
     }
 
     private func isPasteTargetReady(launchAppContext: LaunchAppContext?) -> Bool {
-        guard let launchAppContext else {
-            return FocusedElementInspector.hasEditableTextFocus()
-        }
+        Self.isPasteTargetReady(
+            launchAppProcessIdentifier: launchAppContext?.processIdentifier,
+            frontmostProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            hasEditableTextFocus: FocusedElementInspector.hasEditableTextFocus()
+        )
+    }
 
-        guard
-            let frontmostApplication = NSWorkspace.shared.frontmostApplication,
-            frontmostApplication.processIdentifier == launchAppContext.processIdentifier
-        else {
-            return false
-        }
-
-        return true
+    nonisolated static func isPasteTargetReady(
+        launchAppProcessIdentifier: pid_t?,
+        frontmostProcessIdentifier: pid_t?,
+        hasEditableTextFocus: Bool
+    ) -> Bool {
+        guard hasEditableTextFocus else { return false }
+        guard let launchAppProcessIdentifier else { return true }
+        return frontmostProcessIdentifier == launchAppProcessIdentifier
     }
 
     private func restoreLaunchAppIfNeeded(_ launchAppContext: LaunchAppContext?) {

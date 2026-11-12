@@ -1133,3 +1133,48 @@ func terminologyNormalizerKeepsUnicodeStressProbesStable() {
     )
     #expect(width.text == "全角 Ｃｈａｔ 与半角 Chat 以及中文 聊天记录 都出现一次。")
 }
+
+private actor NameHintCapturingPolisher: TextPolishing {
+    private(set) var receivedHints: [String] = []
+    func polish(text: String, terminologyEntries: [TerminologyEntry], hintTerms: [String]) async throws -> TextPolishResult {
+        receivedHints = hintTerms
+        return TextPolishResult(text: "请联系林锦钗。", provider: .chatGPTAuth, applied: true,
+            estimatedInputTokens: 10, estimatedOutputTokens: 10)
+    }
+}
+
+@Test func fullTranscriptPolishReceivesRelatedPersonalNameCandidates() async throws {
+    let polisher = NameHintCapturingPolisher()
+    let pipeline = DictationPipeline(transcriber: FakeTranscriber(result: TranscriptionResult(text: "请联系林锦猜。",
+        metrics: TranscriptionMetrics(provider: .chatGPTManagedAuth, audioDurationMs: 1_000, audioBytes: 100,
+                                      authMs: 0, transcribeMs: 1, promptIncluded: true))),
+        normalizer: TerminologyNormalizer(),
+        importedEntries: [TerminologyEntry(canonical: "林锦钗", aliases: [], source: "macos-contacts")],
+        hintTerms: ["pstack"], textPolisher: polisher)
+    let result = try await pipeline.prepare(audio: RecordedAudio(fileURL: URL(fileURLWithPath: "/fake.wav"), durationMs: 1_000))
+    let hints = await polisher.receivedHints
+    #expect(hints == ["pstack", "林锦钗"])
+    #expect(result.rawText == "请联系林锦猜。")
+    #expect(result.finalText == "请联系林锦钗。")
+}
+
+@Test(arguments: ["off", "failure", "truncated", "success"])
+func replacementRunsOnceAtFinalOutputAcrossPolishBranches(branch: String) async throws {
+    let text = "alpha 这是需要完整保留的语音转写文本。" + String(repeating: "请保留这里的全部工作内容和验收要求。", count: 9)
+    let corrections = [
+        TerminologyEntry(type: .correction, original: "alpha", replacement: "beta", aliases: [], source: "user", usageCount: 0, createdAt: "test"),
+        TerminologyEntry(type: .correction, original: "beta", replacement: "gamma", aliases: [], source: "user", usageCount: 0, createdAt: "test")
+    ]
+    let polisher: (any TextPolishing)? = branch == "off" ? nil : FakeTextPolisher(result: branch == "failure"
+        ? .failure(FakePolishError())
+        : .success(TextPolishResult(text: branch == "truncated" ? "短句" : text, provider: .chatGPTAuth,
+            applied: true, estimatedInputTokens: 10, estimatedOutputTokens: 10)))
+    let pipeline = DictationPipeline(transcriber: FakeTranscriber(result: TranscriptionResult(text: text,
+        metrics: .init(provider: .chatGPTManagedAuth, audioDurationMs: 2_000, audioBytes: 1000, authMs: 0, transcribeMs: 0, promptIncluded: false))),
+        normalizer: TerminologyNormalizer(), importedEntries: corrections, hintTerms: [], textPolisher: polisher)
+    let result = try await pipeline.prepare(audio: RecordedAudio(fileURL: URL(fileURLWithPath: "/tmp/fake.wav"), durationMs: 2_000))
+    #expect(result.finalText.hasPrefix("beta"))
+    #expect(!result.finalText.contains("gamma"))
+    #expect(result.exactReplacementCount == 1)
+    if branch == "truncated" { #expect(result.metrics.textPolishErrorMessage?.contains("truncated") == true) }
+}

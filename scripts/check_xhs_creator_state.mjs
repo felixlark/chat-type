@@ -62,7 +62,7 @@ function printUsage() {
 
 Legacy note:
   This script belongs to the old chrome-auth / Chrome for Testing workflow.
-  Daily Xiaohongshu operations now use the official Chrome plugin first and Computer Use for visual/file-upload acceptance.
+  Daily Xiaohongshu operations now use IAB first, official Chrome only for a documented regular-profile exception, and Computer Use for native or same-browser visible recovery.
   Do not use this script as the first step or sole blocker for promotion operations.
 
 Statuses:

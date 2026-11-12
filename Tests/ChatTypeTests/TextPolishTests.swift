@@ -231,7 +231,7 @@ func chatGPTAuthTextPolisherUsesResponsesEndpointWithLoginToken() async throws {
                 headerFields: nil
             )!
             return (
-                Data(#"{"output_text":"- 目标：发布 ChatType v0.5"}"#.utf8),
+                Data(#"{"status":"completed","output_text":"- 目标：发布 ChatType v0.5"}"#.utf8),
                 response
             )
         }
@@ -281,7 +281,7 @@ func chatGPTAuthTextPolisherRequestCarriesResequenceHint() async throws {
                 headerFields: nil
             )!
             return (
-                Data(#"{"output_text":"- 第一步：打开冰箱\n- 第二步：把大象放进去\n- 第三步：关上冰箱门"}"#.utf8),
+                Data(#"{"status":"completed","output_text":"- 第一步：打开冰箱\n- 第二步：把大象放进去\n- 第三步：关上冰箱门"}"#.utf8),
                 response
             )
         }

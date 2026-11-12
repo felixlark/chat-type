@@ -44,6 +44,7 @@ private struct TranscriptionHTTPError: LocalizedError {
     let contentType: String?
     let server: String?
     let bodyPrefix: String?
+    var retryAfterSeconds: Int? = nil
 
     var isAuthFailure: Bool {
         statusCode == 401 || statusCode == 403
@@ -76,7 +77,8 @@ private struct TranscriptionHTTPError: LocalizedError {
             return "\(providerLabel) 转写失败：私有转写接口返回 Cloudflare 403 challenge；这不是 ChatType 会话过期。"
         }
 
-        return "\(providerLabel) 转写失败：\(message)"
+        let wait = retryAfterSeconds.map { "；请等待 \($0) 秒后点击 Retry" } ?? ""
+        return "\(providerLabel) 转写失败：\(message)\(wait)"
     }
 }
 
@@ -122,6 +124,32 @@ struct ChatGPTTranscriber: Sendable {
     let promptBuilder: TranscriptionPromptBuilder
     let bridgePromptCapability: BridgePromptCapabilityStore
     let cloudflareChallengeMaxAttempts: Int
+    static func retryAfterSeconds(_ value: String?, now: Date = Date()) -> Int? {
+        guard let value else { return nil }
+        if let seconds = Int(value.trimmingCharacters(in: .whitespacesAndNewlines)), seconds >= 0 {
+            return seconds
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        guard let date = formatter.date(from: value) else { return nil }
+        return max(0, Int(ceil(date.timeIntervalSince(now))))
+    }
+
+    static func isRetryable(_ error: Error) -> Bool {
+        if let http = error as? TranscriptionHTTPError {
+            return http.statusCode == 429 || (500...599).contains(http.statusCode)
+        }
+        if let url = error as? URLError {
+            return [.timedOut, .networkConnectionLost, .notConnectedToInternet,
+                    .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost].contains(url.code)
+        }
+        if case TranscriptionError.invalidResponse = error { return true }
+        return false
+    }
+
+    let usesLocalSpeechForFiles: Bool
     let uploadMode: AudioUploadMode
     let dataLoader: @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
@@ -132,6 +160,7 @@ struct ChatGPTTranscriber: Sendable {
         bridgePromptCapability: BridgePromptCapabilityStore = .shared,
         cloudflareChallengeMaxAttempts: Int = 3,
         uploadMode: AudioUploadMode = .automatic,
+        usesLocalSpeechForFiles: Bool = false,
         dataLoader: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse) = { request in
             try await URLSession.shared.data(for: request)
         }
@@ -141,11 +170,34 @@ struct ChatGPTTranscriber: Sendable {
         self.promptBuilder = promptBuilder
         self.bridgePromptCapability = bridgePromptCapability
         self.cloudflareChallengeMaxAttempts = max(1, cloudflareChallengeMaxAttempts)
+        self.usesLocalSpeechForFiles = usesLocalSpeechForFiles
         self.uploadMode = uploadMode
         self.dataLoader = dataLoader
     }
 
     func transcribe(_ audio: RecordedAudio) async throws -> TranscriptionResult {
+        var audio = audio
+        if audio.localTranscript == nil, usesLocalSpeechForFiles, config.provider == .chatGPTManagedAuth {
+            if #available(macOS 26.0, *) {
+                let url = audio.fileURL
+                audio.localTranscript = Task { try await LocalSpeechRecorder.transcribeFile(url, hintTerms: config.hintTerms) }
+            }
+        }
+        if let local = audio.localTranscript {
+            let started = DispatchTime.now().uptimeNanoseconds
+            let text = try await withTaskCancellationHandler {
+                try await local.value
+            } onCancel: { local.cancel() }
+            try Task.checkCancellation()
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw TranscriptionError.invalidResponse
+            }
+            let bytes = (try? Data(contentsOf: audio.fileURL).count) ?? 0
+            return TranscriptionResult(text: text, metrics: TranscriptionMetrics(
+                provider: config.provider, audioDurationMs: audio.durationMs, audioBytes: bytes,
+                authMs: 0, transcribeMs: elapsedMilliseconds(since: started), promptIncluded: false,
+                uploadedBytes: 0, uploadFormat: "local-speech"))
+        }
         let data = try Data(contentsOf: audio.fileURL)
         guard !data.isEmpty else {
             throw TranscriptionError.invalidAudio
@@ -166,11 +218,18 @@ struct ChatGPTTranscriber: Sendable {
             break
         }
 
+        let vocabularyStarted = ProcessingTiming.now()
+        let terms = (config.prioritizedHintTerms, config.promptHintTerms)
+        ProcessingTrace.current?.recordStage("asrVocabulary", since: vocabularyStarted)
+        let namesStarted = ProcessingTiming.now()
+        let relatedNames = PersonalNameHints.relatedTerms(in: audio.previewText, entries: config.activeDictionaryEntries)
+        ProcessingTrace.current?.recordStage("nameLookup", since: namesStarted)
+        let promptStarted = ProcessingTiming.now()
         let prompt = promptBuilder.buildPrompt(
-            hintTerms: config.promptHintTerms,
+            hintTerms: terms.0 + relatedNames + terms.1,
             speechCleanupEnabled: config.speechCleanupEnabled
         )
-
+        ProcessingTrace.current?.recordStage("asrPromptBuild", since: promptStarted)
         switch config.provider {
         case .chatGPTManagedAuth:
             let encodingStarted = DispatchTime.now().uptimeNanoseconds
@@ -385,7 +444,8 @@ struct ChatGPTTranscriber: Sendable {
                 message: providerMessage,
                 contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
                 server: httpResponse.value(forHTTPHeaderField: "Server"),
-                bodyPrefix: String(data: responseData.prefix(512), encoding: .utf8)
+                bodyPrefix: String(data: responseData.prefix(512), encoding: .utf8),
+                retryAfterSeconds: Self.retryAfterSeconds(httpResponse.value(forHTTPHeaderField: "Retry-After"))
             )
         }
 

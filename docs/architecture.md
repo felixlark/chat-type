@@ -37,11 +37,18 @@ The V1 architecture deliberately optimizes for a single-app workflow where ChatT
 - `TerminologyNormalizer`
   - indexes the current dictionary once, selects only exact/fuzzy candidates present in each transcript, and applies deterministic terminology alignment before and after optional text polish
 - `AppleContactRemarkImporter`
-  - imports Apple Contacts nicknames through the system Contacts framework
-- `WeixinRemarkDatabaseImporter`
-  - resolves Smart Shadow's configured decrypted contacts cache and reads only non-empty `remark` values from `contact.db`
-  - copies the database into a mode-`0600` temporary snapshot, opens that snapshot as immutable read-only SQLite, and removes it immediately after the import; this supports Smart Shadow's WAL-format cache without requiring its transient sidecar files
-  - never reads WeChat keys, encrypted databases, messages, nicknames, phone numbers, or aliases
+  - imports Apple Contacts names through the system Contacts framework
+- `WeixinNameImporter`
+  - invokes the installed wechat-decrypt `get_contacts` read tool through a bundled names-only helper
+  - imports remarks and nicknames, excludes system accounts, groups and official accounts, and normalizes contact-derived terms
+  - uses the existing isolated runtime; ChatType does not open WeChat databases or request keys, messages, phone numbers or new permissions
+- `TerminologyEditor`
+  - keeps typing state separate from the settings shell, searches an indexed bilingual library and pages through every result
+  - merges asynchronous name imports into the current draft and reports save state through the shared settings footer
+- `LoginItemController`
+  - reads and changes `SMAppService.mainApp` registration, including system approval and failure states
+- `ProcessingFlowView`
+  - explains each step's input, output, selected service/model and destination from the configuration shown in the panel
 - `OpenAICompatibleTextPolisher`
   - runs the optional post-ASR rewrite pass through ChatType-managed ChatGPT Auth
   - calls the configured ChatGPT backend Responses endpoint with a ChatGPT access token
@@ -51,11 +58,11 @@ The V1 architecture deliberately optimizes for a single-app workflow where ChatT
 - `TextInjector`
   - pastes only when an editable target exists; otherwise leaves text in the clipboard
 - `DictationPipeline`
-  - orchestrates transcription, deterministic normalization, optional text polish, and final normalization through testable seams
+  - orchestrates transcription, terminology alignment, optional text polish, final terminology alignment, one non-recursive explicit text-correction pass and formatting through testable seams
 - `OverlayController`
   - renders the floating HUD
 - `PreferencesWindowController`
-  - shows the workflow-sidebar Settings surface for account, dictation, AI polish, terminology, paste, and advanced recovery settings
+  - shows five destinations: Account, Dictation, Terminology, History and Settings; credentials and service/model selection have one home in Account
 
 ## Provider Strategy
 
@@ -87,7 +94,8 @@ Behavior:
 - OpenAI-compatible recovery sends a fixed prompt through the official transcriptions API
 - the ChatGPT account route tries the same prompt and retries without it if the private route rejects the field
 - a Cloudflare challenge stays on the selected provider, preserves the recording, and exposes an explicit Retry action
-- optional Contacts and Smart Shadow WeChat remark imports become ChatType-owned canonical terminology entries
+- optional Contacts and Smart Shadow WeChat name imports become ChatType-owned canonical terminology entries
+- config migration rejects generic jieba segmentation dictionaries and bulk THUOCL sources so they cannot silently repopulate the active glossary
 - imported terminology is aligned by a deterministic local normalizer before and after optional text polish
 - optional text polish removes filler words, prefers later corrections, and uses plan-like structure for long agent-facing dictation
 - hidden `transcription.hintTerms` remain exact-only preservation hints

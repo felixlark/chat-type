@@ -92,7 +92,7 @@ struct RecoveryHistoryPreview: Sendable, Equatable, Identifiable {
             }
             copyText = text
             copyKind = .text
-            displayText = collapsedPreview(text)
+            displayText = (record.outcome == "error" ? "部分转写 · " : "") + collapsedPreview(text)
         case .polish:
             guard let text = record.polishText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
                 return nil

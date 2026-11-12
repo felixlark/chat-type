@@ -1,12 +1,46 @@
 import CoreGraphics
 import Foundation
 
+/// Pin placement through recording, processing and feedback; reset for a new recording.
+struct OverlayPlacementSession {
+    private var visibleFrame: CGRect?
+
+    mutating func resolve(_ currentFrame: () -> CGRect) -> CGRect {
+        if let visibleFrame { return visibleFrame }
+        let frame = currentFrame()
+        visibleFrame = frame
+        return frame
+    }
+
+    mutating func reset() {
+        visibleFrame = nil
+    }
+
+    static func appKitFrame(fromAccessibility frame: CGRect, primaryScreenTop: CGFloat) -> CGRect {
+        CGRect(x: frame.minX, y: primaryScreenTop - frame.maxY, width: frame.width, height: frame.height)
+    }
+
+    static func screenIndex(for windowFrame: CGRect, screens: [CGRect]) -> Int? {
+        var bestIndex: Int?
+        var bestArea: CGFloat = 0
+        for (index, screen) in screens.enumerated() {
+            let intersection = screen.intersection(windowFrame)
+            let area = intersection.isNull ? 0 : intersection.width * intersection.height
+            if area > bestArea {
+                bestArea = area
+                bestIndex = index
+            }
+        }
+        return bestIndex
+    }
+}
+
 struct OverlayStylePreset: Sendable, Equatable {
     let pillWidth: CGFloat
     let recordingPillWidth: CGFloat
     let pillHeight: CGFloat
     let errorPillWidth: CGFloat
-    let bottomInset: CGFloat
+    let topInset: CGFloat
     let cornerRadius: CGFloat
     let contentPaddingH: CGFloat
     let contentPaddingV: CGFloat
@@ -33,7 +67,7 @@ struct OverlayStylePreset: Sendable, Equatable {
         recordingPillWidth: 224,
         pillHeight: 44,
         errorPillWidth: 286,
-        bottomInset: 8,
+        topInset: 24,
         cornerRadius: 15,
         contentPaddingH: 10,
         contentPaddingV: 8,
@@ -43,7 +77,7 @@ struct OverlayStylePreset: Sendable, Equatable {
         waveformBarCount: 9,
         waveformBarSpacing: 3,
         waveformMinimumBarHeight: 6,
-        showsTranscriptPreview: false,
+        showsTranscriptPreview: true,
         recordingAutoHideDelay: nil,
         processingAutoHideDelay: nil,
         successAutoHideDelay: 1.2,

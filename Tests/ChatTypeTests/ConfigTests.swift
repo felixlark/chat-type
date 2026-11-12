@@ -236,6 +236,52 @@ func legacyImportedTerminologyEntriesMigrateIntoUserDictionaryEntries() throws {
 }
 
 @Test
+func configDecodeRemovesRetiredBulkSourcesAndCleansContactPositions() throws {
+    let json = """
+    {
+      "transcription": {
+        "terminology": {
+          "entries": [
+            {
+              "type": "term",
+              "original": "发展",
+              "aliases": [],
+              "source": "THUOCL: https://example.com/THUOCL_caijing.txt",
+              "usageCount": 0,
+              "createdAt": "2026-08-27T00:00:00Z"
+            },
+            {
+              "type": "term",
+              "original": "刘鑫财 漳州龙轴组织部 部长",
+              "aliases": [],
+              "source": "smart-shadow-weixin-remark",
+              "usageCount": 0,
+              "createdAt": "2026-08-27T00:00:00Z"
+            },
+            {
+              "type": "term",
+              "original": "ChatType",
+              "aliases": [],
+              "source": "user",
+              "usageCount": 0,
+              "createdAt": "2026-08-27T00:00:00Z"
+            }
+          ]
+        }
+      }
+    }
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: json)
+
+    #expect(decoded.transcription.terminology.entries.map(\.original) == [
+        "刘鑫财",
+        "漳州龙轴组织部",
+        "ChatType",
+    ])
+}
+
+@Test
 func legacyTypeWhisperTerminologyMetadataIsNormalized() throws {
     let json = """
     {

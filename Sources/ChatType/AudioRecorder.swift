@@ -7,6 +7,8 @@ import OSLog
 struct RecordedAudio: Sendable {
     let fileURL: URL
     let durationMs: Int
+    var localTranscript: Task<String, Error>? = nil
+    var previewText: String = ""
 }
 
 protocol RecordingSessionControlling: AnyObject, Sendable {
@@ -24,11 +26,13 @@ protocol RecordingControlling: AnyObject {
     func stopRecording() throws -> RecordedAudio
     func cancelRecording() throws
     func currentLevel() -> CGFloat?
+    var liveTranscript: String { get }
     func inputInterruptionDetected() -> Bool
 }
 
 extension RecordingControlling {
     func inputInterruptionDetected() -> Bool { false }
+    var liveTranscript: String { "" }
 }
 
 enum MicrophonePermissionState: Sendable {
