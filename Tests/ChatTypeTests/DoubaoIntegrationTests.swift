@@ -536,17 +536,17 @@ private struct SafetyTestASR: Transcriber {
 @Test func capturedBacklogDrainsAfterSlowHandshakeWithoutASecondMediaClock() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
     defer { try? FileManager.default.removeItem(at: url) }
-    try doubaoTestWAV(samples: 32_000).write(to: url)
+    try doubaoTestWAV(samples: 128_000).write(to: url)
     let socket = TestDoubaoSocket(); socket.startDelayMs = 150
     let state = DoubaoLiveState()
-    await state.finish(RecordedAudio(fileURL: url, durationMs: 2_000))
+    await state.finish(RecordedAudio(fileURL: url, durationMs: 8_000))
     let began = ContinuousClock().now
     let result = try await DoubaoTranscriber(keyProvider: { "test-only" }, socketFactory: { _ in socket })
         .run(url: url, durationMs: 0, live: state)
-    // The previous second media clock required two extra seconds. A wide bound
-    // leaves scheduling room while detecting that specific regression.
-    #expect(began.duration(to: .now) < .seconds(1))
-    #expect(socket.methods.filter { $0 == "TaskRequest" }.count == 100)
+    // Eight seconds of available audio separates the old media-clock delay
+    // from cloud CI scheduling noise. This is a regression bound, not an SLO.
+    #expect(began.duration(to: .now) < .seconds(4))
+    #expect(socket.methods.filter { $0 == "TaskRequest" }.count == 400)
     #expect(result.text == "完整识别。")
     #expect(result.metrics.liveFinishToLastSendMs != nil)
     #expect(result.metrics.sessionFinishWaitMs != nil)
