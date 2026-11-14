@@ -3,13 +3,18 @@ import Darwin
 import CryptoKit
 import OSLog
 
-struct RecoveryWriteStats: Codable, Sendable {
+struct RecoveryWriteStats: Codable, Sendable, Equatable {
     var recordCalls = 0
     var recordMilliseconds: Double = 0
     var journalWrites = 0
     var journalBytes = 0
     var snapshotWrites = 0
     var snapshotBytes = 0
+    var snapshotLoads = 0
+    var snapshotCacheHits = 0
+    var snapshotActiveHits = 0
+    var snapshotInvalidations = 0
+    var activeSnapshotCount = 0
 }
 
 struct RecoveryRecordInput: Sendable {
@@ -431,8 +436,9 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
 
     private func writeJournal(_ record: RecoveryRecord) throws {
         var compact = record
+        let active = ["recording", "recorded", "processing", "readyToInject"].contains(record.outcome)
         compact.attempts = try record.attempts?.map { attempt in
-            var a = attempt; a.snapshot = try snapshots.compact(a.snapshot, attemptID: a.id); return a
+            var a = attempt; a.snapshot = try snapshots.compact(a.snapshot, attemptID: a.id, retainUntilTerminal: true); return a
         }
         if let top = record.snapshot, let owner = record.attempts?.lastIndex(where: { $0.snapshot == top }) {
             compact.snapshot = compact.attempts?[owner].snapshot
@@ -446,11 +452,20 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
         try Self.synchronize(url)
         try synchronizeDirectory(journalDirectoryURL)
         writeStats.journalWrites += 1; writeStats.journalBytes += data.count
+        if !active { snapshots.release(record.attempts?.map(\.id) ?? []) }
     }
 
     func persistenceStats() -> RecoveryWriteStats {
         lock.lock(); defer { lock.unlock() }
-        var s = writeStats; s.snapshotWrites = snapshots.writes; s.snapshotBytes = snapshots.bytesWritten; return s
+        var s = writeStats; s.snapshotWrites = snapshots.writes; s.snapshotBytes = snapshots.bytesWritten
+        s.snapshotLoads = snapshots.loads; s.snapshotCacheHits = snapshots.cacheHits
+        s.snapshotActiveHits = snapshots.activeHits; s.snapshotInvalidations = snapshots.invalidations
+        s.activeSnapshotCount = snapshots.activeCount
+        return s
+    }
+
+    func discardEvictableSnapshotCache() {
+        lock.lock(); defer { lock.unlock() }; snapshots.discardEvictableCache()
     }
 
     var unreadableJournalCount: Int { lock.lock(); defer { lock.unlock() }; return unreadableJournals }

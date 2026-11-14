@@ -1148,7 +1148,8 @@ final class AppCoordinator {
             uploadAudioFormat: prepared.metrics.transcription.uploadFormat,
             processingTiming: prepared.metrics.timing,
             liveFinishToLastSendMs: prepared.metrics.transcription.liveFinishToLastSendMs,
-            sessionFinishWaitMs: prepared.metrics.transcription.sessionFinishWaitMs
+            sessionFinishWaitMs: prepared.metrics.transcription.sessionFinishWaitMs,
+            recoveryWriteStats: (recoveryRecorder as? RecoveryStore)?.persistenceStats()
         )
         try? latencyRecorder.record(sample)
     }

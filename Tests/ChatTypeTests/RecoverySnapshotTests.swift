@@ -182,3 +182,77 @@ private func doubaoSnapshotWAV() -> Data {
     #expect(synchronizations == 3)
     #expect(try ChatType.RecoveryStore(directoryURL: root).loadRecent().first?.snapshot == snapshot)
 }
+
+@Test func activeRecordPinsAllAttemptsUntilTerminalJournalIsDurable() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ChatType.RecoveryStore(directoryURL: root)
+    let url = try store.beginRecording(); try Data("original audio".utf8).write(to: url)
+    let first = UUID(), second = UUID(), snapshot = snapshotWithTerms()
+    try saveSnapshotAttempt(store, url, first, snapshot)
+    try saveSnapshotAttempt(store, url, second, snapshot)
+    #expect(store.persistenceStats().activeSnapshotCount == 2)
+    let initialLoads = store.persistenceStats().snapshotLoads
+    for outcome in ["recorded", "processing", "readyToInject"] {
+        store.discardEvictableSnapshotCache()
+        try saveSnapshotAttempt(store, url, second, snapshot, outcome: outcome)
+        #expect(store.persistenceStats().snapshotLoads == initialLoads)
+        #expect(store.persistenceStats().activeSnapshotCount == 2)
+    }
+    try saveSnapshotAttempt(store, url, second, snapshot, outcome: "cancelled")
+    #expect(store.persistenceStats().activeSnapshotCount == 0)
+    // A late network callback preserves the cancelled journal and releases its
+    // temporary pins again after writing; it cannot resurrect active work.
+    store.discardEvictableSnapshotCache()
+    try store.recordASRSessions(audioURL: url, attemptID: second, sessions: [.init(requestID: "late", outcome: "cancelled")])
+    #expect(try store.loadRecent().first?.outcome == "cancelled")
+    #expect(store.persistenceStats().activeSnapshotCount == 0)
+    #expect(try Data(contentsOf: url) == Data("original audio".utf8))
+}
+
+private final class TerminalJournalFailureFileManager: FileManager, @unchecked Sendable {
+    var rejectJournalPermissions = false
+    override func setAttributes(_ attributes: [FileAttributeKey: Any], ofItemAtPath path: String) throws {
+        if rejectJournalPermissions && path.contains("/Records/") && path.hasSuffix(".json") {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try super.setAttributes(attributes, ofItemAtPath: path)
+    }
+}
+
+@Test func terminalJournalFailureKeepsActiveSnapshotsAcrossCacheEviction() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let manager = TerminalJournalFailureFileManager()
+    let store = ChatType.RecoveryStore(fileManager: manager, directoryURL: root)
+    let url = try store.beginRecording(); try Data("original audio".utf8).write(to: url)
+    let id = UUID(), snapshot = snapshotWithTerms()
+    try saveSnapshotAttempt(store, url, id, snapshot)
+    manager.rejectJournalPermissions = true
+    #expect(throws: (any Error).self) { try saveSnapshotAttempt(store, url, id, snapshot, outcome: "clipboard") }
+    store.discardEvictableSnapshotCache()
+    #expect(store.persistenceStats().activeSnapshotCount == 1)
+    let before = store.persistenceStats().snapshotLoads
+    #expect(try store.loadRecent().first?.snapshot == snapshot)
+    #expect(store.persistenceStats().snapshotLoads == before)
+    manager.rejectJournalPermissions = false
+    try saveSnapshotAttempt(store, url, id, snapshot, outcome: "clipboard")
+    #expect(store.persistenceStats().activeSnapshotCount == 0)
+    store.discardEvictableSnapshotCache()
+    #expect(try store.loadRecent().first?.snapshot == snapshot)
+    #expect(store.persistenceStats().snapshotLoads == before + 1)
+}
+
+@Test func activePinDoesNotBypassDamagedSnapshotValidation() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ChatType.RecoveryStore(directoryURL: root)
+    let url = try store.beginRecording(); try Data("original audio".utf8).write(to: url)
+    let id = UUID(), snapshot = snapshotWithTerms()
+    try saveSnapshotAttempt(store, url, id, snapshot)
+    try Data("damaged".utf8).write(to: root.appendingPathComponent("Snapshots/\(id.uuidString).json"))
+    store.discardEvictableSnapshotCache()
+    #expect(throws: (any Error).self) { try saveSnapshotAttempt(store, url, id, snapshot) }
+    #expect(try store.loadRecent().isEmpty)
+    #expect(store.unreadableJournalCount == 1)
+}

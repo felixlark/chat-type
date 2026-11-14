@@ -35,6 +35,14 @@ final class RecoverySnapshots {
     private let directory: URL
     private let fileManager: FileManager
     private let cache = NSCache<NSString, Entry>()
+    // NSCache can be evicted when the menu-bar app is inactive. Active audit
+    // attempts keep a strong owner until their terminal journal is durable.
+    private var activeEntries: [UUID: Entry] = [:]
+    private(set) var loads = 0
+    private(set) var cacheHits = 0
+    private(set) var activeHits = 0
+    private(set) var invalidations = 0
+    var activeCount: Int { activeEntries.count }
     private let synchronizeSnapshot: (URL) throws -> Void
     private(set) var writes = 0
     private(set) var bytesWritten = 0
@@ -60,11 +68,19 @@ final class RecoverySnapshots {
         let url = directory.appendingPathComponent("\(id.uuidString).json")
         do {
             let stamp = try fingerprint(url)
-            if let entry = cache.object(forKey: key), entry.fingerprint == stamp {
+            let candidate = activeEntries[id] ?? cache.object(forKey: key)
+            if let entry = candidate, entry.fingerprint == stamp {
+                if activeEntries[id] != nil { activeHits += 1 } else { cacheHits += 1 }
                 guard expected == nil || entry.digest == expected else { throw RecoverySnapshotError.missingOrDamaged }
                 return entry
             }
+            if candidate != nil {
+                invalidations += 1
+                activeEntries.removeValue(forKey: id)
+                cache.removeObject(forKey: key)
+            }
             let data = try Data(contentsOf: url)
+            loads += 1
             let hash = Self.hash(data)
             guard expected == nil || hash == expected else { throw RecoverySnapshotError.missingOrDamaged }
             let snapshot = try JSONDecoder().decode(TranscriptionConfig.self, from: data)
@@ -84,7 +100,7 @@ final class RecoverySnapshots {
         return try load(attemptID, expected: expected).snapshot
     }
 
-    func compact(_ snapshot: TranscriptionConfig, attemptID: UUID) throws -> TranscriptionConfig {
+    func compact(_ snapshot: TranscriptionConfig, attemptID: UUID, retainUntilTerminal: Bool = false) throws -> TranscriptionConfig {
         guard !Self.hasReference(snapshot) else { throw RecoverySnapshotError.invalidReference }
         let url = directory.appendingPathComponent("\(attemptID.uuidString).json")
         let digest: String
@@ -92,6 +108,7 @@ final class RecoverySnapshots {
             let old = try load(attemptID)
             guard old.snapshot == snapshot else { throw RecoverySnapshotError.changedSnapshot }
             try ensureDurable(old, at: url)
+            if retainUntilTerminal { activeEntries[attemptID] = old }
             digest = old.digest
         } else {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true,
@@ -105,6 +122,7 @@ final class RecoverySnapshots {
             let entry = Entry(snapshot, digest, try fingerprint(url))
             try ensureDurable(entry, at: url)
             cache.setObject(entry, forKey: attemptID.uuidString as NSString, cost: data.count)
+            if retainUntilTerminal { activeEntries[attemptID] = entry }
         }
         var compact = snapshot
         compact.terminology = .init()
@@ -112,6 +130,14 @@ final class RecoverySnapshots {
         compact.hintTerms = []
         return compact
     }
+
+    func release(_ attemptIDs: [UUID]) {
+        for id in attemptIDs { activeEntries.removeValue(forKey: id) }
+    }
+
+    // Same eviction boundary as NSCache's automatic reclamation; testable
+    // without depending on host memory pressure or changing journal data.
+    func discardEvictableCache() { cache.removeAllObjects() }
 
     private func ensureDurable(_ entry: Entry, at url: URL) throws {
         guard !entry.durable else { return }
