@@ -16,6 +16,18 @@ def journal():
 
 
 class RecordingReadinessTests(unittest.TestCase):
+    def test_selected_nonstandard_trigger_is_forwarded_to_observer(self):
+        self.assertEqual(module.observer_command(Path("/observer"), "owned.txt", 97),
+                         ["/observer", "owned.txt", "97"])
+
+    def test_old_or_mismatched_observer_does_not_report_ready(self):
+        event = dict(AXTrusted=True, HIDTapAvailable=True)
+        self.assertFalse(module.observer_ready(event, 97))
+        event["triggerKeyCode"] = 79
+        self.assertFalse(module.observer_ready(event, 97))
+        event["triggerKeyCode"] = 97
+        self.assertTrue(module.observer_ready(event, 97))
+
     def test_prepare_pulses_cannot_start_or_end_playback(self):
         gate = module.PlaybackGate()
         gate.start()

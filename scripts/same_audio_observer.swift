@@ -4,7 +4,8 @@ import ApplicationServices
 import CoreAudio
 import Foundation
 
-guard CommandLine.arguments.count == 2 else { exit(2) }
+guard CommandLine.arguments.count == 3,
+      let selectedKey = UInt16(CommandLine.arguments[2]) else { exit(2) }
 let targetTitle = CommandLine.arguments[1]
 func emit(_ kind: String, _ fields: [String: Any] = [:]) {
     var d = fields; d["kind"] = kind; d["tickNs"] = DispatchTime.now().uptimeNanoseconds
@@ -18,18 +19,23 @@ func attr(_ x: AXUIElement, _ key: String) -> CFTypeRef? {
     return v
 }
 let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
-let callback: CGEventTapCallBack = { _, type, event, _ in
+let keyContext = UnsafeMutablePointer<UInt16>.allocate(capacity: 1)
+keyContext.initialize(to: selectedKey)
+let callback: CGEventTapCallBack = { _, type, event, context in
     let key = event.getIntegerValueField(.keyboardEventKeycode)
-    // No general keyboard logging: only the enrolled/portable F5 and cancellation.
-    if [53, 79, 96].contains(key) {
+    guard let context else { return Unmanaged.passUnretained(event) }
+    let trigger = context.assumingMemoryBound(to: UInt16.self).pointee
+    // No general keyboard logging: only the selected trigger and cancellation.
+    if key == Int64(trigger) || key == 53 {
         emit("key", ["keyCode": key, "eventType": type.rawValue,
                      "repeat": event.getIntegerValueField(.keyboardEventAutorepeat)])
     }
     return Unmanaged.passUnretained(event)
 }
 let tap = CGEvent.tapCreate(tap: .cghidEventTap, place: .headInsertEventTap,
-    options: .listenOnly, eventsOfInterest: CGEventMask(mask), callback: callback, userInfo: nil)
-emit("preflight", ["AXTrusted": AXIsProcessTrusted(), "HIDTapAvailable": tap != nil])
+    options: .listenOnly, eventsOfInterest: CGEventMask(mask), callback: callback, userInfo: keyContext)
+emit("preflight", ["AXTrusted": AXIsProcessTrusted(), "HIDTapAvailable": tap != nil,
+                   "triggerKeyCode": Int(selectedKey)])
 guard AXIsProcessTrusted(), let tap else { exit(3) }
 CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0), .commonModes)
 CGEvent.tapEnable(tap: tap, enable: true)

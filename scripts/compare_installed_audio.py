@@ -89,6 +89,15 @@ class PlaybackGate:
         return self.stopped and self.claimed and self.source_complete
 
 
+def observer_command(observer, target_title, key_code):
+    return [str(observer), target_title, str(key_code)]
+
+
+def observer_ready(event, key_code):
+    return bool(event.get("AXTrusted") and event.get("HIDTapAvailable")
+                and event.get("triggerKeyCode") == key_code)
+
+
 def run(args):
     os.umask(0o077)
     root = args.output.resolve()
@@ -98,7 +107,7 @@ def run(args):
     existing = {p.name for p in records.glob("*.json")}
     gate = PlaybackGate()
     lock = threading.RLock()
-    state = {"phase": "ready", "frontmost": "", "field": {}}
+    state = {"phase": "initializing", "frontmost": "", "field": {}}
     keys = {}
     record_path = None
     attempt_id = None
@@ -225,7 +234,8 @@ def run(args):
     signal.signal(signal.SIGTERM, terminate)
     signal.signal(signal.SIGINT, terminate)
     emit("setup", sourceSHA256=source_hash)
-    observer = subprocess.Popen([str(args.observer), args.target_title], stdout=subprocess.PIPE, text=True)
+    observer = subprocess.Popen(observer_command(args.observer, args.target_title, args.key_code),
+                                stdout=subprocess.PIPE, text=True)
     threading.Thread(target=poll, daemon=True).start()
     try:
         for line in observer.stdout:
@@ -235,8 +245,8 @@ def run(args):
             with lock:
                 with (root / "observer.jsonl").open("a") as f:
                     f.write(line)
-                if event["kind"] == "preflight" and not (event.get("AXTrusted") and event.get("HIDTapAvailable")):
-                    finish("observer-unavailable")
+                if event["kind"] == "preflight":
+                    finish("ready" if observer_ready(event, args.key_code) else "observer-unavailable")
                 elif event["kind"] == "frontmost":
                     state["frontmost"] = event["bundleID"]
                 elif event["kind"] == "field":
