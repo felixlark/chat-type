@@ -21,6 +21,8 @@ struct TextPolishResult: Sendable, Equatable {
     let applied: Bool
     let estimatedInputTokens: Int
     let estimatedOutputTokens: Int
+    var providerText: String? = nil
+    var protectionReason: String? = nil
 }
 
 protocol TextPolishing: Sendable {

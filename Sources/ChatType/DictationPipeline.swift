@@ -82,6 +82,7 @@ struct DictationPipeline: DictationPreparing {
         try Task.checkCancellation()
         var stages = DictationStageAudit(asrText: transcription.text)
         stages.asrRequestID = transcription.metrics.protocolRequestID
+        stages.asrSessions = transcription.metrics.protocolSessions
         stages.partialAudio = audio.isPartialReplay
         if transcription.metrics.provider == .doubaoIME {
             stages.protocolVersion = "DoubaoIME-1.1.0/v2/Opus-16000"
@@ -121,8 +122,9 @@ struct DictationPipeline: DictationPreparing {
                     terminologyEntries: alignmentEntries,
                     hintTerms: relatedHints
                 )
-                stages.polishOutput = polished.text
-                stages.polishOutputs = [polished.text]
+                stages.polishOutput = polished.providerText ?? polished.text
+                stages.polishOutputs = [polished.providerText ?? polished.text]
+                stages.polishProtectionReason = polished.protectionReason
                 try audit?(stages)
 
                 if isSuspiciousPolishTruncation(original: prePolish.text, polished: polished.text) {
@@ -133,8 +135,9 @@ struct DictationPipeline: DictationPreparing {
                         terminologyEntries: alignmentEntries,
                         hintTerms: relatedHints
                     )
-                    stages.polishOutput = polished.text
-                    stages.polishOutputs?.append(polished.text)
+                    stages.polishOutput = polished.providerText ?? polished.text
+                    stages.polishOutputs?.append(polished.providerText ?? polished.text)
+                    stages.polishProtectionReason = polished.protectionReason
                     try audit?(stages)
                 }
                 polishMs = elapsedMilliseconds(since: polishStarted)

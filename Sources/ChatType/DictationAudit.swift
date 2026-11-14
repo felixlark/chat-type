@@ -1,5 +1,16 @@
 import Foundation
 
+struct DoubaoSessionAttempt: Codable, Sendable, Equatable {
+    let requestID: String
+    var outcome: String
+    var code: Int? = nil
+    var reason: String? = nil
+}
+
+enum DoubaoSessionAudit {
+    @TaskLocal static var observer: (@Sendable ([DoubaoSessionAttempt]) throws -> Void)?
+}
+
 struct DictationStageAudit: Codable, Sendable, Equatable {
     var asrText: String?
     var polishInput: String?
@@ -11,6 +22,8 @@ struct DictationStageAudit: Codable, Sendable, Equatable {
     var protocolVersion: String? = nil
     var partialAudio: Bool? = nil
     var asrPartialText: String? = nil
+    var asrSessions: [DoubaoSessionAttempt]? = nil
+    var polishProtectionReason: String? = nil
 
     func merging(_ update: Self) -> Self {
         var result = self
@@ -24,6 +37,8 @@ struct DictationStageAudit: Codable, Sendable, Equatable {
         result.protocolVersion = update.protocolVersion ?? protocolVersion
         result.partialAudio = update.partialAudio ?? partialAudio
         result.asrPartialText = update.asrPartialText ?? asrPartialText
+        result.asrSessions = update.asrSessions ?? asrSessions
+        result.polishProtectionReason = update.polishProtectionReason ?? polishProtectionReason
         return result
     }
 }

@@ -93,6 +93,7 @@ struct TranscriptionMetrics: Sendable, Equatable {
     var uploadedBytes: Int = 0
     var uploadFormat: String = "wav"
     var protocolRequestID: String? = nil
+    var protocolSessions: [DoubaoSessionAttempt]? = nil
 }
 
 struct TranscriptionResult: Sendable, Equatable {
@@ -507,7 +508,9 @@ struct ChatGPTTranscriber: Sendable {
 struct SelectedRouteTranscriber: Transcriber {
     let account: ChatGPTTranscriber
     func transcribe(_ audio: RecordedAudio) async throws -> TranscriptionResult {
-        if account.config.provider == .doubaoIME { return try await DoubaoTranscriber().transcribe(audio) }
+        if account.config.provider == .doubaoIME {
+            return try await DoubaoTranscriber(maximumSessionAttempts: account.cloudflareChallengeMaxAttempts).transcribe(audio)
+        }
         return try await account.transcribe(audio)
     }
 }

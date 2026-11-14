@@ -4,6 +4,7 @@ enum DoubaoError: LocalizedError, Sendable, Equatable {
     case malformedMessage
     case incomplete(String)
     case rejected(Int)
+    case serviceDiscoveryFailure
     case http(Int)
     case credentials
     case codec
@@ -16,6 +17,7 @@ enum DoubaoError: LocalizedError, Sendable, Equatable {
         case .malformedMessage: return "豆包返回了无法解析的协议消息；录音仍保留。"
         case .incomplete(let stage): return "豆包\(stage)未完整结束；录音和已取得的文字仍保留，可重试。"
         case .rejected(let code): return "豆包拒绝请求（\(code)）；录音保留，未切换服务。可稍后重试，或在设置中更新豆包配置。"
+        case .serviceDiscoveryFailure: return "豆包识别服务暂时不可用（50700000：服务发现失败）；原声保留，未更换凭据或服务。"
         case .http(let code): return "豆包服务返回 HTTP \(code)；未切换服务。"
         case .credentials: return "未能取得豆包识别配置；请在设置中更新配置后重试。"
         case .codec: return "随应用安装的 Opus 编码器不可用，请重新安装 ChatType。"
@@ -102,6 +104,13 @@ struct DoubaoReply: Sendable {
     init(_ data: Data) throws {
         let fields = try DoubaoProtobuf.decode(data)
         if case .number(let code) = fields[5], code != 20_000_000 {
+            // Field 6 can contain arbitrary server text. Classify this observed
+            // transient reason only; never persist/print the untrusted message.
+            if code == 50_700_000, case .bytes(let message) = fields[6],
+               case .bytes(let kind) = fields[4], String(decoding: kind, as: UTF8.self) == "SessionFailed",
+               String(decoding: message, as: UTF8.self) == "read backend response: rpc error: code = 2 desc = service discovery failure" {
+                throw DoubaoError.serviceDiscoveryFailure
+            }
             throw DoubaoError.rejected(Int(clamping: code))
         }
         if case .bytes(let value) = fields[4] { kind = String(decoding: value, as: UTF8.self) }

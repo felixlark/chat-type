@@ -106,12 +106,14 @@ struct RecoveryHistoryPreview: Sendable, Equatable, Identifiable {
             displayText = (record.attempts?.last?.stages.partialAudio == true
                 || (record.outcome == "error" && record.attempts?.last?.stages.asrText == nil) ? "部分转写 · " : "") + collapsedPreview(text)
         case .polish:
-            guard let text = record.polishText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            let protected = record.attempts?.last?.stages.polishProtectionReason != nil
+            let accepted = protected ? (record.attempts?.last?.stages.finalText ?? record.attempts?.last?.stages.polishInput) : record.polishText
+            guard let text = accepted?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
                 return nil
             }
             copyText = text
             copyKind = .text
-            displayText = (record.outcome == "error" || record.attempts?.last?.stages.partialAudio == true ? "部分整理 · " : "") + collapsedPreview(text)
+            displayText = (protected ? "已保留原文 · " : (record.outcome == "error" || record.attempts?.last?.stages.partialAudio == true ? "部分整理 · " : "")) + collapsedPreview(text)
         }
 
         return RecoveryHistoryPreview(
@@ -126,7 +128,7 @@ struct RecoveryHistoryPreview: Sendable, Equatable, Identifiable {
                 ? record.appName ?? "Unknown target"
                 : "Unknown target",
             outcome: record.outcome,
-            errorMessage: record.errorMessage,
+            errorMessage: record.errorMessage ?? record.attempts?.last?.stages.polishProtectionReason,
             audioFileName: record.audioFileName,
             audioDurationMs: record.audioDurationMs
         )
@@ -234,6 +236,9 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
                 snapshot: snapshot, stages: (old?.stages ?? .init()).merging(input.stages ?? .init()), outcome: input.outcome)
             if let position { attempts[position] = attempt } else { attempts.append(attempt) }
         }
+        if input.attemptID == nil, input.outcome == "cancelled", let last = attempts.indices.last {
+            attempts[last].outcome = "cancelled"
+        }
         let sameAttempt = input.attemptID == nil || previous?.attempts?.last?.id == input.attemptID
         var audioSHA = previous?.audioSHA256
         if input.outcome != "recording", audioSHA == nil || !sameAttempt {
@@ -255,6 +260,25 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
             injectionSnapshot: input.injectionSnapshot ?? previous?.injectionSnapshot,
             audioSHA256: audioSHA, parentRecordID: input.parentRecordID ?? previous?.parentRecordID
         ))
+    }
+
+    /// Persist network sub-attempts while recording/processing. Preserve the
+    /// current terminal outcome if cancellation races a receiver callback.
+    func recordASRSessions(audioURL: URL, attemptID: UUID, sessions: [DoubaoSessionAttempt]) throws {
+        lock.lock(); defer { lock.unlock() }
+        let id = audioURL.deletingPathExtension().lastPathComponent
+        guard UUID(uuidString: id) != nil,
+              audioURL.deletingLastPathComponent().standardizedFileURL == audioDirectoryURL.standardizedFileURL else {
+            throw RecorderError.recordingStorageFailed("识别会话没有对应的原声归档。")
+        }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let url = journalDirectoryURL.appendingPathComponent("\(id).json")
+        var record = try decoder.decode(RecoveryRecord.self, from: Data(contentsOf: url))
+        guard let position = record.attempts?.firstIndex(where: { $0.id == attemptID }) else {
+            throw RecorderError.recordingStorageFailed("识别会话没有对应的处理记录。")
+        }
+        record.attempts?[position].stages.asrSessions = sessions
+        try writeJournal(record)
     }
 
     private static func checksum(_ url: URL) throws -> String {

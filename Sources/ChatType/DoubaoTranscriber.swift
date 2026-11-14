@@ -5,6 +5,7 @@ struct DoubaoTranscriptionFailure: LocalizedError, Sendable {
     let detail: String
     var requestID: String? = nil
     var underlyingError: (any Error)? = nil
+    var sessions: [DoubaoSessionAttempt]? = nil
     var errorDescription: String? {
         (partialText.isEmpty ? "豆包识别未完成，原声保留。" : "豆包识别未完成，已取得的部分文字保留。") + detail
     }
@@ -53,11 +54,15 @@ actor DoubaoLiveState {
 final class DoubaoLiveRecognition {
     let state: DoubaoLiveState
     private let task: Task<TranscriptionResult, Error>
-    init(url: URL) {
+    init(url: URL, sessionAudit: (@Sendable ([DoubaoSessionAttempt]) throws -> Void)? = nil) {
         let state = DoubaoLiveState()
         self.state = state
         task = Task.detached {
-            do { return try await DoubaoTranscriber().run(url: url, durationMs: 0, live: state) }
+            do {
+                return try await DoubaoSessionAudit.$observer.withValue(sessionAudit) {
+                    try await DoubaoTranscriber().run(url: url, durationMs: 0, live: state)
+                }
+            }
             catch { await state.failed(); throw error }
         }
     }
@@ -76,6 +81,9 @@ struct DoubaoTranscriber: Transcriber {
     typealias SocketFactory = @Sendable (String) -> any DoubaoSocket
     var keyProvider: KeyProvider = { try await DoubaoCredentials.shared.key() }
     var socketFactory: SocketFactory = { DoubaoURLSocket(deviceID: $0) }
+    // Existing product budget: initial automatic work has three attempts;
+    // explicit manual Retry passes one through SelectedRouteTranscriber.
+    var maximumSessionAttempts = 3
 
     func transcribe(_ audio: RecordedAudio) async throws -> TranscriptionResult {
         if let live = audio.cloudTranscript {
@@ -94,6 +102,50 @@ struct DoubaoTranscriber: Transcriber {
     }
 
     func run(url: URL, durationMs: Int, live: DoubaoLiveState? = nil) async throws -> TranscriptionResult {
+        let started = DispatchTime.now().uptimeNanoseconds
+        var sessions: [DoubaoSessionAttempt] = []
+        for ordinal in 0..<max(1, maximumSessionAttempts) {
+            try Task.checkCancellation()
+            let id = UUID().uuidString.lowercased()
+            sessions.append(.init(requestID: id, outcome: "started"))
+            try DoubaoSessionAudit.observer?(sessions)
+            do {
+                let result = try await runSession(url: url, durationMs: durationMs, live: live, requestID: id)
+                sessions[ordinal].outcome = "success"
+                try DoubaoSessionAudit.observer?(sessions)
+                let m = result.metrics
+                return TranscriptionResult(text: result.text, metrics: TranscriptionMetrics(provider: m.provider,
+                    audioDurationMs: m.audioDurationMs, audioBytes: m.audioBytes, authMs: m.authMs,
+                    transcribeMs: elapsed(started) - m.authMs, promptIncluded: m.promptIncluded,
+                    uploadedBytes: m.uploadedBytes, uploadFormat: m.uploadFormat,
+                    protocolRequestID: id, protocolSessions: sessions))
+            } catch {
+                let failure = error as? DoubaoTranscriptionFailure
+                let underlying = failure?.underlyingError ?? error
+                sessions[ordinal].outcome = Task.isCancelled ? "cancelled" : "failed"
+                if let e = underlying as? DoubaoError {
+                    switch e {
+                    case .serviceDiscoveryFailure:
+                        sessions[ordinal].code = 50_700_000
+                        sessions[ordinal].reason = "service discovery failure"
+                    case .rejected(let code): sessions[ordinal].code = code
+                    default: break
+                    }
+                }
+                try DoubaoSessionAudit.observer?(sessions)
+                try Task.checkCancellation()
+                // Never reconnect after any recognition text. Each new session
+                // reopens the same durable WAV at zero, with fresh receive state.
+                if underlying as? DoubaoError == .serviceDiscoveryFailure,
+                   failure?.partialText.isEmpty == true, ordinal + 1 < maximumSessionAttempts { continue }
+                throw DoubaoTranscriptionFailure(partialText: failure?.partialText ?? "",
+                    detail: underlying.localizedDescription, requestID: id, underlyingError: underlying, sessions: sessions)
+            }
+        }
+        throw DoubaoError.incomplete("识别")
+    }
+
+    private func runSession(url: URL, durationMs: Int, live: DoubaoLiveState?, requestID: String) async throws -> TranscriptionResult {
         let start = DispatchTime.now().uptimeNanoseconds
         let token = try await keyProvider()
         let authMs = elapsed(start)
@@ -101,8 +153,7 @@ struct DoubaoTranscriber: Transcriber {
         let did = String(UInt64.random(in: 10_000_000_000_000_000..<99_999_999_999_999_999))
         let socket = socketFactory(did)
         defer { socket.close() }
-        let progress = live ?? DoubaoLiveState()
-        let requestID = UUID().uuidString.lowercased()
+        let progress = DoubaoLiveState()
         do { return try await withTaskCancellationHandler {
             let id = requestID
             func send(_ method: String, payload: Data? = nil, audio: Data? = nil, frame: UInt64? = nil) async throws {
@@ -137,6 +188,7 @@ struct DoubaoTranscriber: Transcriber {
                         if let result = reply.result {
                             try transcript.consume(result)
                             await progress.update(transcript.text)
+                            if let live { await live.update(transcript.text) }
                         }
                         if reply.kind == "SessionFinished" {
                             guard await progress.finishRequested else { throw DoubaoError.incomplete("识别（服务提前结束）") }
@@ -154,6 +206,8 @@ struct DoubaoTranscriber: Transcriber {
             var sentFrames = 0
             var uploaded = 0
             var pending: Data?
+            let clock = ContinuousClock()
+            var nextFrame = clock.now
             while true {
                 try Task.checkCancellation()
                 let final = live == nil ? true : await live?.finished != nil
@@ -168,10 +222,12 @@ struct DoubaoTranscriber: Transcriber {
                     if let pending {
                         let opus = try encoder.encode(pending)
                         let metadata = try JSONSerialization.data(withJSONObject: ["extra": [:], "timestamp_ms": sentFrames * 20] as [String: Any])
+                        // Keep the existing 20 ms wire pace, including time spent
+                        // in send(). Reset after an idle wait to avoid bursts.
+                        try await clock.sleep(until: nextFrame)
+                        nextFrame = clock.now.advanced(by: .milliseconds(20))
                         try await send("TaskRequest", payload: metadata, audio: opus, frame: sentFrames == 0 ? 1 : 3)
                         uploaded += opus.count; sentFrames += 1
-                        // Protocol pacing, not a recording-duration or queue-size limit.
-                        try await Task.sleep(for: .milliseconds(20))
                     }
                     pending = next
                 } else if final { break }
@@ -180,6 +236,7 @@ struct DoubaoTranscriber: Transcriber {
             guard let pending else { throw TranscriptionError.invalidAudio }
             let opus = try encoder.encode(pending)
             let metadata = try JSONSerialization.data(withJSONObject: ["extra": [:], "timestamp_ms": sentFrames * 20] as [String: Any])
+            try await clock.sleep(until: nextFrame)
             try await send("TaskRequest", payload: metadata, audio: opus, frame: sentFrames == 0 ? 1 : 9)
             uploaded += opus.count
             if live != nil {
