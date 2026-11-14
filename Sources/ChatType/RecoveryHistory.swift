@@ -3,6 +3,10 @@ import Darwin
 import CryptoKit
 import OSLog
 
+extension Notification.Name {
+    static let recoveryRecordDidChange = Notification.Name("ChatTypeRecoveryRecordDidChange")
+}
+
 struct RecoveryWriteStats: Codable, Sendable, Equatable {
     var recordCalls = 0
     var recordMilliseconds: Double = 0
@@ -258,7 +262,8 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
             let position = attempts.firstIndex { $0.id == attemptID }
             let old = position.map { attempts[$0] }
             let attempt = DictationAttempt(id: attemptID, startedAt: old?.startedAt ?? input.timestamp,
-                snapshot: snapshot, stages: (old?.stages ?? .init()).merging(input.stages ?? .init()), outcome: input.outcome)
+                snapshot: snapshot, stages: (old?.stages ?? .init()).merging(input.stages ?? .init()), outcome: input.outcome,
+                injectionSnapshot: old?.injectionSnapshot ?? input.injectionSnapshot)
             if let position { attempts[position] = attempt } else { attempts.append(attempt) }
         }
         if input.attemptID == nil, input.outcome == "cancelled", let last = attempts.indices.last {
@@ -429,7 +434,10 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
             record.snapshot = try snapshots.restore(top, attemptID: owner.id)
         }
         record.attempts = try record.attempts?.map { attempt in
-            var a = attempt; a.snapshot = try snapshots.restore(a.snapshot, attemptID: a.id); return a
+            var a = attempt
+            if a.injectionSnapshot == nil { a.injectionSnapshot = try snapshots.restoreInjection(a.snapshot, attemptID: a.id) }
+            a.snapshot = try snapshots.restore(a.snapshot, attemptID: a.id)
+            return a
         }
         return record
     }
@@ -438,7 +446,7 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
         var compact = record
         let active = ["recording", "recorded", "processing", "readyToInject"].contains(record.outcome)
         compact.attempts = try record.attempts?.map { attempt in
-            var a = attempt; a.snapshot = try snapshots.compact(a.snapshot, attemptID: a.id, retainUntilTerminal: true); return a
+            var a = attempt; a.snapshot = try snapshots.compact(a.snapshot, attemptID: a.id, injection: a.injectionSnapshot, retainUntilTerminal: true); return a
         }
         if let top = record.snapshot, let owner = record.attempts?.lastIndex(where: { $0.snapshot == top }) {
             compact.snapshot = compact.attempts?[owner].snapshot
@@ -453,6 +461,10 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
         try synchronizeDirectory(journalDirectoryURL)
         writeStats.journalWrites += 1; writeStats.journalBytes += data.count
         if !active { snapshots.release(record.attempts?.map(\.id) ?? []) }
+        let directory = directoryURL.path
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .recoveryRecordDidChange, object: record, userInfo: ["directory": directory])
+        }
     }
 
     func persistenceStats() -> RecoveryWriteStats {

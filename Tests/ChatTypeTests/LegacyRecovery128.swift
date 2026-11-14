@@ -7,6 +7,15 @@ import OSLog
 @testable import ChatType
 
 enum LegacyRecovery128 {
+struct DictationAttempt: Codable, Sendable, Equatable, Identifiable {
+    let id: UUID
+    let startedAt: Date
+    var snapshot: TranscriptionConfig
+    var stages: DictationStageAudit
+    var outcome: String
+    var schemaVersion: Int? = 1
+}
+
 struct RecoveryRecordInput: Sendable {
     let timestamp: Date
     let sourceAudioURL: URL

@@ -256,3 +256,23 @@ private final class TerminalJournalFailureFileManager: FileManager, @unchecked S
     #expect(try store.loadRecent().isEmpty)
     #expect(store.unreadableJournalCount == 1)
 }
+
+
+@Test func build128JournalRewriteCannotDiscardNewAttemptInjectionSidecar() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ChatType.RecoveryStore(directoryURL: root)
+    let url = try store.beginRecording(); try Data("retained".utf8).write(to: url)
+    let id = UUID(), snapshot = snapshotWithTerms()
+    var injection = InjectionConfig(); injection.clipboardOnly = true; injection.preserveClipboard = true
+    try store.record(.init(timestamp: Date(), sourceAudioURL: url, durationMs: 100, asrText: "原文",
+        polishText: nil, appName: nil, appBundleIdentifier: nil, outcome: "processing", errorMessage: nil,
+        snapshot: snapshot, attemptID: id, injectionSnapshot: injection))
+    // The actual old attempt DTO does not know injectionSnapshot.
+    let old = LegacyRecovery128.RecoveryStore(directoryURL: root)
+    try old.record(.init(timestamp: Date(), sourceAudioURL: url, durationMs: 100, asrText: "原文",
+        polishText: nil, appName: nil, appBundleIdentifier: nil, outcome: "processing", errorMessage: nil))
+    let restored = try #require(ChatType.RecoveryStore(directoryURL: root).loadRecent().first)
+    #expect(restored.attempts?.first?.snapshot == snapshot)
+    #expect(restored.attempts?.first?.injectionSnapshot == injection)
+}

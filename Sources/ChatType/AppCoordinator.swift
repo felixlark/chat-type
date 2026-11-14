@@ -50,6 +50,8 @@ final class AppCoordinator {
     var recorder: (any RecordingControlling)?
     var statusMenu: (any StatusMenuUpdating)?
     private var preferencesWindowController: PreferencesWindowController?
+    var preferencesDraft: PreferencesDraft?
+    private let replayDecision: @MainActor (RecoveryReplayDecision) -> Bool
     private let microphoneAccessRequester: (@MainActor () async throws -> Void)?
     private var microphonePermissionWindowController: MicrophonePermissionWindowController?
     var state: State = .idle
@@ -87,6 +89,7 @@ final class AppCoordinator {
         latencyRecorder: any LatencyRecording = LatencyRecorder(),
         historyRecorder: any TranscriptionHistoryRecording = TranscriptionHistoryRecorder(),
         recoveryRecorder: (any RecoveryRecording)? = nil,
+        replayDecision: @escaping @MainActor (RecoveryReplayDecision) -> Bool = RecoveryReplayDecision.present,
         soundFeedback: any SoundFeedbackPlaying = SoundFeedbackService(),
         recorderFactory: RecorderFactory? = nil,
         statusMenuFactory: @escaping StatusMenuFactory = { openSettings, openConfig, quit in
@@ -128,6 +131,7 @@ final class AppCoordinator {
         self.authManager = authManager
         self.latencyRecorder = latencyRecorder
         self.historyRecorder = historyRecorder
+        self.replayDecision = replayDecision
         self.recoveryRecorder = recoveryRecorder ?? RecoveryStore(
             directoryURL: configStore.directoryURL.appendingPathComponent("Recovery", isDirectory: true)
         )
@@ -148,6 +152,7 @@ final class AppCoordinator {
         self.overlay.onRetry = { [weak self] in
             self?.retryPendingTranscription()
         }
+        self.overlay.onReprocess = { [weak self] in self?.reprocessPendingTranscription() }
         authStateObserver = NotificationCenter.default.addObserver(
             forName: .chatGPTAuthStateDidChange,
             object: nil,
@@ -296,6 +301,7 @@ final class AppCoordinator {
     }
 
     private func startRecording() {
+        guard applyPendingPreferences() else { return }
         var sessionConfig = config
         if sessionConfig.transcription.provider == .doubaoIME { sessionConfig.transcription.sampleRateHz = 16_000 }
         recordingConfig = sessionConfig
@@ -456,6 +462,41 @@ final class AppCoordinator {
             launchAppContext: pendingRetry.launchAppContext,
             attemptPolicy: .manualRetry
         )
+    }
+
+    private func reprocessPendingTranscription() {
+        guard state == .idle, let pending = pendingRetry else { NSSound.beep(); return }
+        guard applyPendingPreferences() else { return }
+        let sessionID = UUID()
+        activeSessionID = sessionID; state = .processing
+        statusMenu?.update(state: .processing, detail: "按当前流程重跑")
+        overlay.showProcessing()
+        let audio = RecordedAudio(fileURL: pending.audio.fileURL, durationMs: pending.audio.durationMs,
+            previewText: pending.audio.previewText, isPartialReplay: pending.audio.isPartialReplay)
+        startProcessing(audio: audio, sessionID: sessionID, transcriptionConfig: config.transcription,
+            injectionConfig: config.injection, launchAppContext: pending.launchAppContext, attemptPolicy: .manualRetry)
+    }
+
+    private func savePreferences(_ newConfig: AppConfig) -> Result<Void, any Error> {
+        do {
+            try configStore.save(newConfig)
+            config = newConfig
+            // Saving future choices must not make an active task look Ready.
+            refreshReadyState(detailOverride: "Settings saved", state: .ready)
+            prewarmAuthIfNeeded()
+            return .success(())
+        } catch { return .failure(error) }
+    }
+
+    private func applyPendingPreferences() -> Bool {
+        guard state == .idle else { return false }
+        guard let preferencesDraft else { return true }
+        if case .failure(let error) = preferencesDraft.apply(using: savePreferences) {
+            let message = "设置未能应用，未开始新的处理。\(error.localizedDescription)"
+            if pendingRetry != nil { overlay.showRetryableError(message) } else { overlay.showError(message) }
+            return false
+        }
+        return true
     }
 
     private func startProcessing(
@@ -675,18 +716,13 @@ final class AppCoordinator {
             } else {
                 authManager = ChatGPTAuthManager()
             }
+            if preferencesDraft == nil { preferencesDraft = PreferencesDraft(config: config) }
             preferencesWindowController = PreferencesWindowController(
                 config: config,
+                draft: preferencesDraft,
                 authManager: authManager,
                 onSave: { [weak self] newConfig in
-                    guard let self else { return .failure(CocoaError(.userCancelled)) }
-                    do {
-                        try self.configStore.save(newConfig)
-                        self.config = newConfig
-                        self.refreshReadyState(detailOverride: "Settings saved", state: .ready)
-                        self.prewarmAuthIfNeeded()
-                        return .success(())
-                    } catch { return .failure(error) }
+                    self?.savePreferences(newConfig) ?? .failure(CocoaError(.userCancelled))
                 },
                 onImportAppleContactRemarks: {
                     do { return .success(try await AppleContactRemarkImporter().importEntries()) }
@@ -711,9 +747,8 @@ final class AppCoordinator {
                     return (try? self.recoveryRecorder.loadRecent(limit: 10)) ?? []
                 },
                 recoveryDirectoryURL: recoveryRecorder.directoryURL,
-                onRetryRecoveryRecord: { [weak self] record in
-                    self?.retryRecoveryRecord(record)
-                },
+                onRetryRecoveryRecord: { [weak self] record in self?.retryRecoveryRecord(record) },
+                onReprocessRecoveryRecord: { [weak self] record in self?.reprocessRecoveryRecord(record) },
                 onOpenConfigFolder: { [weak self] in
                     self?.openConfigFolder()
                 },
@@ -747,63 +782,46 @@ final class AppCoordinator {
     }
 
     private func retryRecoveryRecord(_ record: RecoveryRecord) {
-        guard state == .idle else {
-            NSSound.beep()
-            return
-        }
+        replayRecoveryRecord(record, useCurrentFlow: false)
+    }
 
+    func reprocessRecoveryRecord(_ record: RecoveryRecord) {
+        replayRecoveryRecord(record, useCurrentFlow: true)
+    }
+
+    private func replayRecoveryRecord(_ record: RecoveryRecord, useCurrentFlow: Bool) {
+        guard state == .idle else { NSSound.beep(); return }
         let audioURL = record.audioURL(baseDirectory: recoveryRecorder.directoryURL)
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
-            overlay.showError("Saved recovery audio is missing.")
-            return
+            overlay.showError("Saved recovery audio is missing."); return
         }
-
-        if ["readyToInject", "outputUnknown"].contains(record.outcome) {
-            let alert = NSAlert()
-            alert.messageText = "上次输出状态待核对"
-            alert.informativeText = "文字可能已经粘贴或复制。请先核对目标内容，避免重复输出。"
-            alert.addButton(withTitle: "已核对，重新处理")
-            alert.addButton(withTitle: "取消")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        }
-        var replay = record.snapshot ?? config.transcription
-        if record.snapshot == nil {
-            let alert = NSAlert()
-            alert.messageText = "旧录音没有后端记录"
-            alert.informativeText = "本次将识别音频发送到 \(replay.provider.title)，文字润色：\(replay.textPolish.mode == .disabled ? "关闭" : replay.textPolish.provider.title)。原声会保留。只有选择下面的重跑按钮才会提交。"
-            alert.addButton(withTitle: "按这些选择重跑")
-            alert.addButton(withTitle: "取消")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        }
-        replay.terminology = config.transcription.terminology
-        replay.hintTerms = config.transcription.hintTerms
-        let replayInjection = record.injectionSnapshot ?? config.injection
-        var partialReplay = ["interrupted", "cancelled"].contains(record.outcome)
+        if ["readyToInject", "outputUnknown"].contains(record.outcome), !replayDecision(.possiblePreviousOutput) { return }
+        let partial = ["interrupted", "cancelled"].contains(record.outcome)
             || record.attempts?.last?.stages.partialAudio == true
-        if case .interruptedInput = PCMRecordingIntegrityAnalyzer().analyze(wavData: (try? Data(contentsOf: audioURL)) ?? Data()) {
-            let alert = NSAlert()
-            alert.messageText = "仅重跑已保存片段"
-            alert.informativeText = "原录音存在输入中断或数字静音尾部，无法保证整段原声完整。将按已保存内容重跑并标记为片段，原件保留。"
-            alert.addButton(withTitle: "重跑已保存片段")
-            alert.addButton(withTitle: "取消")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-            partialReplay = true
+            || { if case .interruptedInput = PCMRecordingIntegrityAnalyzer().analyze(wavData: (try? Data(contentsOf: audioURL)) ?? Data()) { return true }; return false }()
+        if partial, !replayDecision(.partialAudio) { return }
+        let replay: TranscriptionConfig
+        let injection: InjectionConfig
+        if useCurrentFlow {
+            guard applyPendingPreferences() else { return }
+            replay = config.transcription; injection = config.injection
+        } else if let original = record.attempts?.last?.snapshot ?? record.snapshot {
+            replay = original
+            injection = record.attempts?.last?.injectionSnapshot ?? record.injectionSnapshot ?? config.injection
+        } else {
+            let selected = preferencesDraft?.config.transcription ?? config.transcription
+            let title = "ASR: \(selected.provider.title)；润色: \(selected.textPolish.isEnabled ? selected.textPolish.provider.title : "关闭")"
+            guard replayDecision(.unknownOriginalRoute(title)), applyPendingPreferences() else { return }
+            replay = config.transcription; injection = config.injection
         }
         let sessionID = UUID()
-        activeSessionID = sessionID
-        state = .processing
+        activeSessionID = sessionID; state = .processing
         let audio = RecordedAudio(fileURL: audioURL, durationMs: record.audioDurationMs,
-            previewText: record.asrText ?? "", isPartialReplay: partialReplay)
-        statusMenu?.update(state: .processing, detail: "Recognizing saved audio with current terms")
+            previewText: record.asrText ?? "", isPartialReplay: partial)
+        statusMenu?.update(state: .processing, detail: useCurrentFlow ? "按当前流程重跑" : "重试原路线")
         overlay.showProcessing()
-        startProcessing(
-            audio: audio,
-            sessionID: sessionID,
-            transcriptionConfig: replay,
-            injectionConfig: replayInjection,
-            launchAppContext: launchAppContextProvider(),
-            attemptPolicy: .manualRetry
-        )
+        startProcessing(audio: audio, sessionID: sessionID, transcriptionConfig: replay,
+            injectionConfig: injection, launchAppContext: launchAppContextProvider(), attemptPolicy: .manualRetry)
     }
 
     private func openConfigFolder() {

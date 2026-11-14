@@ -23,13 +23,33 @@ final class RecoverySnapshots {
         let modified: Date
         let inode: UInt64
     }
+    // Extra fields stay in the immutable sidecar even if an older journal
+    // reader drops a new optional attempt field during a read/modify/write.
+    private struct Archive: Codable {
+        let transcription: TranscriptionConfig
+        let injectionSnapshot: InjectionConfig?
+        enum ExtraKeys: String, CodingKey { case injectionSnapshot }
+        init(_ config: TranscriptionConfig, _ injection: InjectionConfig?) {
+            transcription = config; injectionSnapshot = injection
+        }
+        init(from decoder: any Decoder) throws {
+            transcription = try TranscriptionConfig(from: decoder)
+            injectionSnapshot = try decoder.container(keyedBy: ExtraKeys.self).decodeIfPresent(InjectionConfig.self, forKey: .injectionSnapshot)
+        }
+        func encode(to encoder: any Encoder) throws {
+            try transcription.encode(to: encoder)
+            var c = encoder.container(keyedBy: ExtraKeys.self)
+            try c.encodeIfPresent(injectionSnapshot, forKey: .injectionSnapshot)
+        }
+    }
     private final class Entry: NSObject {
         let snapshot: TranscriptionConfig
         let digest: String
+        let injection: InjectionConfig?
         let fingerprint: Fingerprint
         var durable = false
-        init(_ snapshot: TranscriptionConfig, _ hash: String, _ fingerprint: Fingerprint) {
-            self.snapshot = snapshot; self.digest = hash; self.fingerprint = fingerprint
+        init(_ snapshot: TranscriptionConfig, _ hash: String, _ fingerprint: Fingerprint, injection: InjectionConfig? = nil) {
+            self.snapshot = snapshot; self.digest = hash; self.fingerprint = fingerprint; self.injection = injection
         }
     }
     private let directory: URL
@@ -83,30 +103,36 @@ final class RecoverySnapshots {
             loads += 1
             let hash = Self.hash(data)
             guard expected == nil || hash == expected else { throw RecoverySnapshotError.missingOrDamaged }
-            let snapshot = try JSONDecoder().decode(TranscriptionConfig.self, from: data)
+            let archive = try JSONDecoder().decode(Archive.self, from: data)
+            let snapshot = archive.transcription
             guard !Self.hasReference(snapshot) else { throw RecoverySnapshotError.invalidReference }
-            let entry = Entry(snapshot, hash, stamp)
+            let entry = Entry(snapshot, hash, stamp, injection: archive.injectionSnapshot)
             cache.setObject(entry, forKey: key, cost: data.count)
             return entry
         } catch { throw RecoverySnapshotError.missingOrDamaged }
     }
 
-    func restore(_ compact: TranscriptionConfig, attemptID: UUID) throws -> TranscriptionConfig {
-        guard let marker = compact.terminology.lastImportedSource, marker.hasPrefix(Self.prefix) else { return compact }
-        let expected = String(marker.dropFirst(Self.prefix.count))
-        guard expected.count == 64, expected.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+    private func referenceDigest(_ compact: TranscriptionConfig) throws -> String? {
+        guard let marker = compact.terminology.lastImportedSource, marker.hasPrefix(Self.prefix) else { return nil }
+        let digest = String(marker.dropFirst(Self.prefix.count))
+        guard digest.count == 64, digest.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
             throw RecoverySnapshotError.invalidReference
         }
-        return try load(attemptID, expected: expected).snapshot
+        return digest
     }
 
-    func compact(_ snapshot: TranscriptionConfig, attemptID: UUID, retainUntilTerminal: Bool = false) throws -> TranscriptionConfig {
+    func restore(_ compact: TranscriptionConfig, attemptID: UUID) throws -> TranscriptionConfig {
+        guard let digest = try referenceDigest(compact) else { return compact }
+        return try load(attemptID, expected: digest).snapshot
+    }
+
+    func compact(_ snapshot: TranscriptionConfig, attemptID: UUID, injection: InjectionConfig? = nil, retainUntilTerminal: Bool = false) throws -> TranscriptionConfig {
         guard !Self.hasReference(snapshot) else { throw RecoverySnapshotError.invalidReference }
         let url = directory.appendingPathComponent("\(attemptID.uuidString).json")
         let digest: String
         if fileManager.fileExists(atPath: url.path) {
             let old = try load(attemptID)
-            guard old.snapshot == snapshot else { throw RecoverySnapshotError.changedSnapshot }
+            guard old.snapshot == snapshot, injection == nil || old.injection == nil || injection == old.injection else { throw RecoverySnapshotError.changedSnapshot }
             try ensureDurable(old, at: url)
             if retainUntilTerminal { activeEntries[attemptID] = old }
             digest = old.digest
@@ -115,11 +141,11 @@ final class RecoverySnapshots {
                                             attributes: [.posixPermissions: 0o700])
             try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-            let data = try encoder.encode(snapshot)
+            let data = try encoder.encode(Archive(snapshot, injection))
             digest = Self.hash(data)
             try data.write(to: url, options: .atomic)
             writes += 1; bytesWritten += data.count
-            let entry = Entry(snapshot, digest, try fingerprint(url))
+            let entry = Entry(snapshot, digest, try fingerprint(url), injection: injection)
             try ensureDurable(entry, at: url)
             cache.setObject(entry, forKey: attemptID.uuidString as NSString, cost: data.count)
             if retainUntilTerminal { activeEntries[attemptID] = entry }
@@ -129,6 +155,11 @@ final class RecoverySnapshots {
         compact.terminology.lastImportedSource = Self.prefix + digest
         compact.hintTerms = []
         return compact
+    }
+
+    func restoreInjection(_ compact: TranscriptionConfig, attemptID: UUID) throws -> InjectionConfig? {
+        guard let digest = try referenceDigest(compact) else { return nil }
+        return try load(attemptID, expected: digest).injection
     }
 
     func release(_ attemptIDs: [UUID]) {
