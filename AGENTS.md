@@ -70,6 +70,7 @@
 ## Guardrails
 
 - Preserve the single-trigger workflow: `F5` starts recording and `F5` stops recording.
+- Longbiao pinned the local keyboard arrangement on 2026-11-14: Doubao IME uses physical `Fn`; ChatType uses physical `F5`. On this Mac Karabiner translates F5 to F18 and ChatType's `hotkeyKeyCode` is **79**, not the portable default 96. Preserve `~/Library/Application Support/ChatType/keyboard-binding.json`, the selected Karabiner profile's F5→F18 mapping, and Doubao's Fn selection across upgrades/reinstalls. Never reset this Mac to keycode 96 or reintroduce the old Fn+F5 Codex Plus launcher alias. The installer reapplies this explicitly enrolled local policy; other users keep their choices.
 - Treat the existing app icon, menu-bar icon renderer, product name, colors, and other brand visuals as owner-controlled invariants. Lifecycle, authentication, transcription, and reliability fixes may not alter them without Longbiao's explicit approval in the current request.
 - A visual change requires a before/after installed-app comparison and explicit approval. Checking that a menu-bar item merely exists does not prove that its approved appearance was preserved.
 - Do not run `ChatType.app` directly from `dist`.

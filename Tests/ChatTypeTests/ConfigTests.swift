@@ -102,6 +102,7 @@ func configRoundTripPreservesHiddenHintTerms() throws {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
     var config = AppConfig()
+    config.transcription.hotkeyKeyCode = 79 // This Mac's physical F5 is isolated as F18.
     config.transcription.hintTerms = [
         "budget v2.xlsx",
         "ChatType",
@@ -114,6 +115,7 @@ func configRoundTripPreservesHiddenHintTerms() throws {
     try encoder.encode(config).write(to: configURL)
 
     let decoded = try JSONDecoder().decode(AppConfig.self, from: Data(contentsOf: configURL))
+    #expect(decoded.transcription.hotkeyKeyCode == 79)
     #expect(decoded.transcription.hintTerms == [
         "budget v2.xlsx",
         "ChatType",

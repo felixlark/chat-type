@@ -131,6 +131,14 @@
 
 前一门槛不能替代后一门槛。遇到权限、验证码或上游阻断时，结论必须是 `partial`，并写明唯一待完成动作。
 
+### 本机 F5／Fn 固定配置（2026-11-14）
+
+用户指定：豆包输入法使用实体 Fn，ChatType 使用实体 F5。已由用户实体键盘验证两者独立唤起，以及安装版 127 的 F5 开停和可见文字输出。
+
+本机 Karabiner 的 `Default profile` 将 F5 输出为 F18，ChatType 的 `transcription.hotkeyKeyCode` 为 **79**。该独立事件通道避免 F1–F12 转换中附带的 Fn 事件误唤起豆包；不能因为界面仍写 F5，就把内部键码改回默认 96。豆包自己的免按模式保留 Fn，ChatType 安装流程不改写豆包数据。
+
+本机选择记录在 `~/Library/Application Support/ChatType/keyboard-binding.json`，与 `config.json`、`~/.config/karabiner/karabiner.json` 一起位于 App 包之外。`scripts/install_app.sh` 在替换 App 前调用 `preserve_local_keyboard.py`，只对已保存该选择的机器恢复 F5→F18 和键码 79，保留其他设置及其他用户的选择。升级、重装及配置整理须保留这些用户文件；不得恢复旧 Fn+F5→Codex Plus 规则。主动清除全部用户数据也会清除本机选择，不属于普通 App 重装。
+
 ### H. 品牌视觉所有权
 
 - App 图标、菜单栏图标 renderer、产品名称、颜色和其他品牌视觉属于产品负责人控制的不变量；当前请求没有明确授权时禁止修改。
