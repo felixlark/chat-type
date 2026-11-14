@@ -141,6 +141,7 @@ macOS 输入快捷码由系统管理。旧版导入的快捷码规则会迁移�
 ## 构建与验证
 
 ```bash
+bash scripts/build_opus.sh
 swift build --package-path .
 swift test --package-path .
 ./scripts/check.sh

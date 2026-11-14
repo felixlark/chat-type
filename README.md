@@ -145,6 +145,7 @@ That route is intentionally not part of the default onboarding. It requires:
 ## Build And Verify
 
 ```bash
+bash scripts/build_opus.sh
 swift build --package-path .
 swift test --package-path .
 ./scripts/check.sh

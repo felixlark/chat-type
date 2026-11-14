@@ -35,6 +35,10 @@ fresh-context 定向复查五项均 PASS，Blocker/Major/Minor 均为 0。复查
 
 安装版 Dictation 的 Voice/Align/Correct/Paste 控件逐一切换并恢复，ASR 与 Polish 分别混选保存后读回；进程重启后仍显示 ChatGPT ASR＋豆包整理。最后通过界面保存为豆包 ASR＋豆包整理，实时预览、术语对齐、润色和纠错开启，自动粘贴保留原设置。原模型 `gpt-6.1-terra` 与原账户未更换。前后界面截图和每个开关的 AX 状态另存私有证据目录；产品名、图标、颜色及原五页导航保留。
 
+用户要求继续后的安装版全豆包重试再次 1/1 成功。canonical visual acceptance 覆盖录音、处理、结果、错误、可重试错误五个 HUD demo 状态并通过；它只证明显示状态，不等同于真实麦克风或错误重试交互。脚本随后恢复正常菜单栏运行。当前 KVM 会话已读回，现持有人确认 HDMI/USB 仍物理接 Janus、没有已验证的远程切到 Mac 硬件路径；没有向错误电脑发键。实体 F5 录音与跨应用注入尚无本轮证据。
+
+CI 与手动构建说明补齐 Opus 准备步骤，避免全新 runner 直接跑 Swift 测试时缺少库；本机 cache 成功不代替远端 CI 结果。
+
 ## 交付门槛
 
 | 门槛 | 当前证据 |
