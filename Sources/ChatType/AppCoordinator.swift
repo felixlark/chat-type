@@ -345,19 +345,25 @@ final class AppCoordinator {
                 }
 
                 if let url = recorder.activeAudioURL {
+                    let recordingAttemptID = UUID()
+                    self.activeAttemptID = recordingAttemptID
                     do {
                         try self.recoveryRecorder.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: url,
                             durationMs: 0, asrText: nil, polishText: nil, appName: self.launchAppContext?.localizedName,
                             appBundleIdentifier: self.launchAppContext?.bundleIdentifier, outcome: "recording", errorMessage: nil,
-                            snapshot: sessionConfig.transcription, injectionSnapshot: sessionConfig.injection,
-                            parentRecordID: self.interruptedParentRecordID))
+                            snapshot: sessionConfig.transcription, attemptID: recordingAttemptID,
+                            injectionSnapshot: sessionConfig.injection, parentRecordID: self.interruptedParentRecordID))
                         self.interruptedParentRecordID = nil
                     } catch {
                         try? recorder.cancelRecording()
                         throw RecorderError.recordingStorageFailed(error.localizedDescription)
                     }
                     if sessionConfig.transcription.provider == .doubaoIME, sessionConfig.transcription.livePreviewEnabled {
-                        self.liveDoubao = DoubaoLiveRecognition(url: url)
+                        let store = self.recoveryRecorder as? RecoveryStore
+                        self.liveDoubao = DoubaoLiveRecognition(url: url, sessionAudit: { sessions in
+                            do { try store?.recordASRSessions(audioURL: url, attemptID: recordingAttemptID, sessions: sessions) }
+                            catch { throw RecorderError.recordingStorageFailed(error.localizedDescription) }
+                        })
                     }
                 }
                 logger.info("Recording session started successfully")
@@ -389,6 +395,7 @@ final class AppCoordinator {
     }
 
     private func stopRecording() {
+        let stopRequestedAt = DispatchTime.now().uptimeNanoseconds
         guard let recorder, let sessionID = activeSessionID else { return }
 
         do {
@@ -413,7 +420,9 @@ final class AppCoordinator {
                 transcriptionConfig: transcriptionConfig,
                 injectionConfig: injectionConfig,
                 launchAppContext: launchAppContext,
-                attemptPolicy: .automatic
+                attemptPolicy: .automatic,
+                continuingAttemptID: activeAttemptID,
+                stopRequestedAt: stopRequestedAt
             )
         } catch {
             liveDoubao?.cancel(); liveDoubao = nil
@@ -455,9 +464,11 @@ final class AppCoordinator {
         transcriptionConfig: TranscriptionConfig,
         injectionConfig: InjectionConfig,
         launchAppContext: LaunchAppContext?,
-        attemptPolicy: TranscriptionAttemptPolicy
+        attemptPolicy: TranscriptionAttemptPolicy,
+        continuingAttemptID: UUID? = nil,
+        stopRequestedAt: UInt64? = nil
     ) {
-        let processingStarted = DispatchTime.now().uptimeNanoseconds
+        let processingStarted = stopRequestedAt ?? DispatchTime.now().uptimeNanoseconds
         guard shouldContinue(sessionID: sessionID) else { sourceAudio.cloudTranscript?.cancel(); return }
         let audio: RecordedAudio
         do {
@@ -470,7 +481,7 @@ final class AppCoordinator {
             return
         }
         activeProcessingAudio = audio
-        let attemptID = UUID()
+        let attemptID = continuingAttemptID ?? UUID()
         activeAttemptID = attemptID
         processingConfig = transcriptionConfig
 
@@ -509,7 +520,12 @@ final class AppCoordinator {
 
             do {
                 try audit(.init())
-                let prepared = try await pipeline.prepare(audio: audio)
+                let prepared = try await DoubaoSessionAudit.$observer.withValue({ sessions in
+                    do { try (store as? RecoveryStore)?.recordASRSessions(audioURL: audio.fileURL, attemptID: attemptID, sessions: sessions) }
+                    catch { throw RecorderError.recordingStorageFailed(error.localizedDescription) }
+                }) {
+                    try await pipeline.prepare(audio: audio)
+                }
                 guard !Task.isCancelled else { return }
 
                 await MainActor.run {
@@ -559,6 +575,10 @@ final class AppCoordinator {
                             detail: self.statusDetail(for: outcome)
                         )
                         self.overlay.showResult(text: prepared.finalText, outcome: outcome)
+                        if let reason = prepared.stages?.polishProtectionReason {
+                            self.statusMenu?.update(state: .ready, detail: reason)
+                            self.notifier.notify(title: "ChatType · 已保留识别原文", body: reason)
+                        }
                         self.launchAppContext = nil
                     } catch {
                         let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
@@ -1062,7 +1082,7 @@ final class AppCoordinator {
         if error is LocalTranscriptionFailure || error is DictationPipelineFailure { return true }
         if let error = error as? DoubaoError {
             switch error {
-            case .incomplete, .http, .rejected, .credentials, .unexpectedContent: return true
+            case .incomplete, .http, .rejected, .serviceDiscoveryFailure, .credentials, .unexpectedContent: return true
             default: return false
             }
         }
@@ -1180,6 +1200,7 @@ final class AppCoordinator {
         stages.asrPartialText = (error as? DoubaoTranscriptionFailure)?.partialText
             ?? (error as? LocalTranscriptionFailure)?.partialText
         stages.asrRequestID = (error as? DoubaoTranscriptionFailure)?.requestID ?? stages.asrRequestID
+        stages.asrSessions = (error as? DoubaoTranscriptionFailure)?.sessions ?? stages.asrSessions
         try recoveryRecorder.record(
             RecoveryRecordInput(
                 timestamp: Date(),

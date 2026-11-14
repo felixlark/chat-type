@@ -145,6 +145,7 @@ struct BenchmarkRunner {
                             "asrMs": warmPrepared.metrics.transcription.transcribeMs,
                             "polishMs": warmPrepared.metrics.polishMs,
                             "polishError": warmPrepared.metrics.textPolishErrorMessage ?? "",
+                            "polishProtectionReason": warmPrepared.stages?.polishProtectionReason ?? "",
                             "promptIncluded": warmPrepared.metrics.transcription.promptIncluded,
                             "uploadedBytes": warmPrepared.metrics.transcription.uploadedBytes,
                             "format": warmPrepared.metrics.transcription.uploadFormat]

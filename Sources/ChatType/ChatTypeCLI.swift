@@ -4,7 +4,19 @@ import Foundation
 enum ChatTypeCLI {
     static func runIfRequested(arguments: [String]) -> Bool {
         let command = arguments.dropFirst().first
-        guard command == "process" || command == "contacts-report" || command == "quality-evaluate" || command == "polish-evaluate" || command == "capture-preview-trace" || command == "incremental-polish-worker" else { return false }
+        guard command == "process" || command == "contacts-report" || command == "quality-evaluate" || command == "polish-evaluate" || command == "streaming-evaluate" || command == "capture-preview-trace" || command == "incremental-polish-worker" else { return false }
+        if command == "streaming-evaluate" {
+            Task { @MainActor in
+                do {
+                    try await StreamingEvaluationCLI.run(arguments: Array(arguments.dropFirst(2)))
+                    Foundation.exit(EXIT_SUCCESS)
+                } catch {
+                    FileHandle.standardError.write(Data("Streaming evaluation could not run (\(String(describing: type(of: error)))); evidence retained.\n".utf8))
+                    Foundation.exit(EXIT_FAILURE)
+                }
+            }
+            dispatchMain()
+        }
         if command == "capture-preview-trace" || command == "incremental-polish-worker" {
             Task {
                 do {

@@ -178,6 +178,8 @@ private final class TestDoubaoSocket: DoubaoSocket, @unchecked Sendable {
     var holdCompletion = false
     var rejectDuringAudio = false
     var networkFailureDuringAudio = false
+    var discoveryFailure = false
+    var partialBeforeDiscovery = false
     private var receiveFailure: (any Error)?
     init() {
         queue = [Self.reply("TaskStarted"), Self.reply("SessionStarted")]
@@ -201,6 +203,13 @@ private final class TestDoubaoSocket: DoubaoSocket, @unchecked Sendable {
         try lock.withLock {
             if closed { throw URLError(.cancelled) }
             sent.append(name)
+        }
+        if name == "StartSession", discoveryFailure {
+            if partialBeforeDiscovery {
+                enqueue(Self.reply("", result: try doubaoJSON(["results": [["index": 0, "text": "已有部分识别", "is_interim": true, "is_vad_finished": false]]])))
+            }
+            enqueue(DoubaoProtobuf.text(4, "SessionFailed") + DoubaoProtobuf.varint(5 << 3)
+                + DoubaoProtobuf.varint(50_700_000) + DoubaoProtobuf.text(6, "read backend response: rpc error: code = 2 desc = service discovery failure"))
         }
         if name == "TaskRequest", networkFailureDuringAudio {
             let waiter = lock.withLock { () -> CheckedContinuation<Data, any Error>? in
@@ -325,4 +334,184 @@ private final class TestDoubaoSocket: DoubaoSocket, @unchecked Sendable {
     config.chatGPTAuthEnabled = false
     config.setEnabled(true)
     #expect(TextPolishProviderSelector().selectProvider(config: config, chatGPTAuthAvailable: true)?.id == .chatGPTAuth)
+}
+
+private final class RecoverySocketSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private let sockets: [TestDoubaoSocket]
+    private var count = 0
+    init(_ sockets: [TestDoubaoSocket]) { self.sockets = sockets }
+    func make() -> any DoubaoSocket {
+        lock.withLock {
+            let i = min(count, sockets.count - 1); count += 1; return sockets[i]
+        }
+    }
+    var created: Int { lock.withLock { count } }
+}
+
+@Test func discoveryRecoveryUsesSameAudioAndRetainsBothSessionIDs() async throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try doubaoTestWAV().write(to: url)
+    let first = TestDoubaoSocket(); first.discoveryFailure = true
+    let next = TestDoubaoSocket(); let sequence = RecoverySocketSequence([first, next])
+    let r = try await DoubaoTranscriber(keyProvider: { "test-only" }, socketFactory: { _ in sequence.make() })
+        .transcribe(RecordedAudio(fileURL: url, durationMs: 80))
+    #expect(sequence.created == 2)
+    #expect(r.text == "完整识别。")
+    #expect(r.metrics.protocolSessions?.map(\.outcome) == ["failed", "success"])
+    #expect(r.metrics.protocolSessions?.first?.code == 50_700_000)
+    #expect(Set(r.metrics.protocolSessions!.map(\.requestID)).count == 2)
+    #expect(first.wasClosed && next.wasClosed)
+    #expect(next.methods.filter { $0 == "TaskRequest" }.count == 4)
+}
+
+@Test func discoveryBudgetAndManualSingleAttemptRemainBounded() async throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try doubaoTestWAV().write(to: url)
+    for budget in [1, 3] {
+        let sockets = (0..<budget).map { _ in let s = TestDoubaoSocket(); s.discoveryFailure = true; return s }
+        let sequence = RecoverySocketSequence(sockets)
+        do {
+            _ = try await DoubaoTranscriber(keyProvider: { "test-only" }, socketFactory: { _ in sequence.make() }, maximumSessionAttempts: budget)
+                .transcribe(RecordedAudio(fileURL: url, durationMs: 80))
+            Issue.record("Exhausted discovery must remain failure")
+        } catch let failure as DoubaoTranscriptionFailure {
+            #expect(failure.underlyingError as? DoubaoError == .serviceDiscoveryFailure)
+            #expect(failure.sessions?.count == budget)
+            #expect(failure.sessions?.allSatisfy { $0.code == 50_700_000 && $0.outcome == "failed" } == true)
+        }
+        #expect(sequence.created == budget)
+    }
+}
+
+@Test func discoveryAfterAnyTextMustNotReconnectAndUnknown507IsNotClassifiedTransient() async throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try doubaoTestWAV().write(to: url)
+    let socket = TestDoubaoSocket(); socket.discoveryFailure = true; socket.partialBeforeDiscovery = true
+    let sequence = RecoverySocketSequence([socket])
+    do {
+        _ = try await DoubaoTranscriber(keyProvider: { "test-only" }, socketFactory: { _ in sequence.make() })
+            .transcribe(RecordedAudio(fileURL: url, durationMs: 80))
+        Issue.record("Partial recognition must not be hidden by reconnect")
+    } catch let f as DoubaoTranscriptionFailure { #expect(f.partialText == "已有部分识别") }
+    #expect(sequence.created == 1)
+    let unknown = DoubaoProtobuf.text(4, "SessionFailed") + DoubaoProtobuf.varint(5 << 3)
+        + DoubaoProtobuf.varint(50_700_000) + DoubaoProtobuf.text(6, "unrecognized private server message")
+    do { _ = try DoubaoReply(unknown); Issue.record("Must reject") }
+    catch { #expect(error as? DoubaoError == .rejected(50_700_000)) }
+}
+
+@Test func cancellationDuringReconnectPreservesIncrementalFailureAuditAndOriginalAudio() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = RecoveryStore(directoryURL: directory)
+    let url = try store.beginRecording(); try doubaoTestWAV().write(to: url)
+    let id = UUID()
+    try store.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: url, durationMs: 80,
+        asrText: nil, polishText: nil, appName: nil, appBundleIdentifier: nil, outcome: "recording",
+        errorMessage: nil, snapshot: TranscriptionConfig(), attemptID: id))
+    let first = TestDoubaoSocket(); first.discoveryFailure = true
+    let next = TestDoubaoSocket(); next.holdCompletion = true
+    let sequence = RecoverySocketSequence([first, next])
+    let task = Task {
+        try await DoubaoSessionAudit.$observer.withValue({ sessions in
+            try store.recordASRSessions(audioURL: url, attemptID: id, sessions: sessions)
+        }) {
+            try await DoubaoTranscriber(keyProvider: { "test-only" }, socketFactory: { _ in sequence.make() })
+                .transcribe(RecordedAudio(fileURL: url, durationMs: 80))
+        }
+    }
+    while !next.methods.contains("FinishSession") { await Task.yield() }
+    task.cancel()
+    do { _ = try await task.value; Issue.record("Cancelled reconnect cannot succeed") }
+    catch { #expect(error is CancellationError) }
+    try store.finishRecording(RecordedAudio(fileURL: url, durationMs: 80), outcome: "cancelled")
+    let record = try #require(store.loadRecent().first)
+    #expect(record.outcome == "cancelled")
+    #expect(record.attempts?.last?.outcome == "cancelled")
+    #expect(record.attempts?.last?.stages.asrSessions?.map(\.outcome) == ["failed", "cancelled"])
+    #expect(record.attempts?.last?.stages.asrSessions?.first?.code == 50_700_000)
+    #expect(next.wasClosed)
+    #expect(try Data(contentsOf: url) == doubaoTestWAV())
+}
+
+@Test func unsafeNegationPunctuationIsProtectedWithoutTreatingExistingBoundariesAsErrors() {
+    let original = "原来的登录方式要保留，不要删除历史录音识别和润色都默认使用豆包。"
+    #expect(DoubaoPolishSafety.hasDetachedNegatedPredicate(original: original,
+        rewritten: "原来的登录方式要保留，不要删除；历史录音识别和润色都默认使用豆包。"))
+    #expect(DoubaoPolishSafety.hasDetachedNegatedPredicate(original: original,
+        rewritten: "不要删除历史录音，不要删除。历史录音识别和润色都默认使用豆包。"))
+    #expect(!DoubaoPolishSafety.hasDetachedNegatedPredicate(original: original,
+        rewritten: "保留原来的登录方式，不要删除历史录音。识别和润色都默认使用豆包。"))
+    #expect(!DoubaoPolishSafety.hasDetachedNegatedPredicate(original: "不要删除。历史录音要保留。", rewritten: "不要删除；历史录音要保留。"))
+    #expect(!DoubaoPolishSafety.hasDetachedNegatedPredicate(original: "请保留历史录音。", rewritten: "请保留。历史录音。"))
+}
+
+@Test func protectedOrganizerRetainsUnsafeProviderOutputAndProtectionReason() async throws {
+    let original = "不要删除历史录音识别和润色都默认使用豆包。"
+    let bad = "不要删除。历史录音识别和润色都默认使用豆包。"
+    let organizer = DoubaoTextOrganizer(loader: { request in
+        (Data("event:scene.completed\ndata:{\"content\":\"\(bad)\"}\n\nevent:done\ndata:[DONE]\n\n".utf8),
+         HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    })
+    let r = try await organizer.polish(text: original, terminologyEntries: [], hintTerms: [])
+    #expect(r.text == original)
+    #expect(!r.applied)
+    #expect(r.providerText == bad)
+    #expect(r.protectionReason != nil)
+}
+
+@Test func liveDiscoveryRecoveryKeepsRecordingAndResetsSessionState() async throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try doubaoTestWAV().write(to: url)
+    let state = DoubaoLiveState()
+    let bad = TestDoubaoSocket(); bad.discoveryFailure = true
+    let next = TestDoubaoSocket(); let sequence = RecoverySocketSequence([bad, next])
+    let task = Task {
+        try await DoubaoTranscriber(keyProvider: { "test-only" }, socketFactory: { _ in sequence.make() })
+            .run(url: url, durationMs: 0, live: state)
+    }
+    while !next.methods.contains("TaskRequest") { await Task.yield() }
+    await state.finish(RecordedAudio(fileURL: url, durationMs: 80))
+    let r = try await task.value
+    #expect(r.text == "完整识别。")
+    #expect(r.metrics.audioDurationMs == 80)
+    #expect(r.metrics.protocolSessions?.map(\.outcome) == ["failed", "success"])
+    #expect(sequence.created == 2)
+}
+
+private struct SafetyTestASR: Transcriber {
+    let text: String
+    func transcribe(_ audio: RecordedAudio) async throws -> TranscriptionResult {
+        TranscriptionResult(text: text, metrics: .init(provider: .doubaoIME, audioDurationMs: 100,
+            audioBytes: 0, authMs: 0, transcribeMs: 1, promptIncluded: false))
+    }
+}
+
+@Test func pipelineAndHistoryExposeAcceptedOriginalWhileRetainingRawUnsafePolish() async throws {
+    let original = "不要删除历史录音识别和润色都默认使用豆包。"
+    let bad = "不要删除。历史录音识别和润色都默认使用豆包。"
+    let organizer = DoubaoTextOrganizer(loader: { request in
+        (Data("event:scene.completed\ndata:{\"content\":\"\(bad)\"}\n\nevent:done\ndata:[DONE]\n\n".utf8),
+         HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    })
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+    let r = try await DictationPipeline(transcriber: SafetyTestASR(text: original), normalizer: TerminologyNormalizer(),
+        importedEntries: [], hintTerms: [], textPolisher: organizer).prepare(audio: RecordedAudio(fileURL: url, durationMs: 100))
+    #expect(r.finalText == original)
+    #expect(r.stages?.polishOutput == bad)
+    #expect(r.stages?.polishProtectionReason != nil)
+    let config = TranscriptionConfig()
+    let record = RecoveryRecord(id: UUID(), timestamp: Date(), audioFileName: "test.wav", audioDurationMs: 100,
+        asrText: original, polishText: bad, appName: nil, appBundleIdentifier: nil, outcome: "copied", errorMessage: nil,
+        snapshot: config, attempts: [.init(id: UUID(), startedAt: Date(), snapshot: config, stages: r.stages!, outcome: "copied")])
+    let preview = try #require(RecoveryHistoryPreview.recentItems(from: [record], kind: .polish, limit: 1).first)
+    #expect(preview.copyText == original)
+    #expect(preview.text.hasPrefix("已保留原文"))
+    #expect(preview.errorMessage != nil)
+    #expect(try JSONDecoder().decode(RecoveryRecord.self, from: JSONEncoder().encode(record)) == record)
 }

@@ -150,6 +150,11 @@ struct DoubaoTextOrganizer: TextPolishing {
             try stream.consume(line: line.hasSuffix("\r") ? String(line.dropLast()) : line)
         }
         let result = try stream.result(originalText: text)
+        if DoubaoPolishSafety.hasDetachedNegatedPredicate(original: text, rewritten: result) {
+            return TextPolishResult(text: text, provider: .doubaoIME, applied: false,
+                estimatedInputTokens: 0, estimatedOutputTokens: 0, providerText: result,
+                protectionReason: "豆包整理拆开了否定动作与后文，已保留识别原文。")
+        }
         return TextPolishResult(text: result, provider: .doubaoIME, applied: result != text,
                                 estimatedInputTokens: 0, estimatedOutputTokens: 0)
         } catch {
