@@ -17,9 +17,11 @@ let package = Package(
         ),
     ],
     targets: [
+        .target(name: "COpusBridge", path: "Sources/COpusBridge", publicHeadersPath: "include"),
         .executableTarget(
             name: "ChatType",
             dependencies: [
+                "COpusBridge",
                 .product(name: "PermissionFlow", package: "PermissionFlow"),
                 .product(name: "SystemSettingsKit", package: "PermissionFlow"),
             ],

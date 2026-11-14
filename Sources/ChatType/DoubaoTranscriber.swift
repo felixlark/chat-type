@@ -186,8 +186,8 @@ struct DoubaoTranscriber: Transcriber {
             let payload: [String: Any] = [
                 "audio_info": ["channel": 1, "format": "speech_opus", "sample_rate": 16000],
                 "enable_punctuation": true, "enable_speech_rejection": false,
-                "extra": ["app_name": "ChatType", "did": did, "cell_compress_rate": 8,
-                    "enable_asr_threepass": true, "enable_asr_twopass": true, "input_mode": "tool"]
+                "extra": ["app_name": "ChatType", "did": did, "cell_compress_rate": 4,
+                    "enable_asr_threepass": true, "enable_asr_twopass": true, "input_mode": "shortcut_single"]
             ]
             try await send("StartSession", payload: JSONSerialization.data(withJSONObject: payload))
             try await awaitReply("SessionStarted")

@@ -301,3 +301,7 @@ Acceptance covers 17k+ library opening, bilingual search, source grouping, pagin
 无编辑光标时，读取selectedText/selectedTextRange成功、窗口中存在输入框或仅持有启动应用上下文，都不能证明可以粘贴。当前门禁只接受实际focused文本控件、可写AXValue且未禁用；原应用回退不搜索任意后代。恢复目标应用并确认PID后再次核实际编辑焦点，60ms等待后发键前重核；不满足时只保留系统剪贴板。终端或自定义编辑器无法提供该证据时可能保守回退，不宣称全编辑器兼容。
 
 真实安装版124已验证Chrome可编辑目标粘贴与BODY无编辑焦点只复制，取消/重入分支及原音频保留；本轮没有触发真实可重试错误，不能据此签署Retry交互或完整固定矩阵通过。证据与速度基线的版本区别见[同机原声结果](doubao-installed-comparison-results-2026-11-12.md)。
+
+### Build132 recognition fidelity
+
+For Doubao ASR, the bundled Opus encoder explicitly uses AUDIO, constant64kbps and the existing20ms frames; StartSession uses compression ratio4 and single-toggle mode. Do not restore automatic VOIP/VBR defaults merely because requests still succeed: matched-WAV tests showed lost mixed-language terms. Raw recovery WAVs and ChatGPT routing are unaffected. See [quality investigation](doubao-recognition-quality-2026-11-15.md) for the measured scope, failed hypotheses and acceptance requirements.

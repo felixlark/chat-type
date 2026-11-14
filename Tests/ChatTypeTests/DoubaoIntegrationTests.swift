@@ -182,6 +182,7 @@ private final class TestDoubaoSocket: DoubaoSocket, @unchecked Sendable {
     var partialBeforeDiscovery = false
     var startDelayMs = 0
     private var receiveFailure: (any Error)?
+    private var startPayload: Data?
     init() {
         queue = [Self.reply("TaskStarted"), Self.reply("SessionStarted")]
     }
@@ -201,6 +202,7 @@ private final class TestDoubaoSocket: DoubaoSocket, @unchecked Sendable {
         let fields = try DoubaoProtobuf.decode(data)
         guard case .bytes(let method) = fields[5] else { throw DoubaoError.malformedMessage }
         let name = String(decoding: method, as: UTF8.self)
+        if name == "StartSession", case .bytes(let payload) = fields[6] { lock.withLock { startPayload = payload } }
         if name == "StartSession", startDelayMs > 0 {
             try await Task.sleep(for: .milliseconds(startDelayMs))
         }
@@ -252,6 +254,7 @@ private final class TestDoubaoSocket: DoubaoSocket, @unchecked Sendable {
     }
     var wasClosed: Bool { lock.withLock { closed } }
     var methods: [String] { lock.withLock { sent } }
+    var sessionPayload: Data? { lock.withLock { startPayload } }
 }
 
 @Test func fileSessionSendsEveryFrameAndWaitsForSessionFinished() async throws {
@@ -265,6 +268,29 @@ private final class TestDoubaoSocket: DoubaoSocket, @unchecked Sendable {
     #expect(result.metrics.provider == .doubaoIME)
     #expect(socket.methods == ["StartTask", "StartSession"] + Array(repeating: "TaskRequest", count: 4) + ["FinishSession"])
     #expect(socket.wasClosed)
+    #expect(result.metrics.uploadedBytes == 4 * 160) // 4 x 20ms at64kbps, not codec defaults.
+    let payload = try #require(socket.sessionPayload)
+    let session = try #require(JSONSerialization.jsonObject(with: payload) as? [String: Any])
+    let extra = try #require(session["extra"] as? [String: Any])
+    #expect(extra["cell_compress_rate"] as? Int == 4)
+    #expect(extra["input_mode"] as? String == "shortcut_single")
+    #expect(try Data(contentsOf: path) == doubaoTestWAV())
+}
+
+@Test func speechOpusPreservesConstantFidelityAcrossSilenceAndSpeechFrames() throws {
+    let encoder = try DoubaoOpusEncoder()
+    for frame in 0..<50 {
+        var pcm = Data()
+        for sample in 0..<320 {
+            let value: Int16 = frame % 3 == 0 ? 0 : Int16(sin(Double(frame * 320 + sample) * .pi / 8) * 12000)
+            var little = value.littleEndian
+            withUnsafeBytes(of: &little) { pcm.append(contentsOf: $0) }
+        }
+        let original = pcm
+        #expect(try encoder.encode(pcm).count == 160)
+        #expect(pcm == original)
+    }
+    #expect(try encoder.encode(Data([0, 0])).count == 160) // partial tail is padded, not dropped.
 }
 
 @Test func cancellingAWaitingSessionClosesSocketAndRetainsAudio() async throws {

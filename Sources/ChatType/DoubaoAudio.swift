@@ -1,6 +1,7 @@
 import Foundation
 import AudioToolbox
 import Darwin
+import COpusBridge
 
 /// One worker owns this encoder. Production loads only the signed, bundled
 /// Xiph library; the development cache is used only outside an app bundle.
@@ -18,13 +19,24 @@ final class DoubaoOpusEncoder {
         guard let library = dlopen(url.path, RTLD_NOW | RTLD_LOCAL) else { throw DoubaoError.codec }
         guard let createSymbol = dlsym(library, "opus_encoder_create"),
               let encodeSymbol = dlsym(library, "opus_encode"),
-              let destroySymbol = dlsym(library, "opus_encoder_destroy") else { dlclose(library); throw DoubaoError.codec }
+              let destroySymbol = dlsym(library, "opus_encoder_destroy"),
+              let controlSymbol = dlsym(library, "opus_encoder_ctl") else { dlclose(library); throw DoubaoError.codec }
         let create = unsafeBitCast(createSymbol, to: Create.self)
         var error: Int32 = 0
-        guard let encoder = create(16_000, 1, 2048, &error), error == 0 else { dlclose(library); throw DoubaoError.codec }
+        guard let encoder = create(16_000, 1, 2049, &error), error == 0 else { dlclose(library); throw DoubaoError.codec }
+        let destroy = unsafeBitCast(destroySymbol, to: Destroy.self)
+        // Native 1.1.0 speech_opus uses AUDIO + CBR. Its compression ratio
+        // is 4 for mono PCM16/16kHz: 256,000 / 4 = 64,000 bit/s. Keeping the
+        // libopus VOIP/VBR defaults reduced actual speech data to ~14kbps and
+        // lost mixed-language words in matched-WAV replay. Keep the existing
+        // supported 20ms transport frame; this is a codec quality setting.
+        guard chattype_opus_ctl_int(controlSymbol, UnsafeMutableRawPointer(encoder), 4002, 64_000) == 0,
+              chattype_opus_ctl_int(controlSymbol, UnsafeMutableRawPointer(encoder), 4006, 0) == 0 else {
+            destroy(encoder); dlclose(library); throw DoubaoError.codec
+        }
         self.library = library; self.encoder = encoder
         encodeFunction = unsafeBitCast(encodeSymbol, to: Encode.self)
-        destroy = unsafeBitCast(destroySymbol, to: Destroy.self)
+        self.destroy = destroy
     }
     deinit { destroy(encoder); dlclose(library) }
 
