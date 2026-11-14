@@ -23,7 +23,7 @@ It is intentionally opinionated:
 
 ## Current local candidate
 
-Version 0.6.0 (126) adds Doubao as the fresh-config default. Existing saved routes are preserved; use Dictation to select Doubao explicitly. Each recording freezes its route choices, and Retry keeps those choices. A failed cloud stage never silently switches providers or pastes partial text.
+Version 0.6.0 (127) adds Doubao as the fresh-config default and handles explicit short-input “no rewrite needed” responses. Existing saved routes are preserved; use Dictation to select Doubao explicitly. Each recording freezes its route choices, and Retry keeps those choices. A failed cloud stage never silently switches providers or pastes partial text.
 
 Doubao uses private IME settings, streaming ASR and text-organization endpoints. Configuration credentials are stored only in the app's Keychain; no browser Cookies or installed IME credentials are exported. These endpoints may change or be rate-limited; successful testing does not establish a billing guarantee. Audio leaves this Mac for the selected ASR service, and text leaves for the selected polish service. Local terminology alignment remains available; cloud hotword support has not been established.
 

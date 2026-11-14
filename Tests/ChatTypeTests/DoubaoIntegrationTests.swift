@@ -88,6 +88,43 @@ private func doubaoJSON(_ object: Any) throws -> Data { try JSONSerialization.da
     #expect(result.provider == .doubaoIME)
 }
 
+@Test func noRewriteRequiresAnExplicitFlagAndBothCompletionSignals() throws {
+    let original = "请保留测试草稿。"
+    var stream = DoubaoOrganizationStream()
+    for line in ["event:scene.delta", "data:{\"content\":\"\",\"no_rewrite\":true}", ""] {
+        try stream.consume(line: line)
+    }
+    #expect(throws: DoubaoError.self) { try stream.result(originalText: original) }
+    for line in ["event:scene.completed", "data:{\"content\":\"\"}", ""] { try stream.consume(line: line) }
+    #expect(throws: DoubaoError.self) { try stream.result(originalText: original) }
+    for line in ["event:done", "data:[DONE]", ""] { try stream.consume(line: line) }
+    #expect(try stream.result(originalText: original) == original)
+    #expect(throws: DoubaoError.self) { try stream.result() }
+    #expect(throws: DoubaoError.self) { try stream.result(originalText: " ") }
+
+    for delta in ["{\"content\":\"\"}", "{\"content\":\"\",\"no_rewrite\":false}",
+                  "{\"content\":\"部分输出\",\"no_rewrite\":true}"] {
+        var invalid = DoubaoOrganizationStream()
+        for line in ["event:scene.delta", "data:" + delta, "", "event:scene.completed",
+                     "data:{\"content\":\"\"}", "", "event:done", "data:[DONE]", ""] {
+            try invalid.consume(line: line)
+        }
+        #expect(throws: DoubaoError.self) { try invalid.result(originalText: original) }
+    }
+}
+
+@Test func organizerExplicitNoRewriteReturnsOriginalAsUnchangedSuccess() async throws {
+    let organizer = DoubaoTextOrganizer(loader: { request in
+        let body = "event:scene.delta\ndata:{\"content\":\"\",\"no_rewrite\":true}\n\nevent:scene.completed\ndata:{\"content\":\"\"}\n\nevent:done\ndata:[DONE]\n\n"
+        return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: 200,
+            httpVersion: nil, headerFields: ["Content-Type": "text/event-stream"])!)
+    })
+    let result = try await organizer.polish(text: "请保留测试草稿。", terminologyEntries: [], hintTerms: [])
+    #expect(result.text == "请保留测试草稿。")
+    #expect(result.provider == .doubaoIME)
+    #expect(!result.applied)
+}
+
 private final class TestDoubaoKeys: DoubaoKeyStoring, @unchecked Sendable {
     let lock = NSLock()
     private var value: String?

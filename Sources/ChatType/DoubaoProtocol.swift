@@ -160,6 +160,7 @@ struct DoubaoOrganizationStream {
     private var data: [String] = []
     private(set) var completedText: String?
     private(set) var done = false
+    private(set) var noRewrite = false
     private var deltaText = ""
     var partialText: String? { completedText ?? (deltaText.isEmpty ? nil : deltaText) }
 
@@ -185,11 +186,23 @@ struct DoubaoOrganizationStream {
             throw DoubaoError.incomplete("文字整理")
         }
         if event == "scene.completed" { completedText = object["content"] as? String }
-        if event == "scene.delta", let content = object["content"] as? String { deltaText += content }
+        if event == "scene.delta" {
+            if object["no_rewrite"] as? Bool == true { noRewrite = true }
+            if let content = object["content"] as? String { deltaText += content }
+        }
     }
 
-    func result() throws -> String {
-        guard done, let text = completedText, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    func result(originalText: String? = nil) throws -> String {
+        guard done, let text = completedText else {
+            throw DoubaoError.incomplete("文字整理")
+        }
+        // Observed short-input success: no_rewrite=true, empty completed content,
+        // then [DONE]. This is an explicit unchanged result, not error fallback.
+        if text.isEmpty, deltaText.isEmpty, noRewrite,
+           let originalText, !originalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return originalText
+        }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw DoubaoError.incomplete("文字整理")
         }
         return text

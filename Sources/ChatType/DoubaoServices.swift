@@ -29,6 +29,9 @@ enum DoubaoHTTP {
         }
         guard http.mimeType == "text/event-stream" else { throw DoubaoError.unexpectedContent }
         var stream = DoubaoOrganizationStream()
+        let originalText = request.httpBody.flatMap {
+            (try? JSONSerialization.jsonObject(with: $0) as? [String: Any])?["query"] as? String
+        }
         var line = Data()
         var body = Data()
         // Parse bytes ourselves: some AsyncLineSequence implementations omit blank
@@ -40,7 +43,7 @@ enum DoubaoHTTP {
                 if line.last == 13 { line.removeLast() }
                 try stream.consume(line: String(decoding: line, as: UTF8.self))
                 line.removeAll(keepingCapacity: true)
-                if stream.done { _ = try stream.result(); return (body, response) }
+                if stream.done { _ = try stream.result(originalText: originalText); return (body, response) }
             } else { line.append(byte) }
         }
         throw DoubaoError.incomplete("文字整理")
@@ -146,7 +149,7 @@ struct DoubaoTextOrganizer: TextPolishing {
         do { for line in String(decoding: data, as: UTF8.self).components(separatedBy: "\n") {
             try stream.consume(line: line.hasSuffix("\r") ? String(line.dropLast()) : line)
         }
-        let result = try stream.result()
+        let result = try stream.result(originalText: text)
         return TextPolishResult(text: result, provider: .doubaoIME, applied: result != text,
                                 estimatedInputTokens: 0, estimatedOutputTokens: 0)
         } catch {
