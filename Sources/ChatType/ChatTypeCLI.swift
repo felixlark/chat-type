@@ -104,7 +104,7 @@ enum ChatTypeCLI {
             config: config.transcription,
             usesLocalSpeechForFiles: false
         )
-        let transcription = try await transcriber.transcribe(
+        let transcription = try await transcriber.selectedRoute.transcribe(
             RecordedAudio(fileURL: audioURL, durationMs: durationMs)
         )
         let normalized = TerminologyNormalizer().normalize(

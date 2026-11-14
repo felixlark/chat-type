@@ -62,7 +62,7 @@ private func makeAudioFixture(
 
 @Test
 func managedAuthSendsAudioAboveLegacyTenMegabyteLimit() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
 
     let capture = RequestCapture()
@@ -94,7 +94,7 @@ func managedAuthSendsAudioAboveLegacyTenMegabyteLimit() async throws {
 
 @Test
 func managedAuthSendsOfficialChatGPTAccountContextHeaders() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
 
     let transcriber = ChatGPTTranscriber(
@@ -122,7 +122,7 @@ func managedAuthSendsOfficialChatGPTAccountContextHeaders() async throws {
 
 @Test
 func rejectsAudioAboveOfficialTwentyFiveMegabyteLimit() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
 
     let transcriber = ChatGPTTranscriber(
@@ -148,7 +148,7 @@ func rejectsAudioAboveOfficialTwentyFiveMegabyteLimit() async throws {
 
 @Test
 func rejectsInterruptedPCMRecordingBeforeNetworkRequest() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
 
     let url = FileManager.default.temporaryDirectory
@@ -213,7 +213,7 @@ func rejectsInterruptedPCMRecordingBeforeNetworkRequest() async throws {
 
 @Test
 func openAICompatibleRouteIncludesPromptField() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .openAICompatible
     config.openAIAuthTokenEnv = "CHATTYPE_TEST_OPENAI_KEY"
     config.hintTerms = ["budget v2.xlsx", "ChatType"]
@@ -256,7 +256,7 @@ func openAICompatibleRouteIncludesPromptField() async throws {
 
 @Test
 func managedAuthFallsBackWhenPromptFieldIsRejected() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
     config.hintTerms = ["ChatType"]
 
@@ -304,7 +304,7 @@ func managedAuthFallsBackWhenPromptFieldIsRejected() async throws {
 
 @Test
 func managedAuthRefreshesAccessTokenAfterForbidden() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
 
     let capture = RequestCapture()
@@ -354,7 +354,7 @@ func managedAuthRefreshesAccessTokenAfterForbidden() async throws {
 
 @Test
 func managedAuthReportsRetryableErrorAfterThreeCloudflareChallenges() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
     config.hintTerms = ["ChatType"]
     config.openAIAuthTokenEnv = "CHATTYPE_TEST_MISSING_RECOVERY_KEY"
@@ -404,7 +404,7 @@ func managedAuthReportsRetryableErrorAfterThreeCloudflareChallenges() async thro
 
 @Test
 func managedAuthManualRetryPolicyAttemptsCloudflareChallengeOnlyOnce() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
     config.hintTerms = ["ChatType"]
 
@@ -449,7 +449,7 @@ func managedAuthManualRetryPolicyAttemptsCloudflareChallengeOnlyOnce() async thr
 
 @Test func managedAuthCancellationDoesNotRepeatUploadWithoutPrompt() async throws {
     let count = AttemptCounter()
-    let transcriber = ChatGPTTranscriber(authManager: FakeChatGPTAuthManager(), config: AppConfig().transcription,
+    let transcriber = ChatGPTTranscriber(authManager: FakeChatGPTAuthManager(), config: legacyAccountConfig().transcription,
         bridgePromptCapability: BridgePromptCapabilityStore(), dataLoader: { _ in
             _ = count.next()
             throw CancellationError()
@@ -464,7 +464,7 @@ func managedAuthManualRetryPolicyAttemptsCloudflareChallengeOnlyOnce() async thr
 }
 
 @Test func localPreviewSelectsRelatedNameBeforeASRPromptBudget() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.hintTerms = ["pstack"]
     config.terminology.entries = (0..<200).map { TerminologyEntry(canonical: "AUnrelatedTerm\($0)", aliases: []) }
         + [TerminologyEntry(canonical: "林锦钗", aliases: [], source: "macos-contacts")]

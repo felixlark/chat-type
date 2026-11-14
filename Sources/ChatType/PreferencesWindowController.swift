@@ -245,10 +245,10 @@ private struct PreferencesView: View {
     }
 
     private var chatGPTAccountStatus: SetupStatus {
-        if config.transcription.provider == .openAICompatible {
+        if !config.transcription.needsChatGPT {
             return SetupStatus(
-                title: "Advanced recovery route selected",
-                subtitle: "ChatGPT account checks are bypassed while you use your own compatible API."
+                title: "ChatGPT is optional for this route",
+                subtitle: "Only a selected ChatGPT recognition or polish stage requires its account."
             )
         }
 
@@ -466,7 +466,7 @@ private struct PreferencesView: View {
             transcriptionAccountCard
             aiPolishCard
         case .dictation:
-            ProcessingFlowView(config: config.transcription, chatGPTReady: authSnapshot.state == .ready,
+            ProcessingFlowView(config: $config.transcription, injection: $config.injection, chatGPTReady: authSnapshot.state == .ready,
                 glmReady: glmKeySaved, qwenReady: qwenKeySaved)
             dictationCard
         case .terminology:
@@ -486,6 +486,16 @@ private struct PreferencesView: View {
                 routeRow(title: "Model", value: "Selected by ChatGPT", detail: "The private transcription service does not expose a selectable model ID.")
                 Text("Complete recordings go to chatgpt.com. Local Codex login supplies the ChatGPT session. This private backend can change or return a challenge; saved audio remains available in History.")
                     .foregroundStyle(.secondary)
+            } else if config.transcription.provider == .doubaoIME {
+                Text(config.transcription.provider.caption).foregroundStyle(.secondary)
+                Text("不需要豆包账户登录。音频发送到 frontier-audio-ime-ws.doubao.com；先从 is.snssdk.com 取得配置。模型由服务端决定。已知识别与改口整理仍可能出错，请核对终稿。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("更新豆包识别配置") {
+                    Task {
+                        do { _ = try await DoubaoCredentials.shared.key(refresh: true); saveMessage = "豆包配置已保存到 Keychain；未上传音频。"; saveIsError = false }
+                        catch { saveMessage = error.localizedDescription; saveIsError = true }
+                    }
+                }
             } else {
                 TextField("Transcription endpoint", text: $config.transcription.openAITranscriptionURL)
                 TextField("Audio model", text: $config.transcription.openAIModel)
@@ -510,7 +520,8 @@ private struct PreferencesView: View {
                 if let message = loginItem.message { Text(message).foregroundStyle(.red) }
             }
             settingsCard(title: "Paste & clipboard") {
-                Toggle("Restore clipboard after paste", isOn: $config.injection.preserveClipboard)
+                Toggle("仅复制到剪贴板", isOn: $config.injection.clipboardOnly)
+            Toggle("Restore clipboard after paste", isOn: $config.injection.preserveClipboard)
                 Text("With a focused editable target, finished text is pasted there. Otherwise it remains in the clipboard for Cmd+V.")
                     .foregroundStyle(.secondary)
                 Toggle("Recording feedback sounds", isOn: $config.transcription.feedbackSoundsEnabled)
@@ -623,7 +634,7 @@ private struct PreferencesView: View {
 
                 HStack(alignment: .center, spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(authSnapshot.userEmail ?? "Connect ChatGPT to start dictation.")
+                        Text(authSnapshot.userEmail ?? "豆包无需 ChatGPT 登录；选择 ChatGPT 阶段时再连接。")
                             .font(.system(size: 12, weight: .medium))
                         Text("F5 starts and stops recording. Output pastes when an editable target is focused; otherwise it stays in the clipboard.")
                             .font(.system(size: 11))
@@ -652,13 +663,33 @@ private struct PreferencesView: View {
 
     private var dictationCard: some View {
         settingsCard(title: "Writing preferences") {
+            HStack {
+                Button("豆包识别＋豆包整理") {
+                    config.transcription.provider = .doubaoIME
+                    config.transcription.textPolish.provider = .doubaoIME
+                    config.transcription.textPolish.mode = .automaticWhenKeyAvailable
+                }.accessibilityIdentifier("preset-doubao")
+                Button("ChatGPT 识别＋ChatGPT 润色") {
+                    config.transcription.provider = .chatGPTManagedAuth
+                    config.transcription.textPolish.provider = .chatGPTAuth
+                    config.transcription.textPolish.chatGPTAuthEnabled = true
+                    config.transcription.textPolish.mode = .automaticWhenKeyAvailable
+                }.accessibilityIdentifier("preset-chatgpt")
+            }
+            Text("组合只更改两个云端阶段；每阶段的选择仍可单独调整，保存后用于下一次录音。")
+                .font(.caption).foregroundStyle(.secondary)
             Toggle("Clean filler words and spoken corrections", isOn: $config.transcription.speechCleanupEnabled)
+                .disabled(config.transcription.provider == .doubaoIME)
+            if config.transcription.provider == .doubaoIME {
+                Text("豆包识别的清理方式由服务端决定；本地术语对齐和纠错可在上方分别开关。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Text("Asks the audio transcription service to remove fillers and repetitions while preserving your intended meaning. F5 starts and stops; Escape cancels.").foregroundStyle(.secondary)
             Toggle("Polish the full transcript", isOn: Binding(
-                get: { config.transcription.textPolish.mode != .disabled },
-                set: { config.transcription.textPolish.mode = $0 ? .automaticWhenKeyAvailable : .disabled }
+                get: { config.transcription.textPolish.isEnabled },
+                set: { config.transcription.textPolish.setEnabled($0) }
             )).accessibilityIdentifier("polish-enabled")
-            Text("Uses the service and model selected in Account. Input is the complete recognized text plus relevant terms. Audio stays in the transcription step. If polish fails, the aligned transcript is kept and your Replacement rules still apply.")
+            Text("Uses the service and model selected in Account. Input is the complete recognized text plus relevant terms. Audio stays in the transcription step. If polish fails, the completed stages are saved and processing remains incomplete; no text is pasted.")
                 .foregroundStyle(.secondary)
             Button("Configure services & models") { selectedSection = .account }
         }
@@ -686,6 +717,7 @@ private struct PreferencesView: View {
 
     private var polishRouteDetail: String {
         switch config.transcription.textPolish.provider {
+        case .doubaoIME: return "豆包文字整理 · ime.doubao.com（私有接口）"
         case .chatGPTAuth: return "\(config.transcription.textPolish.chatGPTResponseModel) via \(config.transcription.textPolish.chatGPTResponseURL)"
         case .glmFlash: return "glm-4.7-flash via open.bigmodel.cn"
         case .qwenFlash: return "qwen-flash via dashscope.aliyuncs.com (Beijing)"
@@ -695,12 +727,13 @@ private struct PreferencesView: View {
     private var aiPolishCard: some View {
         settingsCard(title: "Text polish service") {
             VStack(alignment: .leading, spacing: 12) {
-                Picker("Service", selection: $config.transcription.textPolish.provider) {
+                Picker("Service", selection: Binding(get: { config.transcription.textPolish.provider }, set: { config.transcription.textPolish.selectProvider($0) })) {
                     ForEach(TextPolishProviderID.allCases) { provider in
                         Text(provider.title).tag(provider)
                     }
                 }
                 .onChange(of: config.transcription.textPolish.provider) { _ in
+                    if config.transcription.textPolish.provider == .chatGPTAuth { config.transcription.textPolish.chatGPTAuthEnabled = true }
                     polishTestGeneration = UUID()
                     testingTextPolish = false
                     textPolishMessage = nil
@@ -739,7 +772,9 @@ private struct PreferencesView: View {
                     Text("Text model: only the text polish step uses this model. A larger model may improve rewriting and take longer; available models follow your ChatGPT account. Audio recognition uses its own server-selected model.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Text("Input: aligned full transcript + relevant glossary. Output: rewritten text. Selected service: \(polishRouteDetail). Credentials stay in Keychain. A saved key has not been verified by a request.")
+                Text(config.transcription.textPolish.provider == .doubaoIME
+                    ? "输入：上一阶段的全文。输出：整理后的全文。本地词表不作为额外提示上传；不承诺云端热词生效。服务：ime.doubao.com。"
+                    : "Input: aligned full transcript + relevant glossary. Output: rewritten text. Selected service: \(polishRouteDetail). Credentials stay in Keychain. A saved key has not been verified by a request.")
                     .font(.caption).foregroundStyle(.secondary)
                 polishStatusSection
             }
@@ -887,9 +922,11 @@ private struct PreferencesView: View {
     private var polishStatusSection: some View {
         let provider = config.transcription.textPolish.provider
         let usage = textPolishUsage[provider] ?? TextPolishUsage()
-        let ready = provider == .qwenFlash ? qwenKeySaved : provider == .glmFlash ? glmKeySaved : authSnapshot.state == .ready
+        let ready = provider == .qwenFlash ? qwenKeySaved : provider == .glmFlash ? glmKeySaved : provider == .doubaoIME ? true : authSnapshot.state == .ready
         let detail: String
         switch provider {
+        case .doubaoIME:
+            detail = "仅发送整理输入文本到 ime.doubao.com。无须账户登录，服务可用性与费用未作保证；未实测前不显示已连接。"
         case .chatGPTAuth:
             detail = ready ? "Account connected. Selected model: \(config.transcription.textPolish.chatGPTResponseModel)." : authSnapshot.detail
         case .glmFlash:
@@ -908,7 +945,7 @@ private struct PreferencesView: View {
                 Text(detail)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                Text("Attributed usage: \(usage.attempts) attempts, \(usage.succeeded) succeeded, \(usage.inputTokens) input tokens, \(usage.outputTokens) output tokens.")
+                Text(provider == .doubaoIME ? "记录：\(usage.attempts) 次尝试，\(usage.succeeded) 次完成；服务未提供 token 用量与费用。" : "Attributed usage: \(usage.attempts) attempts, \(usage.succeeded) succeeded, \(usage.inputTokens) input tokens, \(usage.outputTokens) output tokens.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 if unattributedPolishAttempts > 0 {
@@ -1118,7 +1155,7 @@ private struct PreferencesView: View {
                     connectViaBrowser()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(browserLoginIsInProgress || config.transcription.provider == .openAICompatible)
+                .disabled(browserLoginIsInProgress)
 
                 Button("Refresh Session") {
                     Task {
@@ -1129,7 +1166,6 @@ private struct PreferencesView: View {
                     }
                 }
                 .buttonStyle(.bordered)
-                .disabled(config.transcription.provider == .openAICompatible)
 
                 Button("Sign out") {
                     do {
@@ -1328,7 +1364,6 @@ private struct PreferencesView: View {
                     }
                 }
                 .buttonStyle(.bordered)
-                .disabled(config.transcription.provider == .openAICompatible)
 
                 if authSnapshot.state == .ready || authSnapshot.state == .expired {
                     Button("Sign out") {

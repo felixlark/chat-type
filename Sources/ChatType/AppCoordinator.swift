@@ -63,6 +63,10 @@ final class AppCoordinator {
     private var recordingConfig: AppConfig?
     private var pendingRetry: PendingRetry?
     private var activeProcessingAudio: RecordedAudio?
+    private var liveDoubao: DoubaoLiveRecognition?
+    private var activeAttemptID: UUID?
+    private var processingConfig: TranscriptionConfig?
+    private var interruptedParentRecordID: UUID?
     private var authStateObserver: NSObjectProtocol?
 
     private struct PendingRetry {
@@ -99,15 +103,17 @@ final class AppCoordinator {
                     config: transcriptionConfig,
                     cloudflareChallengeMaxAttempts: attemptPolicy.cloudflareChallengeMaxAttempts,
                     usesLocalSpeechForFiles: false
-                ),
+                ).selectedRoute,
                 normalizer: TerminologyNormalizer(),
                 importedEntries: transcriptionConfig.activeDictionaryEntries,
                 hintTerms: transcriptionConfig.prioritizedHintTerms,
-                textPolisher: OpenAICompatibleTextPolisher(
+                textPolisher: !transcriptionConfig.textPolish.isEnabled ? nil : OpenAICompatibleTextPolisher(
                     config: transcriptionConfig.textPolish,
                     chatGPTAuthProvider: authManager,
-                    chatGPTAuthAvailable: authManager.authSnapshot().state == .ready
-                )
+                    chatGPTAuthAvailable: transcriptionConfig.needsChatGPT && authManager.authSnapshot().state == .ready
+                ),
+                alignmentEnabled: transcriptionConfig.terminologyAlignmentEnabled,
+                correctionsEnabled: transcriptionConfig.correctionRulesEnabled
             )
         },
         launchAppContextProvider: @escaping LaunchAppContextProvider = { LaunchAppContext.current() }
@@ -128,10 +134,10 @@ final class AppCoordinator {
         self.soundFeedback = soundFeedback
         let recordingStore = self.recoveryRecorder as? RecoveryStore
         self.recorderFactory = recorderFactory ?? { current in
-            if #available(macOS 26.0, *), current.provider == .chatGPTManagedAuth {
+            if #available(macOS 26.0, *), current.provider == .chatGPTManagedAuth, current.livePreviewEnabled {
                 return LocalSpeechRecorder(sampleRateHz: current.sampleRateHz, store: recordingStore ?? RecoveryStore(), finalizationTimeoutSeconds: current.localFinalizationTimeoutSeconds, hintTerms: current.hintTerms)
             }
-            return AudioRecorder(sampleRateHz: current.sampleRateHz, recoveryStore: recordingStore)
+            return AudioRecorder(sampleRateHz: current.provider == .doubaoIME ? 16_000 : current.sampleRateHz, recoveryStore: recordingStore)
         }
         self.statusMenuFactory = statusMenuFactory
         self.pipelineFactory = pipelineFactory
@@ -246,10 +252,18 @@ final class AppCoordinator {
     }
 
     func cancelCurrentSession() {
-        guard state != .idle || activeSessionID != nil || processingTask != nil || startRecordingTask != nil else {
+        activeProcessingAudio?.cloudTranscript?.cancel()
+        guard state != .idle || activeSessionID != nil || startRecordingTask != nil else {
+            interruptedParentRecordID = nil
+            clearPendingRetry()
+            overlay.hide()
+            refreshReadyState()
             return
         }
 
+        liveDoubao?.cancel()
+        liveDoubao = nil
+        recordingConfig = nil
         startRecordingTask?.cancel()
         startRecordingTask = nil
         if let audio = activeProcessingAudio {
@@ -257,7 +271,7 @@ final class AppCoordinator {
                 try recoveryRecorder.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: audio.fileURL,
                     durationMs: audio.durationMs, asrText: nil, polishText: nil,
                     appName: launchAppContext?.localizedName, appBundleIdentifier: launchAppContext?.bundleIdentifier,
-                    outcome: "cancelled", errorMessage: nil))
+                    outcome: "cancelled", errorMessage: nil, snapshot: processingConfig, attemptID: activeAttemptID))
             } catch {
                 logger.error("Could not update cancellation journal; raw audio remains saved: \(error.localizedDescription, privacy: .public)")
             }
@@ -282,7 +296,8 @@ final class AppCoordinator {
     }
 
     private func startRecording() {
-        let sessionConfig = config
+        var sessionConfig = config
+        if sessionConfig.transcription.provider == .doubaoIME { sessionConfig.transcription.sampleRateHz = 16_000 }
         recordingConfig = sessionConfig
         let recorder = recorderFactory(sessionConfig.transcription)
         self.recorder = recorder
@@ -329,6 +344,22 @@ final class AppCoordinator {
                     return
                 }
 
+                if let url = recorder.activeAudioURL {
+                    do {
+                        try self.recoveryRecorder.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: url,
+                            durationMs: 0, asrText: nil, polishText: nil, appName: self.launchAppContext?.localizedName,
+                            appBundleIdentifier: self.launchAppContext?.bundleIdentifier, outcome: "recording", errorMessage: nil,
+                            snapshot: sessionConfig.transcription, injectionSnapshot: sessionConfig.injection,
+                            parentRecordID: self.interruptedParentRecordID))
+                        self.interruptedParentRecordID = nil
+                    } catch {
+                        try? recorder.cancelRecording()
+                        throw RecorderError.recordingStorageFailed(error.localizedDescription)
+                    }
+                    if sessionConfig.transcription.provider == .doubaoIME, sessionConfig.transcription.livePreviewEnabled {
+                        self.liveDoubao = DoubaoLiveRecognition(url: url)
+                    }
+                }
                 logger.info("Recording session started successfully")
                 self.recordingStartedAt = .now()
                 self.state = .recording
@@ -362,7 +393,9 @@ final class AppCoordinator {
 
         do {
             stopRecordingLevelUpdates()
-            let audio = try recorder.stopRecording()
+            var audio = try recorder.stopRecording()
+            if let live = liveDoubao { audio.cloudTranscript = live.finish(audio) }
+            liveDoubao = nil
             recordingStartedAt = nil
             state = .processing
             statusMenu?.update(state: .processing, detail: "Processing")
@@ -383,6 +416,7 @@ final class AppCoordinator {
                 attemptPolicy: .automatic
             )
         } catch {
+            liveDoubao?.cancel(); liveDoubao = nil
             stopRecordingLevelUpdates()
             state = .idle
             activeSessionID = nil
@@ -416,7 +450,7 @@ final class AppCoordinator {
     }
 
     private func startProcessing(
-        audio: RecordedAudio,
+        audio sourceAudio: RecordedAudio,
         sessionID: UUID,
         transcriptionConfig: TranscriptionConfig,
         injectionConfig: InjectionConfig,
@@ -424,12 +458,27 @@ final class AppCoordinator {
         attemptPolicy: TranscriptionAttemptPolicy
     ) {
         let processingStarted = DispatchTime.now().uptimeNanoseconds
+        guard shouldContinue(sessionID: sessionID) else { sourceAudio.cloudTranscript?.cancel(); return }
+        let audio: RecordedAudio
+        do {
+            if let store = recoveryRecorder as? RecoveryStore { audio = try store.adopt(sourceAudio) }
+            else { audio = sourceAudio }
+        } catch {
+            sourceAudio.cloudTranscript?.cancel()
+            self.state = .idle; activeSessionID = nil
+            overlay.showError("录音未能安全归档，未继续处理或输出。\(error.localizedDescription)")
+            return
+        }
         activeProcessingAudio = audio
+        let attemptID = UUID()
+        activeAttemptID = attemptID
+        processingConfig = transcriptionConfig
 
         processingTask?.cancel()
         processingTask = Task { [weak self] in
-            guard let self else { return }
+            guard let self else { audio.cloudTranscript?.cancel(); return }
             defer {
+                audio.cloudTranscript?.cancel()
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     if self.activeSessionID == sessionID || self.activeSessionID == nil {
@@ -439,23 +488,49 @@ final class AppCoordinator {
                 }
             }
 
-            let pipeline = self.pipelineFactory(transcriptionConfig, self.authManager, attemptPolicy)
+            var pipeline = self.pipelineFactory(transcriptionConfig, self.authManager, attemptPolicy)
+            let store = self.recoveryRecorder
+            let audit: @Sendable (DictationStageAudit) throws -> Void = { stages in
+                try Task.checkCancellation()
+                var stages = stages
+                stages.partialAudio = audio.isPartialReplay
+                do {
+                    try store.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: audio.fileURL,
+                        durationMs: audio.durationMs, asrText: stages.asrText, polishText: stages.polishOutput,
+                        appName: launchAppContext?.localizedName, appBundleIdentifier: launchAppContext?.bundleIdentifier,
+                        outcome: "processing", errorMessage: stages.error, snapshot: transcriptionConfig,
+                        attemptID: attemptID, stages: stages, injectionSnapshot: injectionConfig))
+                } catch { throw RecorderError.recordingStorageFailed(error.localizedDescription) }
+            }
+            if var concrete = pipeline as? DictationPipeline {
+                concrete.audit = audit
+                pipeline = concrete
+            }
 
             do {
+                try audit(.init())
                 let prepared = try await pipeline.prepare(audio: audio)
                 guard !Task.isCancelled else { return }
 
                 await MainActor.run {
                     guard self.shouldContinue(sessionID: sessionID) else { return }
 
+                    var outputWritten = false
                     do {
+                        try self.recoveryRecorder.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: audio.fileURL,
+                            durationMs: audio.durationMs, asrText: prepared.rawText, polishText: prepared.stages?.polishOutput,
+                            appName: launchAppContext?.localizedName, appBundleIdentifier: launchAppContext?.bundleIdentifier,
+                            outcome: "readyToInject", errorMessage: nil, snapshot: transcriptionConfig,
+                            attemptID: attemptID, stages: prepared.stages ?? DictationStageAudit(asrText: prepared.rawText, finalText: prepared.finalText),
+                            injectionSnapshot: injectionConfig))
                         let injectStarted = DispatchTime.now().uptimeNanoseconds
-                        let outcome = try self.injector.inject(
+                        let outcome = try injectionConfig.clipboardOnly ? self.injector.copyToClipboard(text: prepared.finalText) : self.injector.inject(
                             text: prepared.finalText,
                             preserveClipboard: injectionConfig.preserveClipboard,
                             restoreDelayMilliseconds: injectionConfig.restoreDelayMilliseconds,
                             launchAppContext: launchAppContext
                         )
+                        outputWritten = true
                         let injectMs = self.elapsedMilliseconds(since: injectStarted)
                         let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
                         self.recordLatency(
@@ -465,16 +540,16 @@ final class AppCoordinator {
                             totalProcessingMs: totalProcessingMs,
                             errorCategory: nil
                         )
-                        self.recordHistory(
+                        try self.recordHistory(
                             prepared: prepared,
                             outcome: outcome,
                             launchAppContext: launchAppContext
                         )
-                        self.recordRecoverySuccess(
+                        try self.recordRecoverySuccess(
                             audio: audio,
                             prepared: prepared,
                             outcome: outcome,
-                            launchAppContext: launchAppContext
+                            launchAppContext: launchAppContext, snapshot: transcriptionConfig, attemptID: attemptID
                         )
                         self.clearPendingRetry()
                         self.state = .idle
@@ -498,8 +573,9 @@ final class AppCoordinator {
                         self.state = .idle
                         self.activeSessionID = nil
                         self.statusMenu?.update(state: .error, detail: error.localizedDescription)
-                        self.overlay.showError(error.localizedDescription)
-                        self.notifier.notify(title: "ChatType", body: error.localizedDescription)
+                        let message = outputWritten ? "文字已经输出，但结果保存未完成；请先核对目标，避免重复粘贴。\(error.localizedDescription)" : "保存或输出未完成；未报告成功。\(error.localizedDescription)"
+                        self.overlay.showError(message)
+                        self.notifier.notify(title: "ChatType", body: message)
                         self.launchAppContext = nil
                     }
                 }
@@ -516,11 +592,15 @@ final class AppCoordinator {
                         transcriptionConfig: transcriptionConfig,
                         processingStarted: processingStarted
                     )
-                    self.recordRecoveryFailure(
-                        audio: audio,
-                        launchAppContext: launchAppContext,
-                        error: error
-                    )
+                    do {
+                        try self.recordRecoveryFailure(audio: audio, launchAppContext: launchAppContext,
+                            error: error, snapshot: transcriptionConfig, attemptID: attemptID)
+                    } catch {
+                        self.clearPendingRetry(); self.state = .idle; self.activeSessionID = nil
+                        self.overlay.showError("审计保存失败；原文件仍保留，未自动输出。\(error.localizedDescription)")
+                        self.statusMenu?.update(state: .error, detail: "Recording audit could not be saved")
+                        return
+                    }
 
                     if self.isRetryableTranscriptionError(error) {
                         do {
@@ -656,18 +736,49 @@ final class AppCoordinator {
             return
         }
 
+        if ["readyToInject", "outputUnknown"].contains(record.outcome) {
+            let alert = NSAlert()
+            alert.messageText = "上次输出状态待核对"
+            alert.informativeText = "文字可能已经粘贴或复制。请先核对目标内容，避免重复输出。"
+            alert.addButton(withTitle: "已核对，重新处理")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        var replay = record.snapshot ?? config.transcription
+        if record.snapshot == nil {
+            let alert = NSAlert()
+            alert.messageText = "旧录音没有后端记录"
+            alert.informativeText = "本次将识别音频发送到 \(replay.provider.title)，文字润色：\(replay.textPolish.mode == .disabled ? "关闭" : replay.textPolish.provider.title)。原声会保留。只有选择下面的重跑按钮才会提交。"
+            alert.addButton(withTitle: "按这些选择重跑")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        replay.terminology = config.transcription.terminology
+        replay.hintTerms = config.transcription.hintTerms
+        let replayInjection = record.injectionSnapshot ?? config.injection
+        var partialReplay = ["interrupted", "cancelled"].contains(record.outcome)
+            || record.attempts?.last?.stages.partialAudio == true
+        if case .interruptedInput = PCMRecordingIntegrityAnalyzer().analyze(wavData: (try? Data(contentsOf: audioURL)) ?? Data()) {
+            let alert = NSAlert()
+            alert.messageText = "仅重跑已保存片段"
+            alert.informativeText = "原录音存在输入中断或数字静音尾部，无法保证整段原声完整。将按已保存内容重跑并标记为片段，原件保留。"
+            alert.addButton(withTitle: "重跑已保存片段")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            partialReplay = true
+        }
         let sessionID = UUID()
         activeSessionID = sessionID
         state = .processing
         let audio = RecordedAudio(fileURL: audioURL, durationMs: record.audioDurationMs,
-            previewText: record.asrText ?? "")
+            previewText: record.asrText ?? "", isPartialReplay: partialReplay)
         statusMenu?.update(state: .processing, detail: "Recognizing saved audio with current terms")
         overlay.showProcessing()
         startProcessing(
             audio: audio,
             sessionID: sessionID,
-            transcriptionConfig: config.transcription,
-            injectionConfig: config.injection,
+            transcriptionConfig: replay,
+            injectionConfig: replayInjection,
             launchAppContext: launchAppContextProvider(),
             attemptPolicy: .manualRetry
         )
@@ -680,7 +791,7 @@ final class AppCoordinator {
     }
 
     func checkLaunchLoginState() {
-        guard config.transcription.provider == .chatGPTManagedAuth else {
+        guard config.transcription.needsChatGPT else {
             return
         }
 
@@ -844,13 +955,38 @@ final class AppCoordinator {
                     return
                 }
                 if recorder.inputInterruptionDetected() {
-                    self.stopRecording()
+                    self.interruptRecording()
                     return
                 }
                 self.overlay.updateRecording(level: level, elapsedText: self.elapsedRecordingText())
-                self.overlay.updateTranscriptPreview(recorder.liveTranscript)
+                if let live = self.liveDoubao {
+                    let session = self.activeSessionID
+                    let text = await live.state.preview
+                    guard self.state == .recording, self.activeSessionID == session else { return }
+                    self.overlay.updateTranscriptPreview(text)
+                } else { self.overlay.updateTranscriptPreview(recorder.liveTranscript) }
             }
         }
+    }
+
+    private func interruptRecording() {
+        stopRecordingLevelUpdates()
+        liveDoubao?.cancel(); liveDoubao = nil
+        let snapshot = recordingConfig ?? config
+        let message = "麦克风输入已中断；已保存片段保留，云端处理已停止，未生成或粘贴完整结果。可在 History 明确重放已保存片段。"
+        do {
+            if let audio = try recorder?.stopRecording() {
+                try recoveryRecorder.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: audio.fileURL,
+                    durationMs: audio.durationMs, asrText: nil, polishText: nil,
+                    appName: launchAppContext?.localizedName, appBundleIdentifier: launchAppContext?.bundleIdentifier,
+                    outcome: "interrupted", errorMessage: message, snapshot: snapshot.transcription,
+                    injectionSnapshot: snapshot.injection))
+                interruptedParentRecordID = UUID(uuidString: audio.fileURL.deletingPathExtension().lastPathComponent)
+            }
+            overlay.showError(message)
+        } catch { overlay.showError("采集已停止；保存状态需核查。\(error.localizedDescription)") }
+        state = .idle; activeSessionID = nil; recordingConfig = nil; recordingStartedAt = nil
+        statusMenu?.update(state: .error, detail: message)
     }
 
     private func stopRecordingLevelUpdates() {
@@ -890,7 +1026,7 @@ final class AppCoordinator {
             _ = VocabularyIndexCache.shared.index(for: entries)
             PersonalNameHints.prewarm(entries: entries)
         }
-        guard config.transcription.provider == .chatGPTManagedAuth else {
+        guard config.transcription.needsChatGPT else {
             return
         }
 
@@ -906,23 +1042,8 @@ final class AppCoordinator {
         transcriptionConfig: TranscriptionConfig,
         injectionConfig: InjectionConfig
     ) throws {
-        if pendingRetry?.audio.fileURL == audio.fileURL {
-            pendingRetry = PendingRetry(
-                audio: audio,
-                launchAppContext: launchAppContext,
-                transcriptionConfig: transcriptionConfig,
-                injectionConfig: injectionConfig
-            )
-            return
-        }
-
-        clearPendingRetry()
-        let retryDirectory = configStore.directoryURL.appendingPathComponent("Retry", isDirectory: true)
-        try FileManager.default.createDirectory(at: retryDirectory, withIntermediateDirectories: true)
-        let retryURL = retryDirectory.appendingPathComponent("retry-\(UUID().uuidString).wav")
-        try FileManager.default.copyItem(at: audio.fileURL, to: retryURL)
         pendingRetry = PendingRetry(
-            audio: RecordedAudio(fileURL: retryURL, durationMs: audio.durationMs, previewText: audio.previewText),
+            audio: RecordedAudio(fileURL: audio.fileURL, durationMs: audio.durationMs, previewText: audio.previewText, isPartialReplay: audio.isPartialReplay),
             launchAppContext: launchAppContext,
             transcriptionConfig: transcriptionConfig,
             injectionConfig: injectionConfig
@@ -935,7 +1056,16 @@ final class AppCoordinator {
     }
 
     private func isRetryableTranscriptionError(_ error: Error) -> Bool {
-        if error is LocalTranscriptionFailure { return true }
+        if let failure = error as? DoubaoTranscriptionFailure {
+            return failure.underlyingError.map { isRetryableTranscriptionError($0) } ?? true
+        }
+        if error is LocalTranscriptionFailure || error is DictationPipelineFailure { return true }
+        if let error = error as? DoubaoError {
+            switch error {
+            case .incomplete, .http, .rejected, .credentials, .unexpectedContent: return true
+            default: return false
+            }
+        }
         if case TranscriptionError.retryableCloudflareChallenge = error {
             return true
         }
@@ -1003,8 +1133,8 @@ final class AppCoordinator {
         prepared: PreparedDictation,
         outcome: InjectionOutcome,
         launchAppContext: LaunchAppContext?
-    ) {
-        try? historyRecorder.record(
+    ) throws {
+        try historyRecorder.record(
             TranscriptionHistoryRecord(
                 timestamp: Date(),
                 rawText: prepared.rawText,
@@ -1021,19 +1151,21 @@ final class AppCoordinator {
         audio: RecordedAudio,
         prepared: PreparedDictation,
         outcome: InjectionOutcome,
-        launchAppContext: LaunchAppContext?
-    ) {
-        try? recoveryRecorder.record(
+        launchAppContext: LaunchAppContext?,
+        snapshot: TranscriptionConfig, attemptID: UUID
+    ) throws {
+        try recoveryRecorder.record(
             RecoveryRecordInput(
                 timestamp: Date(),
                 sourceAudioURL: audio.fileURL,
                 durationMs: audio.durationMs,
                 asrText: prepared.rawText,
-                polishText: prepared.finalText,
+                polishText: prepared.stages?.polishOutput,
                 appName: launchAppContext?.localizedName,
                 appBundleIdentifier: launchAppContext?.bundleIdentifier,
                 outcome: latencyResultStatus(for: outcome),
-                errorMessage: prepared.metrics.textPolishErrorMessage
+                errorMessage: prepared.metrics.textPolishErrorMessage, snapshot: snapshot,
+                attemptID: attemptID, stages: prepared.stages
             )
         )
     }
@@ -1041,19 +1173,27 @@ final class AppCoordinator {
     private func recordRecoveryFailure(
         audio: RecordedAudio,
         launchAppContext: LaunchAppContext?,
-        error: any Error
-    ) {
-        try? recoveryRecorder.record(
+        error: any Error, snapshot: TranscriptionConfig, attemptID: UUID
+    ) throws {
+        var stages = (error as? DictationPipelineFailure)?.stages ?? .init()
+        stages.error = error.localizedDescription
+        stages.asrPartialText = (error as? DoubaoTranscriptionFailure)?.partialText
+            ?? (error as? LocalTranscriptionFailure)?.partialText
+        stages.asrRequestID = (error as? DoubaoTranscriptionFailure)?.requestID ?? stages.asrRequestID
+        try recoveryRecorder.record(
             RecoveryRecordInput(
                 timestamp: Date(),
                 sourceAudioURL: audio.fileURL,
                 durationMs: audio.durationMs,
-                asrText: (error as? LocalTranscriptionFailure)?.partialText,
+                asrText: (error as? DictationPipelineFailure)?.stages.asrText
+                    ?? (error as? DoubaoTranscriptionFailure)?.partialText
+                    ?? (error as? LocalTranscriptionFailure)?.partialText,
                 polishText: nil,
                 appName: launchAppContext?.localizedName,
                 appBundleIdentifier: launchAppContext?.bundleIdentifier,
                 outcome: "error",
-                errorMessage: error.localizedDescription
+                errorMessage: error.localizedDescription, snapshot: snapshot, attemptID: attemptID,
+                stages: stages
             )
         )
     }

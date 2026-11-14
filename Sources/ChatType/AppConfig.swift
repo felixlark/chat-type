@@ -5,11 +5,20 @@ struct AppConfig: Codable, Sendable, Equatable {
     var injection: InjectionConfig = .init()
     var auth: AuthConfig = .init()
 
-    init() {}
+    init() {
+        transcription.provider = .doubaoIME
+        transcription.textPolish.provider = .doubaoIME
+    }
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        transcription = try container.decodeIfPresent(TranscriptionConfig.self, forKey: .transcription) ?? .init()
+        if let decoded = try container.decodeIfPresent(TranscriptionConfig.self, forKey: .transcription) {
+            transcription = decoded
+        } else {
+            transcription = .init()
+            transcription.provider = .chatGPTManagedAuth
+            transcription.textPolish.provider = .chatGPTAuth
+        }
         injection = try container.decodeIfPresent(InjectionConfig.self, forKey: .injection) ?? .init()
         auth = try container.decodeIfPresent(AuthConfig.self, forKey: .auth) ?? .init()
     }
@@ -36,6 +45,7 @@ struct AuthConfig: Codable, Sendable, Equatable {
 }
 
 enum TranscriptionProvider: String, Codable, Sendable, CaseIterable, Identifiable {
+    case doubaoIME
     case chatGPTManagedAuth
     case openAICompatible
 
@@ -45,6 +55,8 @@ enum TranscriptionProvider: String, Codable, Sendable, CaseIterable, Identifiabl
         let container = try decoder.singleValueContainer()
         let rawValue = try container.decode(String.self)
         switch rawValue {
+        case Self.doubaoIME.rawValue:
+            self = .doubaoIME
         case "codexChatGPTBridge":
             self = .chatGPTManagedAuth
         case Self.chatGPTManagedAuth.rawValue:
@@ -63,6 +75,8 @@ enum TranscriptionProvider: String, Codable, Sendable, CaseIterable, Identifiabl
 
     var title: String {
         switch self {
+        case .doubaoIME:
+            return "Doubao IME"
         case .chatGPTManagedAuth:
             return "ChatGPT Account"
         case .openAICompatible:
@@ -72,8 +86,10 @@ enum TranscriptionProvider: String, Codable, Sendable, CaseIterable, Identifiabl
 
     var caption: String {
         switch self {
+        case .doubaoIME:
+            return "Audio goes to Doubao IME's private service. Configuration credentials stay in Keychain; no account Cookie is used. Availability and pricing are not guaranteed."
         case .chatGPTManagedAuth:
-            return "Recommended. ChatType signs in to ChatGPT directly and keeps its own session on this Mac."
+            return "ChatType signs in to ChatGPT directly and keeps its own session on this Mac."
         case .openAICompatible:
             return "Optional recovery route. Bring your own OpenAI-compatible API only if you want a separate endpoint."
         }
@@ -87,6 +103,7 @@ enum TextPolishMode: String, Codable, Sendable, Equatable, CaseIterable {
 }
 
 enum TextPolishProviderID: String, Codable, Sendable, Equatable, Hashable, CaseIterable, Identifiable {
+    case doubaoIME
     case chatGPTAuth
     case glmFlash
     case qwenFlash
@@ -95,6 +112,8 @@ enum TextPolishProviderID: String, Codable, Sendable, Equatable, Hashable, CaseI
 
     var title: String {
         switch self {
+        case .doubaoIME:
+            return "Doubao IME"
         case .chatGPTAuth:
             return "ChatGPT Auth"
         case .glmFlash:
@@ -115,6 +134,18 @@ struct TextPolishConfig: Codable, Sendable, Equatable {
     var maxOutputTokens: Int = 1_200
     var glossaryBudgetCharacters: Int = 1_200
     var showCostEstimates: Bool = true
+
+    var isEnabled: Bool { mode != .disabled && (provider != .chatGPTAuth || chatGPTAuthEnabled) }
+
+    mutating func selectProvider(_ selection: TextPolishProviderID) {
+        provider = selection
+        if selection == .chatGPTAuth { chatGPTAuthEnabled = true }
+    }
+
+    mutating func setEnabled(_ enabled: Bool) {
+        mode = enabled ? .automaticWhenKeyAvailable : .disabled
+        if enabled && provider == .chatGPTAuth { chatGPTAuthEnabled = true }
+    }
 
     init() {}
 
@@ -165,6 +196,9 @@ struct TextPolishConfig: Codable, Sendable, Equatable {
 
 struct TranscriptionConfig: Codable, Sendable, Equatable {
     var provider: TranscriptionProvider = .chatGPTManagedAuth
+    var livePreviewEnabled: Bool = true
+    var terminologyAlignmentEnabled: Bool = true
+    var correctionRulesEnabled: Bool = true
     var hotkeyKeyCode: UInt32 = 96
     var chatGPTURL: String = "https://chatgpt.com/backend-api/transcribe"
     var openAITranscriptionURL: String = "https://api.openai.com/v1/audio/transcriptions"
@@ -189,6 +223,9 @@ struct TranscriptionConfig: Codable, Sendable, Equatable {
             provider = .chatGPTManagedAuth
         }
         hotkeyKeyCode = try container.decodeIfPresent(UInt32.self, forKey: .hotkeyKeyCode) ?? 96
+        livePreviewEnabled = try container.decodeIfPresent(Bool.self, forKey: .livePreviewEnabled) ?? true
+        terminologyAlignmentEnabled = try container.decodeIfPresent(Bool.self, forKey: .terminologyAlignmentEnabled) ?? true
+        correctionRulesEnabled = try container.decodeIfPresent(Bool.self, forKey: .correctionRulesEnabled) ?? true
         chatGPTURL = try container.decodeIfPresent(String.self, forKey: .chatGPTURL) ?? "https://chatgpt.com/backend-api/transcribe"
         openAITranscriptionURL = try container.decodeIfPresent(String.self, forKey: .openAITranscriptionURL) ?? "https://api.openai.com/v1/audio/transcriptions"
         openAIModel = try container.decodeIfPresent(String.self, forKey: .openAIModel) ?? "gpt-4o-mini-transcribe"
@@ -200,11 +237,21 @@ struct TranscriptionConfig: Codable, Sendable, Equatable {
         speechCleanupEnabled = try container.decodeIfPresent(Bool.self, forKey: .speechCleanupEnabled) ?? true
         feedbackSoundsEnabled = try container.decodeIfPresent(Bool.self, forKey: .feedbackSoundsEnabled) ?? true
         terminology = try container.decodeIfPresent(TerminologyConfig.self, forKey: .terminology) ?? .init()
-        textPolish = try container.decodeIfPresent(TextPolishConfig.self, forKey: .textPolish) ?? .init()
+        // Missing old settings must retain their original account destination.
+        if let decoded = try container.decodeIfPresent(TextPolishConfig.self, forKey: .textPolish) {
+            textPolish = decoded
+        } else {
+            textPolish = .init()
+            textPolish.provider = .chatGPTAuth
+        }
     }
 
     var activeDictionaryEntries: [TerminologyEntry] {
         terminology.entries
+    }
+
+    var needsChatGPT: Bool {
+        provider == .chatGPTManagedAuth || (textPolish.isEnabled && textPolish.provider == .chatGPTAuth)
     }
 
     var prioritizedHintTerms: [String] {
@@ -388,6 +435,7 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
 }
 
 struct InjectionConfig: Codable, Sendable, Equatable {
+    var clipboardOnly: Bool = false
     var preserveClipboard: Bool = false
     var restoreDelayMilliseconds: UInt64 = 350
 
@@ -396,6 +444,7 @@ struct InjectionConfig: Codable, Sendable, Equatable {
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         preserveClipboard = try container.decodeIfPresent(Bool.self, forKey: .preserveClipboard) ?? false
+        clipboardOnly = try container.decodeIfPresent(Bool.self, forKey: .clipboardOnly) ?? false
         restoreDelayMilliseconds = try container.decodeIfPresent(UInt64.self, forKey: .restoreDelayMilliseconds) ?? 350
     }
 }

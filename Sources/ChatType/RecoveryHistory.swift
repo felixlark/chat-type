@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CryptoKit
 
 struct RecoveryRecordInput: Sendable {
     let timestamp: Date
@@ -11,6 +12,11 @@ struct RecoveryRecordInput: Sendable {
     let appBundleIdentifier: String?
     let outcome: String
     let errorMessage: String?
+    var snapshot: TranscriptionConfig? = nil
+    var attemptID: UUID? = nil
+    var stages: DictationStageAudit? = nil
+    var injectionSnapshot: InjectionConfig? = nil
+    var parentRecordID: UUID? = nil
 }
 
 struct RecoveryRecord: Codable, Sendable, Equatable, Identifiable {
@@ -24,6 +30,11 @@ struct RecoveryRecord: Codable, Sendable, Equatable, Identifiable {
     let appBundleIdentifier: String?
     let outcome: String
     let errorMessage: String?
+    var snapshot: TranscriptionConfig? = nil
+    var attempts: [DictationAttempt]? = nil
+    var injectionSnapshot: InjectionConfig? = nil
+    var audioSHA256: String? = nil
+    var parentRecordID: UUID? = nil
 
     func audioURL(baseDirectory: URL) -> URL {
         baseDirectory
@@ -85,21 +96,22 @@ struct RecoveryHistoryPreview: Sendable, Equatable, Identifiable {
         case .audio:
             copyText = ""
             copyKind = .audioFile
-            displayText = "\(formattedDuration(record.audioDurationMs)) WAV"
+            displayText = (record.attempts?.last?.stages.partialAudio == true || record.outcome == "interrupted" ? "已保存片段 · " : "") + "\(formattedDuration(record.audioDurationMs)) WAV"
         case .asr:
             guard let text = record.asrText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
                 return nil
             }
             copyText = text
             copyKind = .text
-            displayText = (record.outcome == "error" ? "部分转写 · " : "") + collapsedPreview(text)
+            displayText = (record.attempts?.last?.stages.partialAudio == true
+                || (record.outcome == "error" && record.attempts?.last?.stages.asrText == nil) ? "部分转写 · " : "") + collapsedPreview(text)
         case .polish:
             guard let text = record.polishText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
                 return nil
             }
             copyText = text
             copyKind = .text
-            displayText = collapsedPreview(text)
+            displayText = (record.outcome == "error" || record.attempts?.last?.stages.partialAudio == true ? "部分整理 · " : "") + collapsedPreview(text)
         }
 
         return RecoveryHistoryPreview(
@@ -198,10 +210,14 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         try prepareDirectories()
-        let records = try loadAllUnlocked()
         let ownedID = input.sourceAudioURL.deletingLastPathComponent().standardizedFileURL == audioDirectoryURL.standardizedFileURL
             ? UUID(uuidString: input.sourceAudioURL.deletingPathExtension().lastPathComponent) : nil
-        let previous = records.first { $0.id == ownedID }
+        let previous: RecoveryRecord?
+        if let ownedID, fileManager.fileExists(atPath: journalDirectoryURL.appendingPathComponent("\(ownedID.uuidString).json").path) {
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            previous = try decoder.decode(RecoveryRecord.self,
+                from: Data(contentsOf: journalDirectoryURL.appendingPathComponent("\(ownedID.uuidString).json")))
+        } else { previous = try loadAllUnlocked().first { $0.id == ownedID } }
         let id = ownedID ?? UUID()
         let audioFileName = "\(id.uuidString).wav"
         let destinationURL = audioDirectoryURL.appendingPathComponent(audioFileName)
@@ -210,15 +226,63 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destinationURL.path)
         }
         try Self.synchronize(destinationURL)
+        var attempts = previous?.attempts ?? []
+        if let attemptID = input.attemptID, let snapshot = input.snapshot {
+            let position = attempts.firstIndex { $0.id == attemptID }
+            let old = position.map { attempts[$0] }
+            let attempt = DictationAttempt(id: attemptID, startedAt: old?.startedAt ?? input.timestamp,
+                snapshot: snapshot, stages: (old?.stages ?? .init()).merging(input.stages ?? .init()), outcome: input.outcome)
+            if let position { attempts[position] = attempt } else { attempts.append(attempt) }
+        }
+        let sameAttempt = input.attemptID == nil || previous?.attempts?.last?.id == input.attemptID
+        var audioSHA = previous?.audioSHA256
+        if input.outcome != "recording", audioSHA == nil || !sameAttempt {
+            let actual = try Self.checksum(destinationURL)
+            guard audioSHA == nil || audioSHA == actual else {
+                throw RecorderError.recordingStorageFailed("音频校验值已改变；未继续处理。")
+            }
+            audioSHA = actual
+        }
         try writeJournal(RecoveryRecord(
             id: id, timestamp: previous?.timestamp ?? input.timestamp,
             audioFileName: audioFileName, audioDurationMs: input.durationMs,
-            asrText: input.asrText ?? previous?.asrText,
-            polishText: input.polishText ?? previous?.polishText,
+            asrText: input.asrText ?? (sameAttempt ? previous?.asrText : nil),
+            polishText: input.polishText ?? (sameAttempt ? previous?.polishText : nil),
             appName: input.appName ?? previous?.appName,
             appBundleIdentifier: input.appBundleIdentifier ?? previous?.appBundleIdentifier,
-            outcome: input.outcome, errorMessage: input.errorMessage
+            outcome: input.outcome, errorMessage: input.errorMessage,
+            snapshot: input.snapshot ?? previous?.snapshot, attempts: attempts.isEmpty ? nil : attempts,
+            injectionSnapshot: input.injectionSnapshot ?? previous?.injectionSnapshot,
+            audioSHA256: audioSHA, parentRecordID: input.parentRecordID ?? previous?.parentRecordID
         ))
+    }
+
+    private static func checksum(_ url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let chunk = try handle.read(upToCount: 65_536), !chunk.isEmpty { hasher.update(data: chunk) }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Import external audio once, before processing, so every attempt keeps one
+    /// owned audio identity. Original files are never removed.
+    func adopt(_ audio: RecordedAudio) throws -> RecordedAudio {
+        if audio.fileURL.deletingLastPathComponent().standardizedFileURL == audioDirectoryURL.standardizedFileURL {
+            return audio
+        }
+        let destination = try beginRecording()
+        let source = try FileHandle(forReadingFrom: audio.fileURL)
+        let target = try FileHandle(forWritingTo: destination)
+        defer { try? source.close(); try? target.close() }
+        while let bytes = try source.read(upToCount: 65_536), !bytes.isEmpty { try target.write(contentsOf: bytes) }
+        try target.synchronize()
+        var owned = audio
+        owned = RecordedAudio(fileURL: destination, durationMs: audio.durationMs,
+            localTranscript: audio.localTranscript, previewText: audio.previewText, cloudTranscript: audio.cloudTranscript,
+            isPartialReplay: audio.isPartialReplay)
+        try finishRecording(owned, outcome: "recorded")
+        return owned
     }
 
     func loadRecent(limit: Int = 10) throws -> [RecoveryRecord] {
@@ -234,7 +298,7 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
         try prepareDirectories()
         let records = try loadAllUnlocked()
         let ids = Set(records.map(\.id))
-        var interrupted = records.filter { ["recording", "recorded", "processing"].contains($0.outcome) }
+        var interrupted = records.filter { ["recording", "recorded", "processing", "readyToInject"].contains($0.outcome) }
         // A crash between file creation and journal creation must not hide the audio.
         for url in try fileManager.contentsOfDirectory(at: audioDirectoryURL, includingPropertiesForKeys: [.creationDateKey])
             where url.pathExtension == "wav" {
@@ -248,11 +312,16 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
             let url = record.audioURL(baseDirectory: directoryURL)
             guard fileManager.fileExists(atPath: url.path) else { continue }
             let duration = try InterruptedWAVRecovery.repair(url: url) ?? record.audioDurationMs
+            let unknownOutput = record.outcome == "readyToInject"
+            var attempts = record.attempts
+            if let last = attempts?.indices.last { attempts?[last].outcome = unknownOutput ? "outputUnknown" : "interrupted" }
             try writeJournal(RecoveryRecord(id: record.id, timestamp: record.timestamp,
                 audioFileName: record.audioFileName, audioDurationMs: duration,
                 asrText: record.asrText, polishText: record.polishText, appName: record.appName,
-                appBundleIdentifier: record.appBundleIdentifier, outcome: "interrupted",
-                errorMessage: "录音或处理被中断；已保留原始音频，可复制或重试。"))
+                appBundleIdentifier: record.appBundleIdentifier, outcome: unknownOutput ? "outputUnknown" : "interrupted",
+                errorMessage: unknownOutput ? "上次输出状态未知；请先核对目标，避免重复输出。" : "录音或处理被中断；已保留原始音频，可复制或重试。",
+                snapshot: record.snapshot, attempts: attempts, injectionSnapshot: record.injectionSnapshot,
+                audioSHA256: try Self.checksum(url), parentRecordID: record.parentRecordID))
         }
     }
 

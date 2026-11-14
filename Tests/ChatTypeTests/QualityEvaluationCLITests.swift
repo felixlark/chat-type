@@ -10,7 +10,7 @@ func qualityEvaluationRejectsUnapprovedProvidersBeforeReadingCredentials() async
     let suite = directory.appendingPathComponent("suite.json")
     try Data(#"{"schemaVersion":1,"cases":[{"id":"one","audio":"missing.wav","kind":"synthetic","durationSeconds":1}]}"#.utf8).write(to: suite)
     for compatible in [true, false] {
-        var config = AppConfig()
+        var config = legacyAccountConfig()
         if compatible { config.transcription.provider = .openAICompatible }
         else { config.transcription.textPolish.provider = .qwenFlash }
         let snapshot = directory.appendingPathComponent("config.json")

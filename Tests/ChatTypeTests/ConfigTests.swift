@@ -3,10 +3,10 @@ import Testing
 @testable import ChatType
 
 @Test
-func defaultConfigUsesChatGPTAccountDefaults() throws {
+func defaultConfigUsesDoubaoWithAccountRouteRetained() throws {
     let config = AppConfig()
     #expect(config.transcription.hotkeyKeyCode == 96)
-    #expect(config.transcription.provider == .chatGPTManagedAuth)
+    #expect(config.transcription.provider == .doubaoIME)
     #expect(config.transcription.openAITranscriptionURL == "https://api.openai.com/v1/audio/transcriptions")
     #expect(config.transcription.openAIModel == "gpt-4o-mini-transcribe")
     #expect(config.transcription.openAIAuthTokenEnv == "OPENAI_API_KEY")

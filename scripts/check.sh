@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+bash "$ROOT/scripts/build_opus.sh" >/dev/null
 
 swift build --package-path "$ROOT" --scratch-path "${CHATTYPE_SCRATCH_PATH:-$HOME/Library/Caches/chat-type/swiftpm}" --cache-path "$HOME/Library/Caches/chat-type/swiftpm-cache"
 swift test --package-path "$ROOT" --scratch-path "${CHATTYPE_SCRATCH_PATH:-$HOME/Library/Caches/chat-type/swiftpm}" --cache-path "$HOME/Library/Caches/chat-type/swiftpm-cache"

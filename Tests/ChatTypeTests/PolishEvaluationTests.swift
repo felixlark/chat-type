@@ -94,7 +94,7 @@ func polishWithoutSSEMIMEStillRequiresExplicitCompletion(payload: String, succee
     defer { try? FileManager.default.removeItem(at: directory) }
     let suite = directory.appendingPathComponent("suite.json")
     try Data(#"{"schemaVersion":1,"cases":[{"id":"one","text":"keep this","group":"short"}]}"#.utf8).write(to: suite)
-    var config = AppConfig()
+    var config = legacyAccountConfig()
     config.transcription.textPolish.provider = .qwenFlash
     let snapshot = directory.appendingPathComponent("config.json")
     try JSONEncoder().encode(config).write(to: snapshot)

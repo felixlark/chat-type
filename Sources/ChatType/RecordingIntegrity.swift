@@ -71,6 +71,8 @@ struct RecordingInputHealthMonitor: Sendable {
     private(set) var hasObservedSignal = false
     private(set) var interruptionDetected = false
     private var digitalSilenceStartedAt: TimeInterval?
+    private var lastCapturedFrames: Int64?
+    private var lastProgressAt: TimeInterval?
 
     init(
         digitalSilenceThresholdDBFS: Float = -85,
@@ -101,6 +103,17 @@ struct RecordingInputHealthMonitor: Sendable {
             }
         } else {
             digitalSilenceStartedAt = elapsedSeconds
+        }
+    }
+
+    /// Use a monotonic wall clock: the audio clock itself can stop advancing
+    /// when callbacks or disk writes stop. Reuse the existing interruption interval.
+    mutating func observeCapturedFrames(_ count: Int64, now: TimeInterval) {
+        if lastCapturedFrames == nil || count > lastCapturedFrames! {
+            lastCapturedFrames = count
+            lastProgressAt = now
+        } else if let lastProgressAt, now - lastProgressAt >= interruptionSeconds {
+            interruptionDetected = true
         }
     }
 }

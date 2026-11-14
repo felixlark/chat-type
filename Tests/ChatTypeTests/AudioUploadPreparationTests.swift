@@ -57,7 +57,7 @@ private func uploadFixture() throws -> (URL, Data) {
 @Test func managedUploadUsesEncodedMultipartMetadata() async throws {
     let (url, original) = try uploadFixture()
     defer { try? FileManager.default.removeItem(at: url) }
-    let transcriber = ChatGPTTranscriber(authManager: FakeChatGPTAuthManager(), config: AppConfig().transcription,
+    let transcriber = ChatGPTTranscriber(authManager: FakeChatGPTAuthManager(), config: legacyAccountConfig().transcription,
         bridgePromptCapability: BridgePromptCapabilityStore(), dataLoader: { request in
             let prefix = String(decoding: (request.httpBody ?? Data()).prefix(4_000), as: UTF8.self)
             #expect(prefix.contains("filename=\"voice.m4a\""))

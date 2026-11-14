@@ -84,6 +84,7 @@ struct TextPolishProviderSelector: Sendable {
         guard config.mode != .disabled else {
             return nil
         }
+        if config.provider == .doubaoIME { return TextPolishProviderSelection(id: .doubaoIME) }
 
         if config.provider == .qwenFlash {
             return qwenKeyAvailable ? TextPolishProviderSelection(id: .qwenFlash) : nil
@@ -231,6 +232,7 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
     let selector: TextPolishProviderSelector
     let dataLoader: @Sendable (URLRequest) async throws -> (Data, URLResponse)
     let reasoningEffort: String
+    let doubaoLoader: DoubaoHTTP.Loader
 
     init(
         config: TextPolishConfig,
@@ -241,9 +243,7 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
         promptBuilder: TextPolishPromptBuilder = .init(),
         selector: TextPolishProviderSelector = .init(),
         reasoningEffort: String = "none",
-        dataLoader: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse) = { request in
-            try await PolishResponseTransport.load(request)
-        }
+        dataLoader: DoubaoHTTP.Loader? = nil
     ) {
         self.config = config
         self.chatGPTAuthProvider = chatGPTAuthProvider
@@ -253,7 +253,8 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
         self.promptBuilder = promptBuilder
         self.selector = selector
         self.reasoningEffort = reasoningEffort
-        self.dataLoader = dataLoader
+        self.dataLoader = dataLoader ?? PolishResponseTransport.load
+        self.doubaoLoader = dataLoader ?? DoubaoHTTP.organize
     }
 
     func polish(
@@ -268,6 +269,9 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
     }
 
     private func polishMeasured(text: String, terminologyEntries: [TerminologyEntry], hintTerms: [String]) async throws -> TextPolishResult {
+        if config.provider == .doubaoIME, config.mode != .disabled {
+            return try await DoubaoTextOrganizer(loader: doubaoLoader).polish(text: text, terminologyEntries: terminologyEntries, hintTerms: hintTerms)
+        }
         guard let selected = selector.selectProvider(
             config: config,
             chatGPTAuthAvailable: chatGPTAuthAvailable,
@@ -292,6 +296,8 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
         )
         let polished: String
         switch selected.id {
+        case .doubaoIME:
+            throw TextPolishError.providerUnavailable
         case .chatGPTAuth:
             guard let chatGPTAuthProvider, Self.isAuditedChatGPTURL(config.chatGPTResponseURL) else {
                 throw TextPolishError.providerUnavailable
@@ -357,7 +363,7 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
             endpoint = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
             body["model"] = "qwen-flash"
             body["enable_thinking"] = false
-        case .chatGPTAuth:
+        case .chatGPTAuth, .doubaoIME:
             throw TextPolishError.providerUnavailable
         }
         var request = URLRequest(url: URL(string: endpoint)!)

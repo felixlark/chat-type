@@ -42,8 +42,15 @@ if [[ -f "$CONFIG" ]] && command -v jq >/dev/null 2>&1; then
   jq -r '[
     "provider=" + (.transcription.provider // "missing"),
     "chatgpt_host=" + ((.transcription.chatGPTURL // "missing") | try capture("https?://(?<host>[^/]+)").host catch "invalid"),
-    "polish_host=" + ((.transcription.textPolish.chatGPTResponseURL // "missing") | try capture("https?://(?<host>[^/]+)").host catch "invalid"),
-    "polish_model=" + (.transcription.textPolish.chatGPTResponseModel // "missing")
+    "polish_provider=" + (.transcription.textPolish.provider // "chatGPTAuth"),
+    "polish_host=" + (if .transcription.textPolish.provider == "doubaoIME" then "ime.doubao.com"
+      elif .transcription.textPolish.provider == "glmFlash" then "open.bigmodel.cn"
+      elif .transcription.textPolish.provider == "qwenFlash" then "dashscope.aliyuncs.com"
+      else ((.transcription.textPolish.chatGPTResponseURL // "missing") | try capture("https?://(?<host>[^/]+)").host catch "invalid") end),
+    "polish_model=" + (if .transcription.textPolish.provider == "doubaoIME" then "server-selected"
+      elif .transcription.textPolish.provider == "glmFlash" then (.transcription.textPolish.glmModel // "glm-4.7-flash")
+      elif .transcription.textPolish.provider == "qwenFlash" then (.transcription.textPolish.qwenModel // "qwen-flash")
+      else (.transcription.textPolish.chatGPTResponseModel // "missing") end)
   ] | .[]' "$CONFIG" 2>/dev/null || echo "config=unreadable"
 else
   echo "config=missing-or-jq-unavailable"

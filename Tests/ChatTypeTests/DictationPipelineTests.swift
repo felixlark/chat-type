@@ -806,7 +806,7 @@ func dictationPipelineRunsTextPolishBetweenNormalizationPasses() async throws {
 }
 
 @Test
-func dictationPipelineFallsBackToNormalizedTextWhenTextPolishFails() async throws {
+func dictationPipelinePreservesStagesAndBlocksOutputWhenTextPolishFails() async throws {
     let pipeline = DictationPipeline(
         transcriber: FakeTranscriber(
             result: TranscriptionResult(
@@ -832,17 +832,19 @@ func dictationPipelineFallsBackToNormalizedTextWhenTextPolishFails() async throw
         durationMs: 2_000
     )
 
-    let result = try await pipeline.prepare(audio: audio)
+    do {
+        _ = try await pipeline.prepare(audio: audio)
+        Issue.record("Incomplete polish must not produce injectable output")
+    } catch let failure as DictationPipelineFailure {
+        #expect(failure.stages.asrText == "请把 chattype 的术语写对。")
+        #expect(failure.stages.polishInput == "请把 ChatType 的术语写对。")
+        #expect(failure.stages.finalText == nil)
+    }
 
-    #expect(result.finalText == "请把 ChatType 的术语写对。")
-    #expect(result.metrics.textPolishAttempted)
-    #expect(result.metrics.textPolishProvider == nil)
-    #expect(result.metrics.textPolishErrorMessage?.isEmpty == false)
-    #expect(result.metrics.polishMs >= 0)
 }
 
 @Test
-func dictationPipelineFallsBackWhenTextPolishSuspiciouslyTruncatesLongInput() async throws {
+func dictationPipelineBlocksOutputWhenTextPolishSuspiciouslyTruncatesLongInput() async throws {
     let transcript = """
     第一点先把 Dictation 和 AI Polish 拆开。第二点 ChatGPT 的 transcribe API 属于 ASR，不要跟二次 rewrite 混在一起。第三点 ChatGPT Auth rewrite 要单独说明。第四点如果后面有新的决定，要以后面的决定为准。
     """
@@ -881,14 +883,16 @@ func dictationPipelineFallsBackWhenTextPolishSuspiciouslyTruncatesLongInput() as
         durationMs: 12_000
     )
 
-    let result = try await pipeline.prepare(audio: audio)
+    do {
+        _ = try await pipeline.prepare(audio: audio)
+        Issue.record("Truncated polish must not produce injectable output")
+    } catch let failure as DictationPipelineFailure {
+        #expect(failure.stages.asrText == transcript)
+        #expect(failure.stages.polishOutput == "先把 Dictation 和 AI Polish 拆开。")
+        #expect(failure.stages.polishOutputs?.count == 2)
+        #expect(failure.stages.finalText == nil)
+    }
 
-    #expect(result.finalText.contains("ChatGPT Auth rewrite"))
-    #expect(result.finalText.contains("以后面的决定为准"))
-    #expect(result.metrics.textPolishAttempted)
-    #expect(result.metrics.textPolishProvider == nil)
-    #expect(result.metrics.textPolishErrorMessage?.contains("truncated") == true)
-    #expect(result.metrics.estimatedPolishInputTokens == 1_500)
 }
 
 @Test
@@ -1172,9 +1176,36 @@ func replacementRunsOnceAtFinalOutputAcrossPolishBranches(branch: String) async 
     let pipeline = DictationPipeline(transcriber: FakeTranscriber(result: TranscriptionResult(text: text,
         metrics: .init(provider: .chatGPTManagedAuth, audioDurationMs: 2_000, audioBytes: 1000, authMs: 0, transcribeMs: 0, promptIncluded: false))),
         normalizer: TerminologyNormalizer(), importedEntries: corrections, hintTerms: [], textPolisher: polisher)
+    if branch == "failure" || branch == "truncated" {
+        do {
+            _ = try await pipeline.prepare(audio: RecordedAudio(fileURL: URL(fileURLWithPath: "/tmp/fake.wav"), durationMs: 2_000))
+            Issue.record("Failed polish must block correction and injection")
+        } catch let failure as DictationPipelineFailure {
+            #expect(failure.stages.finalText == nil)
+            #expect(failure.stages.asrText == text)
+        }
+        return
+    }
     let result = try await pipeline.prepare(audio: RecordedAudio(fileURL: URL(fileURLWithPath: "/tmp/fake.wav"), durationMs: 2_000))
     #expect(result.finalText.hasPrefix("beta"))
     #expect(!result.finalText.contains("gamma"))
     #expect(result.exactReplacementCount == 1)
-    if branch == "truncated" { #expect(result.metrics.textPolishErrorMessage?.contains("truncated") == true) }
+
+}
+
+@Test func aPartialSecondPolishAttemptDoesNotEraseTheFirstOutput() async throws {
+    let raw = String(repeating:"请保留这一条完整要求。",count:12)
+    let polisher = SequencedTextPolisher(results:[
+        .success(TextPolishResult(text:"短句。",provider:.doubaoIME,applied:true,estimatedInputTokens:0,estimatedOutputTokens:0)),
+        .failure(DoubaoOrganizationFailure(partialText:"第二次未完",detail:"流中断"))])
+    let pipeline = DictationPipeline(transcriber:FakeTranscriber(result:TranscriptionResult(text:raw,
+        metrics:.init(provider:.doubaoIME,audioDurationMs:1,audioBytes:1,authMs:0,transcribeMs:0,promptIncluded:false))),
+        normalizer:TerminologyNormalizer(),importedEntries:[],hintTerms:[],textPolisher:polisher)
+    do {
+        _ = try await pipeline.prepare(audio:RecordedAudio(fileURL:URL(fileURLWithPath:"/tmp/not-read.wav"),durationMs:1))
+        Issue.record("Partial polish must not produce a final result")
+    } catch let failure as DictationPipelineFailure {
+        #expect(failure.stages.polishOutputs == ["短句。","第二次未完"])
+        #expect(failure.stages.finalText == nil)
+    }
 }

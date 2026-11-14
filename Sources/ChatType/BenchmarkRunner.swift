@@ -72,15 +72,16 @@ struct BenchmarkRunner {
                         authManager: coldAuthManager,
                         config: config.transcription,
                         usesLocalSpeechForFiles: environment["CHATTYPE_BENCHMARK_LOCAL_ASR"] == "1"
-                    ),
+                    ).selectedRoute,
                     normalizer: TerminologyNormalizer(),
                     importedEntries: config.transcription.activeDictionaryEntries,
                     hintTerms: config.transcription.prioritizedHintTerms,
-                    textPolisher: OpenAICompatibleTextPolisher(
+                    textPolisher: !config.transcription.textPolish.isEnabled ? nil : OpenAICompatibleTextPolisher(
                         config: config.transcription.textPolish,
                         chatGPTAuthProvider: coldAuthManager,
                         chatGPTAuthAvailable: false
-                    )
+                    ), alignmentEnabled: config.transcription.terminologyAlignmentEnabled,
+                    correctionsEnabled: config.transcription.correctionRulesEnabled
                 )
                 let coldStarted = DispatchTime.now().uptimeNanoseconds
                 do {
@@ -113,22 +114,23 @@ struct BenchmarkRunner {
                 }
             }
 
-            await authManager.prewarmSession()
+            if config.transcription.needsChatGPT { await authManager.prewarmSession() }
             for _ in 0..<runs {
                 let warmPipeline = DictationPipeline(
                     transcriber: ChatGPTTranscriber(
                         authManager: authManager,
                         config: config.transcription,
                         usesLocalSpeechForFiles: environment["CHATTYPE_BENCHMARK_LOCAL_ASR"] == "1"
-                    ),
+                    ).selectedRoute,
                     normalizer: TerminologyNormalizer(),
                     importedEntries: config.transcription.activeDictionaryEntries,
                     hintTerms: config.transcription.prioritizedHintTerms,
-                    textPolisher: OpenAICompatibleTextPolisher(
+                    textPolisher: !config.transcription.textPolish.isEnabled ? nil : OpenAICompatibleTextPolisher(
                         config: config.transcription.textPolish,
                         chatGPTAuthProvider: authManager,
-                        chatGPTAuthAvailable: authManager.authSnapshot().state == .ready
-                    )
+                        chatGPTAuthAvailable: config.transcription.needsChatGPT && authManager.authSnapshot().state == .ready
+                    ), alignmentEnabled: config.transcription.terminologyAlignmentEnabled,
+                    correctionsEnabled: config.transcription.correctionRulesEnabled
                 )
                 let warmStarted = DispatchTime.now().uptimeNanoseconds
                 do {
@@ -136,6 +138,10 @@ struct BenchmarkRunner {
                     if environment["CHATTYPE_BENCHMARK_QUALITY"] == "1" {
                         let row: [String: Any] = ["file": fileURL.lastPathComponent,
                             "rawText": warmPrepared.rawText, "finalText": warmPrepared.finalText,
+                            "provider": warmPrepared.metrics.transcription.provider.rawValue,
+                            "polishProvider": warmPrepared.metrics.textPolishProvider?.rawValue ?? "off",
+                            "polishInput": warmPrepared.stages?.polishInput ?? "",
+                            "polishOutput": warmPrepared.stages?.polishOutput ?? "",
                             "asrMs": warmPrepared.metrics.transcription.transcribeMs,
                             "polishMs": warmPrepared.metrics.polishMs,
                             "polishError": warmPrepared.metrics.textPolishErrorMessage ?? "",
@@ -253,7 +259,7 @@ struct BenchmarkRunner {
                     let polisher = OpenAICompatibleTextPolisher(
                         config: polishConfig,
                         chatGPTAuthProvider: authManager,
-                        chatGPTAuthAvailable: authManager.authSnapshot().state == .ready
+                        chatGPTAuthAvailable: config.transcription.needsChatGPT && authManager.authSnapshot().state == .ready
                     )
                     let started = DispatchTime.now().uptimeNanoseconds
                     var row: [String: Any] = ["provider": polishConfig.provider.rawValue, "model": model, "case": fixture.id, "run": run, "scope": "polish-only"]

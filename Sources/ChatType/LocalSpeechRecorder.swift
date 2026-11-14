@@ -43,6 +43,7 @@ final class LocalSpeechRecorder: RecordingControlling {
     private var analyzer: SpeechAnalyzer?
     private var sink: LocalAudioSink?
     private var fileURL: URL?
+    var activeAudioURL: URL? { fileURL }
     private var results: Task<String, Error>?
     private var previewTask: Task<Void, Never>?
     private var previewUnavailable = false
@@ -236,6 +237,7 @@ final class LocalSpeechRecorder: RecordingControlling {
         guard let sink, engine != nil else { return nil }
         let power = sink.power
         health.observe(powerDBFS: power, elapsedSeconds: sink.duration)
+        health.observeCapturedFrames(sink.capturedFrames, now: ProcessInfo.processInfo.systemUptime)
         return WaveformNormalizer.normalizedLevel(fromAveragePower: power)
     }
     func inputInterruptionDetected() -> Bool {
@@ -260,6 +262,7 @@ final class LocalAudioSink: @unchecked Sendable {
     private let diskFormat: AVAudioFormat
     private let continuation: AsyncStream<AnalyzerInput>.Continuation
     private var frameCount: Int64 = 0
+    var capturedFrames: Int64 { lock.withLock { frameCount } }
     private var powerValue: Float = -160
     private var failure: String?
     private var ended = false

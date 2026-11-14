@@ -92,6 +92,7 @@ struct TranscriptionMetrics: Sendable, Equatable {
     var encodingMs: Int = 0
     var uploadedBytes: Int = 0
     var uploadFormat: String = "wav"
+    var protocolRequestID: String? = nil
 }
 
 struct TranscriptionResult: Sendable, Equatable {
@@ -210,6 +211,7 @@ struct ChatGPTTranscriber: Sendable {
         case .noUsableSignal:
             throw TranscriptionError.noUsableAudioSignal
         case .interruptedInput(let capturedSignalSeconds, let silentTailSeconds):
+            if audio.isPartialReplay { break }
             throw TranscriptionError.interruptedAudioInput(
                 capturedSignalSeconds: capturedSignalSeconds,
                 silentTailSeconds: silentTailSeconds
@@ -231,6 +233,9 @@ struct ChatGPTTranscriber: Sendable {
         )
         ProcessingTrace.current?.recordStage("asrPromptBuild", since: promptStarted)
         switch config.provider {
+        case .doubaoIME:
+            // Handled before the account-specific preparation above.
+            throw TranscriptionError.invalidResponse
         case .chatGPTManagedAuth:
             let encodingStarted = DispatchTime.now().uptimeNanoseconds
             let payload = try AudioUploadPreparation().prepare(audio: audio, original: data, mode: uploadMode)
@@ -495,6 +500,20 @@ struct ChatGPTTranscriber: Sendable {
     private func elapsedMilliseconds(since start: UInt64) -> Int {
         Int((DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
     }
+}
+
+/// Keep the account transcriber injectable and account-only. Provider routing is
+/// explicit, so its test transport can never accidentally invoke a real socket.
+struct SelectedRouteTranscriber: Transcriber {
+    let account: ChatGPTTranscriber
+    func transcribe(_ audio: RecordedAudio) async throws -> TranscriptionResult {
+        if account.config.provider == .doubaoIME { return try await DoubaoTranscriber().transcribe(audio) }
+        return try await account.transcribe(audio)
+    }
+}
+
+extension ChatGPTTranscriber {
+    var selectedRoute: SelectedRouteTranscriber { SelectedRouteTranscriber(account: self) }
 }
 
 extension ChatGPTTranscriber: Transcriber {}

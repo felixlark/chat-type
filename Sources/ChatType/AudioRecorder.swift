@@ -9,6 +9,8 @@ struct RecordedAudio: Sendable {
     let durationMs: Int
     var localTranscript: Task<String, Error>? = nil
     var previewText: String = ""
+    var cloudTranscript: Task<TranscriptionResult, Error>? = nil
+    var isPartialReplay: Bool = false
 }
 
 protocol RecordingSessionControlling: AnyObject, Sendable {
@@ -27,12 +29,14 @@ protocol RecordingControlling: AnyObject {
     func cancelRecording() throws
     func currentLevel() -> CGFloat?
     var liveTranscript: String { get }
+    var activeAudioURL: URL? { get }
     func inputInterruptionDetected() -> Bool
 }
 
 extension RecordingControlling {
     func inputInterruptionDetected() -> Bool { false }
     var liveTranscript: String { "" }
+    var activeAudioURL: URL? { nil }
 }
 
 enum MicrophonePermissionState: Sendable {
@@ -87,6 +91,7 @@ final class AudioRecorder: RecordingControlling {
     private let fileManager: FileManager
     private var recorder: (any RecordingSessionControlling)?
     private var fileURL: URL?
+    var activeAudioURL: URL? { fileURL }
     private var inputHealthMonitor = RecordingInputHealthMonitor()
 
     init(
@@ -307,6 +312,10 @@ final class AudioRecorder: RecordingControlling {
             powerDBFS: powerDBFS,
             elapsedSeconds: recorder.currentTime
         )
+        if let fileURL,
+           let bytes = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+            inputHealthMonitor.observeCapturedFrames(Int64(bytes / 2), now: ProcessInfo.processInfo.systemUptime)
+        }
         return WaveformNormalizer.normalizedLevel(
             fromAveragePower: powerDBFS
         )

@@ -11,11 +11,12 @@ private final class FakeCoordinatorRecorder: RecordingControlling {
     var startRecordingError: (any Error)?
     var reportsInputInterruption = false
     var nextAudio = RecordedAudio(
-        fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("fake.wav"),
+        fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).wav"),
         durationMs: 1_000
     )
 
     func startRecording() async throws {
+        if !FileManager.default.fileExists(atPath: nextAudio.fileURL.path) { try Data("test-audio".utf8).write(to: nextAudio.fileURL) }
         await onStartRecording?()
         if let startRecordingError {
             throw startRecordingError
@@ -198,6 +199,7 @@ private final class FakeLatencyRecorder: LatencyRecording, @unchecked Sendable {
 private enum ScriptedCoordinatorPipelineOutcome: Sendable {
     case success(String)
     case retryableCloudflare(Int)
+    case doubaoPartial
 }
 
 private final class CoordinatorPipelineScript: @unchecked Sendable {
@@ -243,6 +245,8 @@ private final class CoordinatorPipelineScript: @unchecked Sendable {
                     normalizationMs: 0
                 )
             )
+        case .doubaoPartial:
+            throw DoubaoTranscriptionFailure(partialText: "前半句", detail: "测试断线", requestID: "request-before-retry", underlyingError: URLError(.networkConnectionLost))
         case .retryableCloudflare(let attempts):
             throw TranscriptionError.retryableCloudflareChallenge(attempts: attempts)
         }
@@ -288,7 +292,7 @@ struct AppCoordinatorCancellationTests {
         let coordinator = AppCoordinator(
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
-            config: AppConfig(),
+            config: legacyAccountConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
@@ -327,7 +331,7 @@ struct AppCoordinatorCancellationTests {
         let coordinator = AppCoordinator(
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
-            config: AppConfig(),
+            config: legacyAccountConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: injector,
             overlay: overlay,
@@ -383,7 +387,7 @@ struct AppCoordinatorCancellationTests {
         let coordinator = AppCoordinator(
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
-            config: AppConfig(),
+            config: legacyAccountConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
@@ -423,7 +427,7 @@ struct AppCoordinatorCancellationTests {
         let coordinator = AppCoordinator(
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
-            config: AppConfig(),
+            config: legacyAccountConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
@@ -463,7 +467,7 @@ struct AppCoordinatorCancellationTests {
         let coordinator = AppCoordinator(
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
-            config: AppConfig(),
+            config: legacyAccountConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
@@ -496,7 +500,7 @@ struct AppCoordinatorCancellationTests {
         let coordinator = AppCoordinator(
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
-            config: AppConfig(),
+            config: legacyAccountConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
@@ -512,11 +516,11 @@ struct AppCoordinatorCancellationTests {
         coordinator.statusMenu = statusMenu
         coordinator.handleHotkeyPress()
         await waitForCoordinatorState(coordinator, toBecome: .recording)
-        await waitForCoordinatorState(coordinator, toBecome: .processing)
+        await waitForCoordinatorState(coordinator, toBecome: .idle)
 
         #expect(recorder.stopRecordingCallCount == 1)
         #expect(overlay.showProcessingCallCount >= 1)
-        #expect(statusMenu.updates.last?.0 == .processing)
+        #expect(statusMenu.updates.last?.0 == .error)
 
         await processingGate.resume()
     }
@@ -535,7 +539,7 @@ struct AppCoordinatorCancellationTests {
         let coordinator = AppCoordinator(
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
-            config: AppConfig(),
+            config: legacyAccountConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
@@ -563,7 +567,7 @@ struct AppCoordinatorCancellationTests {
         let overlay = FakeCoordinatorOverlay()
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
-        var config = AppConfig()
+        var config = legacyAccountConfig()
         config.transcription.feedbackSoundsEnabled = false
         let coordinator = AppCoordinator(
             microphoneAccessRequester: {},
@@ -602,7 +606,7 @@ struct AppCoordinatorCancellationTests {
         let coordinator = AppCoordinator(
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
-            config: AppConfig(),
+            config: legacyAccountConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
@@ -624,7 +628,7 @@ struct AppCoordinatorCancellationTests {
     }
 
     @Test
-    func retryableTranscriptionFailureCopiesAudioAndRetriesSavedRecordingOnce() async throws {
+    func retryableTranscriptionFailureRetainsOneAudioWithSeparateAttempts() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -650,7 +654,7 @@ struct AppCoordinatorCancellationTests {
         let coordinator = AppCoordinator(
             microphoneAccessRequester: {},
             configStore: configStore,
-            config: AppConfig(),
+            config: legacyAccountConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: injector,
             overlay: overlay,
@@ -679,7 +683,8 @@ struct AppCoordinatorCancellationTests {
 
         #expect(script.audioPaths.count == 2)
         #expect(script.policies == [.automatic, .manualRetry])
-        #expect(script.audioPaths[0] == originalAudioURL.path)
+        #expect(script.audioPaths[0] != originalAudioURL.path)
+        #expect(script.audioPaths[1] == script.audioPaths[0])
         #expect(script.audioPaths[1] != originalAudioURL.path)
         #expect(FileManager.default.fileExists(atPath: script.audioPaths[1]) == true)
         #expect(injector.launchContexts == [capturedContext])
@@ -689,18 +694,17 @@ struct AppCoordinatorCancellationTests {
             directoryURL: configStore.directoryURL.appendingPathComponent("Recovery", isDirectory: true)
         )
         let recoveryRecords = try recoveryStore.loadRecent(limit: 10)
-        #expect(recoveryRecords.count == 2)
-        #expect(Set(recoveryRecords.map(\.outcome)) == Set(["error", "pasted"]))
-        #expect(Set(recoveryRecords.map(\.id)).count == 2)
-        let failure = try #require(recoveryRecords.first { $0.outcome == "error" })
-        let success = try #require(recoveryRecords.first { $0.outcome == "pasted" })
-        #expect(failure.errorMessage?.contains("Cloudflare") == true)
+        #expect(recoveryRecords.count == 1)
+        let success = try #require(recoveryRecords.first)
+        #expect(success.outcome == "pasted")
+        #expect(success.attempts?.map(\.outcome) == ["error", "pasted"])
+        #expect(success.attempts?.first?.snapshot.provider == .chatGPTManagedAuth)
         #expect(success.asrText == "retry final")
         for record in recoveryRecords {
             let savedURL = record.audioURL(baseDirectory: configStore.directoryURL.appendingPathComponent("Recovery", isDirectory: true))
             #expect(try Data(contentsOf: savedURL) == Data(contentsOf: originalAudioURL))
         }
-        #expect(RecoveryHistoryPreview.recentItems(from: recoveryRecords, kind: .audio, limit: 10).count == 2)
+        #expect(RecoveryHistoryPreview.recentItems(from: recoveryRecords, kind: .audio, limit: 10).count == 1)
         #expect(
             RecoveryHistoryPreview.recentItems(from: recoveryRecords, kind: .asr, limit: 10).map(\.copyText)
                 == ["retry final"]
@@ -726,7 +730,7 @@ struct AppCoordinatorCancellationTests {
         let coordinator = AppCoordinator(
             microphoneAccessRequester: {},
             configStore: ConfigStore(fileManager: .default, homeDirectoryURL: root),
-            config: AppConfig(),
+            config: legacyAccountConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
@@ -771,7 +775,7 @@ struct AppCoordinatorCancellationTests {
         let coordinator = AppCoordinator(
             microphoneAccessRequester: {},
             configStore: configStore,
-            config: AppConfig(),
+            config: legacyAccountConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: overlay,
@@ -790,7 +794,7 @@ struct AppCoordinatorCancellationTests {
         coordinator.handleHotkeyPress()
         await waitForCondition { overlay.retryableErrors.count == 1 }
 
-        let retryDirectory = configStore.directoryURL.appendingPathComponent("Retry", isDirectory: true)
+        let retryDirectory = configStore.directoryURL.appendingPathComponent("Recovery/Audio", isDirectory: true)
         let savedRetryFiles = (try? FileManager.default.contentsOfDirectory(atPath: retryDirectory.path)) ?? []
         #expect(savedRetryFiles.count == 1)
 
@@ -848,6 +852,7 @@ struct AppCoordinatorCancellationTests {
         let coordinator = AppCoordinator(
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            config: legacyAccountConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: FakeCoordinatorInjector(),
             overlay: FakeCoordinatorOverlay(),
@@ -878,7 +883,7 @@ struct AppCoordinatorCancellationTests {
     let overlay = FakeCoordinatorOverlay()
     let observed = SnapshotConfigCapture()
     let previews = SnapshotConfigCapture()
-    var initial = AppConfig()
+    var initial = legacyAccountConfig()
     initial.transcription.hintTerms = ["pstack", "SmartShadow"]
     let coordinator = AppCoordinator(microphoneAccessRequester: {},
         configStore: ConfigStore(homeDirectoryURL: root), config: initial,
@@ -915,4 +920,90 @@ private struct SnapshotPreviewCapturingPipeline: DictationPreparing {
         captured.append([audio.previewText])
         throw TranscriptionError.retryableCloudflareChallenge(attempts: 1)
     }
+}
+
+private final class CloudCancelFlag: @unchecked Sendable {
+    let lock = NSLock(); private var cancelled = false
+    func mark() { lock.withLock { cancelled = true } }
+    var value: Bool { lock.withLock { cancelled } }
+}
+private struct UnwritableRecovery: RecoveryRecording {
+    let directoryURL = FileManager.default.temporaryDirectory
+    func record(_ input: RecoveryRecordInput) throws { throw CocoaError(.fileWriteNoPermission) }
+    func loadRecent(limit: Int) throws -> [RecoveryRecord] { [] }
+}
+
+@Test @MainActor func independentCloudTaskIsCancelledWhenInitialAuditFails() async throws {
+    let gate = CoordinatorGate(); let cancelled = CloudCancelFlag()
+    let cloud = Task<TranscriptionResult, Error> {
+        try await withTaskCancellationHandler {
+            await gate.wait(); try Task.checkCancellation()
+            return TranscriptionResult(text: "unused", metrics: .init(provider: .doubaoIME, audioDurationMs: 1,
+                audioBytes: 1, authMs: 0, transcribeMs: 0, promptIncluded: false))
+        } onCancel: { cancelled.mark() }
+    }
+    let recorder = FakeCoordinatorRecorder(); recorder.nextAudio.cloudTranscript = cloud
+    let overlay = FakeCoordinatorOverlay(); let menu = FakeCoordinatorStatusMenu(); let injector = FakeCoordinatorInjector()
+    let script = CoordinatorPipelineScript(outcomes: [.success("must not run")])
+    let coordinator = AppCoordinator(microphoneAccessRequester: {}, config: legacyAccountConfig(),
+        notifier: FakeCoordinatorNotifier(), injector: injector, overlay: overlay, authManager: FakeChatGPTAuthManager(),
+        latencyRecorder: FakeLatencyRecorder(), historyRecorder: FakeCoordinatorHistoryRecorder(),
+        recoveryRecorder: UnwritableRecovery(), soundFeedback: FakeSoundFeedback(), recorderFactory: { _ in recorder },
+        statusMenuFactory: { _,_,_ in menu }, pipelineFactory: { _,_,p in script.makePipeline(policy:p) })
+    coordinator.statusMenu = menu
+    coordinator.handleHotkeyPress(); await waitForCoordinatorState(coordinator,toBecome:.recording)
+    coordinator.handleHotkeyPress()
+    await waitForCondition { cancelled.value }
+    #expect(cancelled.value); #expect(script.audioPaths.isEmpty); #expect(injector.injectCallCount == 0)
+    await gate.resume(); _ = try? await cloud.value
+}
+
+@Test @MainActor func cancelBeforeProcessingTaskStartsClosesIndependentCloudTask() async throws {
+    let gate = CoordinatorGate(); let cancelled = CloudCancelFlag()
+    let cloud = Task<TranscriptionResult, Error> {
+        try await withTaskCancellationHandler {
+            await gate.wait(); try Task.checkCancellation()
+            return TranscriptionResult(text: "unused", metrics: .init(provider: .doubaoIME, audioDurationMs: 1,
+                audioBytes: 1, authMs: 0, transcribeMs: 0, promptIncluded: false))
+        } onCancel: { cancelled.mark() }
+    }
+    let recorder = FakeCoordinatorRecorder(); recorder.nextAudio.cloudTranscript = cloud
+    let overlay = FakeCoordinatorOverlay(); let menu = FakeCoordinatorStatusMenu(); let injector = FakeCoordinatorInjector()
+    let script = CoordinatorPipelineScript(outcomes: [.success("must not run")])
+    let coordinator = AppCoordinator(microphoneAccessRequester: {}, config: legacyAccountConfig(),
+        notifier: FakeCoordinatorNotifier(), injector: injector, overlay: overlay, authManager: FakeChatGPTAuthManager(),
+        latencyRecorder: FakeLatencyRecorder(), historyRecorder: FakeCoordinatorHistoryRecorder(),
+        soundFeedback: FakeSoundFeedback(), recorderFactory: { _ in recorder }, statusMenuFactory: { _,_,_ in menu },
+        pipelineFactory: { _,_,p in script.makePipeline(policy:p) })
+    coordinator.statusMenu = menu
+    coordinator.handleHotkeyPress(); await waitForCoordinatorState(coordinator,toBecome:.recording)
+    overlay.onShowProcessing = { coordinator.cancelCurrentSession() }
+    coordinator.handleHotkeyPress()
+    await waitForCondition { cancelled.value }
+    #expect(cancelled.value); #expect(script.audioPaths.isEmpty); #expect(injector.injectCallCount == 0)
+    await gate.resume(); _ = try? await cloud.value
+}
+
+@Test @MainActor func failedPartialAsrAndErrorRemainAfterSuccessfulRetry() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = RecoveryStore(directoryURL:root.appendingPathComponent("Recovery"))
+    defer { try? FileManager.default.removeItem(at:root) }
+    let recorder = FakeCoordinatorRecorder(); let overlay = FakeCoordinatorOverlay(); let menu = FakeCoordinatorStatusMenu()
+    let injector = FakeCoordinatorInjector(); let script = CoordinatorPipelineScript(outcomes:[.doubaoPartial,.success("完整结果")])
+    let coordinator = AppCoordinator(microphoneAccessRequester:{}, config:AppConfig(), notifier:FakeCoordinatorNotifier(),
+        injector:injector, overlay:overlay, authManager:FakeChatGPTAuthManager(), latencyRecorder:FakeLatencyRecorder(),
+        historyRecorder:FakeCoordinatorHistoryRecorder(), recoveryRecorder:store, soundFeedback:FakeSoundFeedback(),
+        recorderFactory:{_ in recorder}, statusMenuFactory:{_,_,_ in menu}, pipelineFactory:{_,_,p in script.makePipeline(policy:p)})
+    coordinator.statusMenu = menu
+    coordinator.handleHotkeyPress(); await waitForCoordinatorState(coordinator,toBecome:.recording)
+    coordinator.handleHotkeyPress(); await waitForCondition { overlay.retryableErrors.count == 1 }
+    coordinator.config.transcription.provider = .chatGPTManagedAuth
+    overlay.onRetry?(); await waitForCondition { injector.injectCallCount == 1 }
+    let record = try #require(store.loadRecent(limit:10).last)
+    #expect(record.attempts?.count == 2)
+    #expect(record.attempts?.first?.stages.asrPartialText == "前半句")
+    #expect(record.attempts?.first?.stages.error?.contains("测试断线") == true)
+    #expect(record.attempts?.first?.stages.asrRequestID == "request-before-retry")
+    #expect(record.attempts?.map(\.snapshot.provider) == [.doubaoIME,.doubaoIME])
+    #expect(record.audioSHA256 != nil)
 }

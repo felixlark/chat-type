@@ -44,8 +44,9 @@ private final class RequestCapture: @unchecked Sendable {
 }
 
 @Test
-func defaultTextPolishConfigUsesOnlyChatGPTAuthAndDoesNotEncodeKeys() throws {
+func defaultTextPolishConfigUsesDoubaoAndDoesNotEncodeKeys() throws {
     let config = AppConfig()
+    #expect(config.transcription.textPolish.provider == .doubaoIME)
 
     #expect(config.transcription.textPolish.mode == .automaticWhenKeyAvailable)
     #expect(config.transcription.textPolish.chatGPTAuthEnabled)

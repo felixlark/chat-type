@@ -5,7 +5,7 @@ import Testing
 @Test
 func preflightRequiresChatGPTLoginForChatTypeDefaults() {
     let issues = RuntimePreflight.issues(
-        for: AppConfig(),
+        for: legacyAccountConfig(),
         environment: [:],
         authSnapshotProvider: {
             ChatGPTAuthSnapshot(state: .signedOut, detail: "", userEmail: nil)
@@ -18,7 +18,7 @@ func preflightRequiresChatGPTLoginForChatTypeDefaults() {
 @Test
 func preflightFlagsExpiredChatGPTSession() {
     let issues = RuntimePreflight.issues(
-        for: AppConfig(),
+        for: legacyAccountConfig(),
         environment: [:],
         authSnapshotProvider: {
             ChatGPTAuthSnapshot(state: .expired, detail: "expired", userEmail: "user@example.com")
@@ -30,7 +30,7 @@ func preflightFlagsExpiredChatGPTSession() {
 
 @Test
 func preflightRequiresOpenAIKeyInRecoveryMode() {
-    var config = AppConfig()
+    var config = legacyAccountConfig()
     config.transcription.provider = .openAICompatible
 
     let issues = RuntimePreflight.issues(for: config, environment: [:])
@@ -40,8 +40,9 @@ func preflightRequiresOpenAIKeyInRecoveryMode() {
 
 @Test
 func legacyCleanupConfigDoesNotAddDesktopHostRequirementToRecoveryMode() {
-    var config = AppConfig()
+    var config = legacyAccountConfig()
     config.transcription.provider = .openAICompatible
+    config.transcription.textPolish.mode = .disabled
 
     let issues = RuntimePreflight.issues(
         for: config,

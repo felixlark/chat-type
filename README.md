@@ -2,7 +2,7 @@
 
 [中文说明](README.zh-CN.md)
 
-`ChatType` is a native macOS dictation app for people who want the fastest possible `F5 -> speak -> paste` workflow with ChatGPT on the same Mac.
+`ChatType` is a native macOS dictation app for people who want the fastest possible `F5 -> speak -> paste` workflow on the same Mac, with independently selected recognition and polish services.
 
 Public landing page: [longbiao.crowdsensing.cn/chat-type](https://longbiao.crowdsensing.cn/chat-type/)
 
@@ -10,30 +10,24 @@ It is intentionally opinionated:
 
 - global `F5` hotkey
 - native menu bar app
-- ChatGPT connection through the default browser OAuth flow with app-owned local session storage
-- on-device live preview on macOS 26+, complete-audio transcription through the original ChatGPT account, then terminology alignment and optional whole-transcript polish
+- fresh configurations default to Doubao IME recognition and text organization
+- independently selectable live preview, ASR, terminology alignment, polish, corrections and paste/clipboard stages in Dictation
+- preserved ChatGPT route: app-owned browser OAuth, on-device preview on macOS 26+, complete-audio account transcription and optional whole-transcript polish
 - conservative paste behavior: only paste when an editable target is detected
 - clipboard fallback when paste is not safe, with the latest transcript kept available for manual `Cmd+V`
 - Apple Contacts and WeChat name import with conservative name/affiliation splitting and position removal, plus custom replacements for stronger post-STT alignment
-- ChatGPT Auth polish by default, with optional GLM-4.7-Flash or Qwen Flash polish and independent API keys stored in Keychain
+- Doubao or ChatGPT polish can be mixed with either ASR route; optional GLM-4.7-Flash and Qwen Flash retain independent Keychain API keys
+- raw audio and per-attempt stage evidence stay in private local history; failures preserve work for explicit Retry
 - optional advanced recovery route for OpenAI-compatible APIs
 
 
-Qwen Flash is also available as an optional Beijing polish route. In the local paired test it was faster, but changed or omitted requirements, so ChatGPT remains selected. See the [Qwen acceptance record](docs/qwen-flash-polish-2026-11-10.md).
+## Current local candidate
 
-## Product Promise
+Version 0.6.0 (126) adds Doubao as the fresh-config default. Existing saved routes are preserved; use Dictation to select Doubao explicitly. Each recording freezes its route choices, and Retry keeps those choices. A failed cloud stage never silently switches providers or pastes partial text.
 
-- No extra dictation subscription
-- No API key required for the normal ASR path
-- Optional ChatGPT Auth text polish when you want long dictation rewritten into concise plans
-- System-managed speech assets on macOS 26+, without manual third-party model tuning
-- Install once, connect ChatGPT through the default browser, press `F5`, speak, and get text back
+Doubao uses private IME settings, streaming ASR and text-organization endpoints. Configuration credentials are stored only in the app's Keychain; no browser Cookies or installed IME credentials are exported. These endpoints may change or be rate-limited; successful testing does not establish a billing guarantee. Audio leaves this Mac for the selected ASR service, and text leaves for the selected polish service. Local terminology alignment remains available; cloud hotword support has not been established.
 
-## Current Status
-
-Local iteration 108 adds a bottom multiline preview, transcript scrolling, stable manual placement, and terminal auto-hide. Optional GLM polish sends the full transcript and relevant glossary terms to BigModel while keeping audio local. The free model can be rate-limited; failures retain the existing normalized-transcript fallback. The local paired test found GLM slower and rate-limited, so ChatGPT remains the selected default; see the [iteration record](docs/iteration-108.md).
-
-`ChatType` `v0.5.1` is the current public release. `./scripts/package_app.sh` expects a stable local signing identity and emits a locally signed, non-notarized `.app` plus GitHub release `.zip` and `.dmg` artifacts.
+The preserved ChatGPT route requires ChatType's ChatGPT login. Advanced compatible ASR and optional GLM/Qwen polish keep their own credential and billing requirements. Historical comparisons, including [Qwen acceptance](docs/qwen-flash-polish-2026-11-10.md), describe their tested versions rather than this candidate's default. See the [implementation and verification record](docs/doubao-implementation-2026-11-14.md).
 
 ## How It Works
 
@@ -46,9 +40,9 @@ Local iteration 108 adds a bottom multiline preview, transcript scrolling, stabl
 7. If `ChatType` still does not appear there, click `+` in Accessibility and add `/Applications/ChatType.app`
 8. Put the cursor in Notes, Mail, Slack, Codex, or another editable target
 9. Press `F5`, speak, press `F5` again
-10. `ChatType` uses its own ChatGPT session and private ChatGPT transcription path
+10. `ChatType` uses the recognition service selected in Dictation; fresh configurations select Doubao
 11. Optional: import Apple Contacts or WeChat names from Smart Shadow's decrypted contacts in Settings; Chinese `name + affiliation` remarks are stored as separate terms
-12. Optional: enable ChatGPT Auth text polish in Settings. It uses ChatType's stored ChatGPT session and does not require a separate polish API key
+12. Select polish independently in Dictation; ChatGPT polish uses ChatType's stored ChatGPT session
 13. `ChatType` applies terminology alignment, optional AI polish, and a final protective normalization pass
 14. The result is pasted into the focused app only when an editable target is detected; otherwise it is left in the clipboard for manual `Cmd+V`
 15. Chinese output defaults to Simplified Chinese unless the original speech clearly asks for Traditional Chinese
@@ -128,11 +122,11 @@ macOS Text Replacement shortcuts are kept separate from dictation. Previously im
 
 `v0.5.x` adds an optional post-ASR rewrite engine for long dictation. It is designed for agent-facing prompts: remove filler words, keep later corrections as the final intent, preserve glossary casing, and turn long speech into concise plan-like bullets when useful.
 
-Account is the single home for transcription and text-polish services, credentials and models. Dictation shows the voice → recognition → alignment → text polish → correction → paste flow. Settings contains login items, permissions and clipboard behavior.
+Account manages credentials and service presets. Dictation exposes independent controls along the voice → recognition → alignment → text polish → correction → paste flow. Settings contains login items, permissions and clipboard behavior.
 
-The polish path has its own provider selection. ChatGPT Auth uses the ChatType-managed login and its private account backend. The optional GLM-4.7-Flash and Qwen Flash routes use fixed BigModel and Beijing DashScope endpoints with independent standard API keys in Keychain. Qwen Flash disables thinking and uses eligible account quota before usage billing; audio follows the selected Dictation route. Settings shows credential readiness; changing providers takes effect for the next recording. Both routes retain the same whole-transcript prompt, terminology protection, and safe fallback.
+The polish path has its own provider selection. ChatGPT Auth uses the ChatType-managed login and its private account backend. The optional GLM-4.7-Flash and Qwen Flash routes use fixed BigModel and Beijing DashScope endpoints with independent standard API keys in Keychain. Qwen Flash disables thinking and uses eligible account quota before usage billing; audio follows the selected Dictation route. Settings shows credential readiness; changing providers takes effect for the next recording. GLM and Qwen retain the same whole-transcript prompt and terminology protection. Processing failures preserve the recording and stage evidence for explicit Retry instead of pasting a partial fallback.
 
-Current `main` keeps large dictionaries out of the hot path by indexing entries and matching only transcript-relevant candidates. AI Polish uses `gpt-5.6-terra` with reasoning disabled, a shorter outcome-first prompt, and a glossary clipped to terms actually present in the normalized transcript.
+The application keeps large dictionaries out of the hot path by indexing entries and matching only transcript-relevant candidates. AI Polish uses `gpt-5.6-terra` with reasoning disabled, a shorter outcome-first prompt, and a glossary clipped to terms actually present in the normalized transcript.
 
 `v0.5.1` fixes the AI Polish request shape for the current ChatGPT-backed Codex Responses endpoint and makes Settings show polish attempts, successes, and failures instead of hiding backend failures.
 
@@ -191,7 +185,7 @@ Advanced terminology options:
 
 ## Risks And Boundaries
 
-`ChatType` V1 deliberately depends on a private backend path plus a ChatType-managed local ChatGPT session.
+Both Doubao and the preserved ChatGPT route depend on private backends. ChatGPT uses an app-managed local session; Doubao configuration credentials are independently obtained and stored in the app's Keychain.
 
 That means:
 

@@ -82,6 +82,12 @@ rm -rf "$DMG_STAGING_DIR"
 rm -rf "$ICONSET_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$RESOURCES_DIR"
 
+OPUS_PREFIX="$(bash "$ROOT/scripts/build_opus.sh")"
+mkdir -p "$APP_DIR/Contents/Frameworks" "$RESOURCES_DIR/Licenses"
+cp "$OPUS_PREFIX/lib/libopus.0.dylib" "$APP_DIR/Contents/Frameworks/libopus.0.dylib"
+/usr/bin/install_name_tool -id '@rpath/libopus.0.dylib' "$APP_DIR/Contents/Frameworks/libopus.0.dylib"
+cp "$OPUS_PREFIX/share/licenses/opus/COPYING" "$RESOURCES_DIR/Licenses/Opus-COPYING.txt"
+
 swift build -c release --package-path "$ROOT" --scratch-path "$BUILD_SCRATCH_DIR" --cache-path "$HOME/Library/Caches/chat-type/swiftpm-cache"
 cp "$BUILD_DIR/$APP_NAME" "$EXECUTABLE"
 chmod +x "$EXECUTABLE"
@@ -121,7 +127,7 @@ swift "$ROOT/scripts/render_app_icon.swift" "$ICONSET_DIR"
   printf '%s\n' '  <key>LSUIElement</key>'
   printf '%s\n' '  <true/>'
   printf '%s\n' '  <key>NSMicrophoneUsageDescription</key>'
-  printf '%s\n' '  <string>ChatType records short dictation clips and sends them through its own ChatGPT account session.</string>'
+  printf '%s\n' '  <string>ChatType saves your dictation on this Mac and sends audio to the recognition service you select, including Doubao IME or your ChatGPT account.</string>'
   printf '%s\n' '  <key>NSContactsUsageDescription</key>'
   printf '%s\n' '  <string>ChatType imports contact names and nicknames into your local vocabulary. Relevant names may accompany dictation sent to your selected transcription and polish services.</string>'
   printf '%s\n' '  <key>NSPrincipalClass</key>'
@@ -162,6 +168,7 @@ fi
 # Files copied from synced or Finder-managed locations can carry metadata that
 # codesign rejects as resource-fork detritus. Strip it only from the fresh bundle.
 /usr/bin/xattr -cr "$APP_DIR"
+/usr/bin/codesign --force --sign "${SIGNING_IDENTITY:--}" --options runtime --timestamp "$APP_DIR/Contents/Frameworks/libopus.0.dylib" >/dev/null
 /usr/bin/codesign "${CODESIGN_ARGS[@]}" "$APP_DIR" >/dev/null
 /usr/bin/codesign --verify --deep --strict "$APP_DIR"
 /usr/bin/ditto --noextattr --noqtn "$APP_DIR" "$DIST_APP_DIR"

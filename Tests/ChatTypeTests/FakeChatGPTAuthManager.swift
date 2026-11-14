@@ -57,3 +57,10 @@ final class FakeChatGPTAuthManager: ChatGPTAuthProviding, @unchecked Sendable {
         return try result.get()
     }
 }
+
+func legacyAccountConfig() -> AppConfig {
+    var config = AppConfig()
+    config.transcription.provider = .chatGPTManagedAuth
+    config.transcription.textPolish.provider = .chatGPTAuth
+    return config
+}
