@@ -9,12 +9,29 @@ final class PreferencesDraft: ObservableObject {
     @Published var message = "选择完成后可直接按 F5；正在处理的录音保持原路线。"
     @Published var isError = false
     private var applied: AppConfig
+    private let hasPolishCredential: @MainActor (TextPolishProviderID) -> Bool
 
-    init(config: AppConfig) { self.config = config; applied = config }
+    init(config: AppConfig, hasPolishCredential: (@MainActor (TextPolishProviderID) -> Bool)? = nil) {
+        self.config = config; applied = config; self.hasPolishCredential = hasPolishCredential ?? Self.keyIsPresent
+    }
+
+    private static func keyIsPresent(_ provider: TextPolishProviderID) -> Bool {
+        switch provider {
+        case .qwenFlash: return KeychainQwenKeyStore().contains()
+        case .glmFlash: return KeychainGLMKeyStore().contains()
+        default: return true
+        }
+    }
     var hasChanges: Bool { config != applied }
 
     func apply(using save: (AppConfig) -> Result<Void, any Error>) -> Result<Void, any Error> {
-        let result: Result<Void, any Error> = hasChanges ? save(config) : .success(())
+        let polish = config.transcription.textPolish
+        let result: Result<Void, any Error>
+        if polish.isEnabled, [.qwenFlash, .glmFlash].contains(polish.provider), !hasPolishCredential(polish.provider) {
+            result = .failure(PolishCredentialRequired(provider: polish.provider))
+        } else {
+            result = hasChanges ? save(config) : .success(())
+        }
         switch result {
         case .success:
             applied = config
@@ -25,4 +42,10 @@ final class PreferencesDraft: ObservableObject {
         }
         return result
     }
+}
+
+
+private struct PolishCredentialRequired: LocalizedError {
+    let provider: TextPolishProviderID
+    var errorDescription: String? { "请先在 Dictation 的 Polish 阶段保存 \(provider.title) API Key，或关闭润色；当前选择尚未应用。" }
 }

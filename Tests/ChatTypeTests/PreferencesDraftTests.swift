@@ -19,3 +19,22 @@ import Foundation
     #expect(writes == 2)
     #expect(original.transcription.provider == .doubaoIME)
 }
+
+
+@Test(arguments: [TextPolishProviderID.qwenFlash, .glmFlash]) @MainActor
+func missingPolishKeyRejectsDirtyAndAlreadySavedFlowBeforeSaving(provider: TextPolishProviderID) {
+    var original = AppConfig(); original.transcription.textPolish.provider = provider
+    var writes = 0, checks = 0
+    let draft = PreferencesDraft(config: original, hasPolishCredential: { requested in
+        #expect(requested == provider); checks += 1; return false
+    })
+    // An unchanged saved selection must also be checked (the key may have been removed).
+    #expect(!draft.hasChanges)
+    if case .success = draft.apply(using: { _ in writes += 1; return .success(()) }) { Issue.record("Missing key accepted") }
+    draft.config.transcription.provider = .chatGPTManagedAuth
+    if case .success = draft.apply(using: { _ in writes += 1; return .success(()) }) { Issue.record("Dirty missing key accepted") }
+    #expect(writes == 0 && checks == 2 && draft.hasChanges && draft.isError)
+    draft.config.transcription.textPolish.setEnabled(false)
+    _ = draft.apply { _ in writes += 1; return .success(()) }
+    #expect(writes == 1 && !draft.hasChanges)
+}

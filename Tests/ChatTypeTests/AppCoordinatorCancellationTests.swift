@@ -1131,3 +1131,29 @@ func currentFlowReplayRequiresEveryApplicableSavedAudioDecision(source: String) 
     #expect(!draft.hasChanges)
     await waitForCoordinatorState(coordinator, toBecome: .idle)
 }
+
+
+@Test(arguments: [TextPolishProviderID.qwenFlash, .glmFlash]) @MainActor
+func missingPolishCredentialPreventsBothAutomaticApplyEntryPoints(provider: TextPolishProviderID) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = RecoveryStore(directoryURL: root.appendingPathComponent("Recovery"))
+    let url = try store.beginRecording(); try Data("original".utf8).write(to: url)
+    try store.record(.init(timestamp: Date(), sourceAudioURL: url, durationMs: 100, asrText: nil, polishText: nil,
+        appName: nil, appBundleIdentifier: nil, outcome: "error", errorMessage: nil, snapshot: AppConfig().transcription, attemptID: UUID()))
+    let record = try #require(store.loadRecent().first)
+    let configStore = ConfigStore(homeDirectoryURL: root); let original = AppConfig(); try configStore.save(original)
+    let script = CoordinatorPipelineScript(outcomes: [])
+    let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: configStore, config: original,
+        notifier: FakeCoordinatorNotifier(), injector: FakeCoordinatorInjector(), overlay: FakeCoordinatorOverlay(),
+        authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(), historyRecorder: FakeCoordinatorHistoryRecorder(),
+        recoveryRecorder: store, soundFeedback: FakeSoundFeedback(), recorderFactory: { _ in FakeCoordinatorRecorder() },
+        statusMenuFactory: { _,_,_ in FakeCoordinatorStatusMenu() }, pipelineFactory: { _,_,p in script.makePipeline(policy:p) })
+    let draft = PreferencesDraft(config: original, hasPolishCredential: { _ in false })
+    draft.config.transcription.textPolish.selectProvider(provider); coordinator.preferencesDraft = draft
+    coordinator.handleHotkeyPress(); coordinator.reprocessRecoveryRecord(record)
+    #expect(coordinator.state == .idle && script.policies.isEmpty)
+    #expect(try configStore.load() == original)
+    #expect(try store.loadRecent().first?.attempts?.count == 1)
+    #expect(draft.hasChanges && draft.isError)
+}

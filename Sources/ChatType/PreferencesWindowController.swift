@@ -347,18 +347,6 @@ private struct PreferencesView: View {
                     Text(saveMessage).font(.caption).foregroundStyle(saveIsError ? .red : .secondary)
                         .lineLimit(2)
                     Button("Save Settings") {
-                        if config.transcription.textPolish.mode != .disabled {
-                            if config.transcription.textPolish.provider == .qwenFlash && !qwenKeyStore.contains() {
-                                selectedSection = .dictation
-                                saveMessage = "在 Dictation 的 Polish 阶段保存 Qwen Key，或关闭润色。"
-                                saveIsError = true; return
-                            }
-                            if config.transcription.textPolish.provider == .glmFlash && !glmKeyStore.contains() {
-                                selectedSection = .dictation
-                                saveMessage = "在 Dictation 的 Polish 阶段保存 GLM Key，或关闭润色。"
-                                saveIsError = true; return
-                            }
-                        }
                         _ = draft.apply(using: onSave)
                     }
                     .keyboardShortcut(.defaultAction)

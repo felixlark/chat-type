@@ -490,7 +490,8 @@ final class AppCoordinator {
 
     private func applyPendingPreferences() -> Bool {
         guard state == .idle else { return false }
-        guard let preferencesDraft else { return true }
+        if preferencesDraft == nil { preferencesDraft = PreferencesDraft(config: config) }
+        guard let preferencesDraft else { return false }
         if case .failure(let error) = preferencesDraft.apply(using: savePreferences) {
             let message = "设置未能应用，未开始新的处理。\(error.localizedDescription)"
             if pendingRetry != nil { overlay.showRetryableError(message) } else { overlay.showError(message) }
