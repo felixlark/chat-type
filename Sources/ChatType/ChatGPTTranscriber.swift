@@ -94,6 +94,9 @@ struct TranscriptionMetrics: Sendable, Equatable {
     var uploadFormat: String = "wav"
     var protocolRequestID: String? = nil
     var protocolSessions: [DoubaoSessionAttempt]? = nil
+    // Client completion timings; neither proves server audio receipt.
+    var liveFinishToLastSendMs: Int? = nil
+    var sessionFinishWaitMs: Int? = nil
 }
 
 struct TranscriptionResult: Sendable, Equatable {

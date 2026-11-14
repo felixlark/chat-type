@@ -502,6 +502,8 @@ final class AppCoordinator {
             var pipeline = self.pipelineFactory(transcriptionConfig, self.authManager, attemptPolicy)
             let store = self.recoveryRecorder
             let audit: @Sendable (DictationStageAudit) throws -> Void = { stages in
+                let auditStarted = ProcessingTiming.now()
+                defer { ProcessingTrace.current?.recordStage("recoveryAudit", since: auditStarted) }
                 try Task.checkCancellation()
                 var stages = stages
                 stages.partialAudio = audio.isPartialReplay
@@ -1144,7 +1146,9 @@ final class AppCoordinator {
             uploadedAudioBytes: prepared.metrics.transcription.uploadedBytes,
             uploadEncodingMs: prepared.metrics.transcription.encodingMs,
             uploadAudioFormat: prepared.metrics.transcription.uploadFormat,
-            processingTiming: prepared.metrics.timing
+            processingTiming: prepared.metrics.timing,
+            liveFinishToLastSendMs: prepared.metrics.transcription.liveFinishToLastSendMs,
+            sessionFinishWaitMs: prepared.metrics.transcription.sessionFinishWaitMs
         )
         try? latencyRecorder.record(sample)
     }

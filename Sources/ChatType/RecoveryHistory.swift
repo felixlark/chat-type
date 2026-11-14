@@ -1,6 +1,16 @@
 import Foundation
 import Darwin
 import CryptoKit
+import OSLog
+
+struct RecoveryWriteStats: Codable, Sendable {
+    var recordCalls = 0
+    var recordMilliseconds: Double = 0
+    var journalWrites = 0
+    var journalBytes = 0
+    var snapshotWrites = 0
+    var snapshotBytes = 0
+}
 
 struct RecoveryRecordInput: Sendable {
     let timestamp: Date
@@ -167,11 +177,18 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
     private let fileManager: FileManager
     let directoryURL: URL
     private let lock = NSLock()
+    private let snapshots: RecoverySnapshots
+    private var writeStats = RecoveryWriteStats()
+    private var unreadableJournals = 0
+    private let logger = Logger(subsystem: "me.longbiaochen.chattype", category: "Recovery")
 
-    init(fileManager: FileManager = .default, directoryURL: URL? = nil, retainedLimit: Int = 10) {
+    init(fileManager: FileManager = .default, directoryURL: URL? = nil, retainedLimit: Int = 10,
+         snapshotSynchronizer: ((URL) throws -> Void)? = nil) {
         self.fileManager = fileManager
         self.directoryURL = directoryURL ?? fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/ChatType/Recovery", isDirectory: true)
+        snapshots = RecoverySnapshots(directory: self.directoryURL.appendingPathComponent("Snapshots", isDirectory: true),
+                                      fileManager: fileManager, synchronizeSnapshot: snapshotSynchronizer)
         // Kept for source compatibility; retention is now independent of display limits.
         _ = retainedLimit
     }
@@ -209,16 +226,19 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
     }
 
     func record(_ input: RecoveryRecordInput) throws {
+        let started = ProcessingTiming.now()
         lock.lock()
-        defer { lock.unlock() }
+        defer {
+            writeStats.recordCalls += 1
+            writeStats.recordMilliseconds += ProcessingTiming.milliseconds(since: started)
+            lock.unlock()
+        }
         try prepareDirectories()
         let ownedID = input.sourceAudioURL.deletingLastPathComponent().standardizedFileURL == audioDirectoryURL.standardizedFileURL
             ? UUID(uuidString: input.sourceAudioURL.deletingPathExtension().lastPathComponent) : nil
         let previous: RecoveryRecord?
         if let ownedID, fileManager.fileExists(atPath: journalDirectoryURL.appendingPathComponent("\(ownedID.uuidString).json").path) {
-            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-            previous = try decoder.decode(RecoveryRecord.self,
-                from: Data(contentsOf: journalDirectoryURL.appendingPathComponent("\(ownedID.uuidString).json")))
+            previous = try readJournal(journalDirectoryURL.appendingPathComponent("\(ownedID.uuidString).json"), expectedID: ownedID)
         } else { previous = try loadAllUnlocked().first { $0.id == ownedID } }
         let id = ownedID ?? UUID()
         let audioFileName = "\(id.uuidString).wav"
@@ -271,9 +291,8 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
               audioURL.deletingLastPathComponent().standardizedFileURL == audioDirectoryURL.standardizedFileURL else {
             throw RecorderError.recordingStorageFailed("识别会话没有对应的原声归档。")
         }
-        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let url = journalDirectoryURL.appendingPathComponent("\(id).json")
-        var record = try decoder.decode(RecoveryRecord.self, from: Data(contentsOf: url))
+        var record = try readJournal(url, expectedID: UUID(uuidString: id))
         guard let position = record.attempts?.firstIndex(where: { $0.id == attemptID }) else {
             throw RecorderError.recordingStorageFailed("识别会话没有对应的处理记录。")
         }
@@ -321,7 +340,11 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
         defer { lock.unlock() }
         try prepareDirectories()
         let records = try loadAllUnlocked()
-        let ids = Set(records.map(\.id))
+        // A present but damaged journal is authoritative. Never mistake its WAV
+        // for an orphan or overwrite the original audit with a synthetic record.
+        let journalIDs = try Set(fileManager.contentsOfDirectory(at: journalDirectoryURL, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "json" }.compactMap { UUID(uuidString: $0.deletingPathExtension().lastPathComponent) })
+        let ids = Set(records.map(\.id)).union(journalIDs)
         var interrupted = records.filter { ["recording", "recorded", "processing", "readyToInject"].contains($0.outcome) }
         // A crash between file creation and journal creation must not hide the audio.
         for url in try fileManager.contentsOfDirectory(at: audioDirectoryURL, includingPropertiesForKeys: [.creationDateKey])
@@ -369,27 +392,68 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
                 }
             }
         }
+        var unreadable = 0
         if fileManager.fileExists(atPath: journalDirectoryURL.path) {
             for url in try fileManager.contentsOfDirectory(at: journalDirectoryURL, includingPropertiesForKeys: nil)
                 where url.pathExtension == "json" {
-                // An unreadable journal must not cause unrelated recordings to be removed.
-                if let data = try? Data(contentsOf: url), let record = try? decoder.decode(RecoveryRecord.self, from: data) {
+                guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else { continue }
+                // Suppress even a same-ID legacy index entry when the newer
+                // authoritative journal cannot be decoded or hydrated.
+                records.removeValue(forKey: id)
+                if let record = try? readJournal(url, expectedID: id) {
                     records[record.id] = record
-                }
+                } else { unreadable += 1 }
             }
+        }
+        if unreadable != unreadableJournals {
+            unreadableJournals = unreadable
+            if unreadable > 0 { logger.error("\(unreadable, privacy: .public) recovery journal(s) could not be read; original files retained, no fallback or orphan replacement.") }
         }
         return Array(records.values)
     }
 
+    private func readJournal(_ url: URL, expectedID: UUID?) throws -> RecoveryRecord {
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        var record = try decoder.decode(RecoveryRecord.self, from: Data(contentsOf: url))
+        guard record.id == expectedID else { throw RecoverySnapshotError.invalidReference }
+        let storedAttempts = record.attempts ?? []
+        if let top = record.snapshot, RecoverySnapshots.hasReference(top) {
+            guard let owner = storedAttempts.last(where: { $0.snapshot.terminology.lastImportedSource == top.terminology.lastImportedSource }) else {
+                throw RecoverySnapshotError.invalidReference
+            }
+            record.snapshot = try snapshots.restore(top, attemptID: owner.id)
+        }
+        record.attempts = try record.attempts?.map { attempt in
+            var a = attempt; a.snapshot = try snapshots.restore(a.snapshot, attemptID: a.id); return a
+        }
+        return record
+    }
+
     private func writeJournal(_ record: RecoveryRecord) throws {
+        var compact = record
+        compact.attempts = try record.attempts?.map { attempt in
+            var a = attempt; a.snapshot = try snapshots.compact(a.snapshot, attemptID: a.id); return a
+        }
+        if let top = record.snapshot, let owner = record.attempts?.lastIndex(where: { $0.snapshot == top }) {
+            compact.snapshot = compact.attempts?[owner].snapshot
+        }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let url = journalDirectoryURL.appendingPathComponent("\(record.id.uuidString).json")
-        try encoder.encode(record).write(to: url, options: .atomic)
+        let data = try encoder.encode(compact)
+        try data.write(to: url, options: .atomic)
         try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         try Self.synchronize(url)
         try synchronizeDirectory(journalDirectoryURL)
+        writeStats.journalWrites += 1; writeStats.journalBytes += data.count
     }
+
+    func persistenceStats() -> RecoveryWriteStats {
+        lock.lock(); defer { lock.unlock() }
+        var s = writeStats; s.snapshotWrites = snapshots.writes; s.snapshotBytes = snapshots.bytesWritten; return s
+    }
+
+    var unreadableJournalCount: Int { lock.lock(); defer { lock.unlock() }; return unreadableJournals }
 
     private func synchronizeDirectory(_ url: URL) throws {
         let descriptor = open(url.path, O_RDONLY)
