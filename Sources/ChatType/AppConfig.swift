@@ -1,15 +1,24 @@
 import Foundation
 
-struct AppConfig: Codable, Sendable {
+struct AppConfig: Codable, Sendable, Equatable {
     var transcription: TranscriptionConfig = .init()
     var injection: InjectionConfig = .init()
     var auth: AuthConfig = .init()
 
-    init() {}
+    init() {
+        transcription.provider = .doubaoIME
+        transcription.textPolish.provider = .doubaoIME
+    }
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        transcription = try container.decodeIfPresent(TranscriptionConfig.self, forKey: .transcription) ?? .init()
+        if let decoded = try container.decodeIfPresent(TranscriptionConfig.self, forKey: .transcription) {
+            transcription = decoded
+        } else {
+            transcription = .init()
+            transcription.provider = .chatGPTManagedAuth
+            transcription.textPolish.provider = .chatGPTAuth
+        }
         injection = try container.decodeIfPresent(InjectionConfig.self, forKey: .injection) ?? .init()
         auth = try container.decodeIfPresent(AuthConfig.self, forKey: .auth) ?? .init()
     }
@@ -36,6 +45,7 @@ struct AuthConfig: Codable, Sendable, Equatable {
 }
 
 enum TranscriptionProvider: String, Codable, Sendable, CaseIterable, Identifiable {
+    case doubaoIME
     case chatGPTManagedAuth
     case openAICompatible
 
@@ -45,6 +55,8 @@ enum TranscriptionProvider: String, Codable, Sendable, CaseIterable, Identifiabl
         let container = try decoder.singleValueContainer()
         let rawValue = try container.decode(String.self)
         switch rawValue {
+        case Self.doubaoIME.rawValue:
+            self = .doubaoIME
         case "codexChatGPTBridge":
             self = .chatGPTManagedAuth
         case Self.chatGPTManagedAuth.rawValue:
@@ -63,6 +75,8 @@ enum TranscriptionProvider: String, Codable, Sendable, CaseIterable, Identifiabl
 
     var title: String {
         switch self {
+        case .doubaoIME:
+            return "Doubao IME"
         case .chatGPTManagedAuth:
             return "ChatGPT Account"
         case .openAICompatible:
@@ -72,8 +86,10 @@ enum TranscriptionProvider: String, Codable, Sendable, CaseIterable, Identifiabl
 
     var caption: String {
         switch self {
+        case .doubaoIME:
+            return "Audio goes to Doubao IME's private service. Configuration credentials stay in Keychain; no account Cookie is used. Availability and pricing are not guaranteed."
         case .chatGPTManagedAuth:
-            return "Recommended. ChatType signs in to ChatGPT directly and keeps its own session on this Mac."
+            return "ChatType signs in to ChatGPT directly and keeps its own session on this Mac."
         case .openAICompatible:
             return "Optional recovery route. Bring your own OpenAI-compatible API only if you want a separate endpoint."
         }
@@ -87,19 +103,29 @@ enum TextPolishMode: String, Codable, Sendable, Equatable, CaseIterable {
 }
 
 enum TextPolishProviderID: String, Codable, Sendable, Equatable, Hashable, CaseIterable, Identifiable {
+    case doubaoIME
     case chatGPTAuth
+    case glmFlash
+    case qwenFlash
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .doubaoIME:
+            return "Doubao IME"
         case .chatGPTAuth:
             return "ChatGPT Auth"
+        case .glmFlash:
+            return "GLM-4.7-Flash"
+        case .qwenFlash:
+            return "Qwen Flash"
         }
     }
 }
 
 struct TextPolishConfig: Codable, Sendable, Equatable {
+    var provider: TextPolishProviderID = .chatGPTAuth
     var mode: TextPolishMode = .automaticWhenKeyAvailable
     var chatGPTAuthEnabled: Bool = true
     var chatGPTResponseURL: String = "https://chatgpt.com/backend-api/codex/responses"
@@ -109,10 +135,23 @@ struct TextPolishConfig: Codable, Sendable, Equatable {
     var glossaryBudgetCharacters: Int = 1_200
     var showCostEstimates: Bool = true
 
+    var isEnabled: Bool { mode != .disabled && (provider != .chatGPTAuth || chatGPTAuthEnabled) }
+
+    mutating func selectProvider(_ selection: TextPolishProviderID) {
+        provider = selection
+        if selection == .chatGPTAuth { chatGPTAuthEnabled = true }
+    }
+
+    mutating func setEnabled(_ enabled: Bool) {
+        mode = enabled ? .automaticWhenKeyAvailable : .disabled
+        if enabled && provider == .chatGPTAuth { chatGPTAuthEnabled = true }
+    }
+
     init() {}
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try container.decodeIfPresent(TextPolishProviderID.self, forKey: .provider) ?? .chatGPTAuth
         mode = try container.decodeIfPresent(TextPolishMode.self, forKey: .mode) ?? .automaticWhenKeyAvailable
         chatGPTAuthEnabled = try container.decodeIfPresent(Bool.self, forKey: .chatGPTAuthEnabled)
             ?? container.decodeIfPresent(Bool.self, forKey: .allowChatGPTAuthFallback)
@@ -129,6 +168,7 @@ struct TextPolishConfig: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case provider
         case mode
         case chatGPTAuthEnabled
         case chatGPTResponseURL
@@ -142,6 +182,7 @@ struct TextPolishConfig: Codable, Sendable, Equatable {
 
     func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(provider, forKey: .provider)
         try container.encode(mode, forKey: .mode)
         try container.encode(chatGPTAuthEnabled, forKey: .chatGPTAuthEnabled)
         try container.encode(chatGPTResponseURL, forKey: .chatGPTResponseURL)
@@ -153,13 +194,17 @@ struct TextPolishConfig: Codable, Sendable, Equatable {
     }
 }
 
-struct TranscriptionConfig: Codable, Sendable {
+struct TranscriptionConfig: Codable, Sendable, Equatable {
     var provider: TranscriptionProvider = .chatGPTManagedAuth
+    var livePreviewEnabled: Bool = true
+    var terminologyAlignmentEnabled: Bool = true
+    var correctionRulesEnabled: Bool = true
     var hotkeyKeyCode: UInt32 = 96
     var chatGPTURL: String = "https://chatgpt.com/backend-api/transcribe"
     var openAITranscriptionURL: String = "https://api.openai.com/v1/audio/transcriptions"
     var openAIModel: String = "gpt-4o-mini-transcribe"
     var openAIAuthTokenEnv: String = "OPENAI_API_KEY"
+    var localFinalizationTimeoutSeconds: Double = 10
     var sampleRateHz: Int = 24_000
     var maxDurationSeconds: Int = 120
     var hintTerms: [String] = []
@@ -178,28 +223,45 @@ struct TranscriptionConfig: Codable, Sendable {
             provider = .chatGPTManagedAuth
         }
         hotkeyKeyCode = try container.decodeIfPresent(UInt32.self, forKey: .hotkeyKeyCode) ?? 96
+        livePreviewEnabled = try container.decodeIfPresent(Bool.self, forKey: .livePreviewEnabled) ?? true
+        terminologyAlignmentEnabled = try container.decodeIfPresent(Bool.self, forKey: .terminologyAlignmentEnabled) ?? true
+        correctionRulesEnabled = try container.decodeIfPresent(Bool.self, forKey: .correctionRulesEnabled) ?? true
         chatGPTURL = try container.decodeIfPresent(String.self, forKey: .chatGPTURL) ?? "https://chatgpt.com/backend-api/transcribe"
         openAITranscriptionURL = try container.decodeIfPresent(String.self, forKey: .openAITranscriptionURL) ?? "https://api.openai.com/v1/audio/transcriptions"
         openAIModel = try container.decodeIfPresent(String.self, forKey: .openAIModel) ?? "gpt-4o-mini-transcribe"
         openAIAuthTokenEnv = try container.decodeIfPresent(String.self, forKey: .openAIAuthTokenEnv) ?? "OPENAI_API_KEY"
+        localFinalizationTimeoutSeconds = try container.decodeIfPresent(Double.self, forKey: .localFinalizationTimeoutSeconds) ?? 10
         sampleRateHz = try container.decodeIfPresent(Int.self, forKey: .sampleRateHz) ?? 24_000
         maxDurationSeconds = try container.decodeIfPresent(Int.self, forKey: .maxDurationSeconds) ?? 120
         hintTerms = try container.decodeIfPresent([String].self, forKey: .hintTerms) ?? []
         speechCleanupEnabled = try container.decodeIfPresent(Bool.self, forKey: .speechCleanupEnabled) ?? true
         feedbackSoundsEnabled = try container.decodeIfPresent(Bool.self, forKey: .feedbackSoundsEnabled) ?? true
         terminology = try container.decodeIfPresent(TerminologyConfig.self, forKey: .terminology) ?? .init()
-        textPolish = try container.decodeIfPresent(TextPolishConfig.self, forKey: .textPolish) ?? .init()
+        // Missing old settings must retain their original account destination.
+        if let decoded = try container.decodeIfPresent(TextPolishConfig.self, forKey: .textPolish) {
+            textPolish = decoded
+        } else {
+            textPolish = .init()
+            textPolish.provider = .chatGPTAuth
+        }
     }
 
     var activeDictionaryEntries: [TerminologyEntry] {
         terminology.entries
     }
 
-    var promptHintTerms: [String] {
-        hintTerms + activeDictionaryEntries
-            .filter { $0.type == .term }
-            .map(\.original)
+    var needsChatGPT: Bool {
+        provider == .chatGPTManagedAuth || (textPolish.isEnabled && textPolish.provider == .chatGPTAuth)
     }
+
+    var prioritizedHintTerms: [String] {
+        hintTerms + VocabularyIndexCache.shared.index(for: activeDictionaryEntries).userChineseTerms
+    }
+
+    var promptHintTerms: [String] {
+        VocabularyIndexCache.shared.index(for: activeDictionaryEntries).asrHints(priorities: prioritizedHintTerms)
+    }
+
 }
 
 struct TerminologyConfig: Codable, Sendable, Equatable {
@@ -213,7 +275,9 @@ struct TerminologyConfig: Codable, Sendable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let decodedEntries = try container.decodeIfPresent([TerminologyEntry].self, forKey: .entries) ?? []
         let legacyImportedEntries = try container.decodeIfPresent([TerminologyEntry].self, forKey: .importedEntries) ?? []
-        entries = decodedEntries.isEmpty ? legacyImportedEntries : decodedEntries
+        entries = TerminologyPolicy.sanitizedEntries(
+            decodedEntries.isEmpty ? legacyImportedEntries : decodedEntries
+        )
         lastImportedSource = Self.normalizedImportedSource(
             try container.decodeIfPresent(String.self, forKey: .lastImportedSource)
         )
@@ -370,7 +434,8 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
     }
 }
 
-struct InjectionConfig: Codable, Sendable {
+struct InjectionConfig: Codable, Sendable, Equatable {
+    var clipboardOnly: Bool = false
     var preserveClipboard: Bool = false
     var restoreDelayMilliseconds: UInt64 = 350
 
@@ -379,6 +444,7 @@ struct InjectionConfig: Codable, Sendable {
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         preserveClipboard = try container.decodeIfPresent(Bool.self, forKey: .preserveClipboard) ?? false
+        clipboardOnly = try container.decodeIfPresent(Bool.self, forKey: .clipboardOnly) ?? false
         restoreDelayMilliseconds = try container.decodeIfPresent(UInt64.self, forKey: .restoreDelayMilliseconds) ?? 350
     }
 }
@@ -425,6 +491,28 @@ struct ConfigStore {
         }
 
         let data = try Data(contentsOf: configURL)
+        // Preserve original bytes before the decoder migrates legacy input-method shortcuts.
+        if let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let transcription = root["transcription"] as? [String: Any],
+           let terminology = transcription["terminology"] as? [String: Any] {
+            let entries = (terminology["entries"] as? [[String: Any]] ?? [])
+                + (terminology["importedEntries"] as? [[String: Any]] ?? [])
+            if entries.contains(where: { $0["source"] as? String == "macos-text-replacements" && $0["type"] as? String == "correction" }) {
+                let backup = directoryURL.appendingPathComponent("config-before-keyboard-shortcut-migration.json")
+                if !fileManager.fileExists(atPath: backup.path) {
+                    let descriptor = open(backup.path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)
+                    guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+                    let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+                    do { try handle.write(contentsOf: data); try handle.synchronize(); try handle.close() }
+                    catch { try? fileManager.removeItem(at: backup); throw error }
+                } else {
+                    // A directory or an unrelated file must never masquerade as a recovery copy.
+                    guard (try? Data(contentsOf: backup)) == data else {
+                        throw CocoaError(.fileWriteFileExists)
+                    }
+                }
+            }
+        }
         let config = try JSONDecoder().decode(AppConfig.self, from: data)
         try save(config)
         return config
@@ -436,5 +524,6 @@ struct ConfigStore {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(config)
         try data.write(to: configURL, options: [.atomic])
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
     }
 }

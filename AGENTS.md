@@ -70,6 +70,7 @@
 ## Guardrails
 
 - Preserve the single-trigger workflow: `F5` starts recording and `F5` stops recording.
+- Longbiao pinned the local keyboard arrangement on 2026-11-14: Doubao IME uses physical `Fn`; ChatType uses physical `F5`. On this Mac Karabiner translates F5 to F18 and ChatType's `hotkeyKeyCode` is **79**, not the portable default 96. Preserve `~/Library/Application Support/ChatType/keyboard-binding.json`, the selected Karabiner profile's F5→F18 mapping, and Doubao's Fn selection across upgrades/reinstalls. Never reset this Mac to keycode 96 or reintroduce the old Fn+F5 Codex Plus launcher alias. The installer reapplies this explicitly enrolled local policy; other users keep their choices.
 - Treat the existing app icon, menu-bar icon renderer, product name, colors, and other brand visuals as owner-controlled invariants. Lifecycle, authentication, transcription, and reliability fixes may not alter them without Longbiao's explicit approval in the current request.
 - A visual change requires a before/after installed-app comparison and explicit approval. Checking that a menu-bar item merely exists does not prove that its approved appearance was preserved.
 - Do not run `ChatType.app` directly from `dist`.
@@ -77,7 +78,10 @@
 - Keep `.notDetermined` permission paths as their own regression surface.
 - Keep the private ChatGPT backend dependency explicit in docs and UX; do not describe it as a stable public API.
 - Keep `OpenAI-Compatible` positioned as advanced recovery, not the default public story.
-- The product has exactly two transcription routes: `chatGPTManagedAuth` and user-selected `openAICompatible`. Do not add a third fallback/provider without explicit product approval.
+- Longbiao approved the Doubao implementation and default on 2026-11-14. Transcription has three explicit routes: `doubaoIME`, preserved `chatGPTManagedAuth`, and advanced `openAICompatible`. Fresh configurations default to Doubao ASR and Doubao text organization; existing saved selections are preserved. ASR and polish can be selected independently in Dictation. Never switch providers automatically after failure.
+- Doubao uses fixed settings, frontier-audio WebSocket and IME text-organization hosts, app-owned configuration credentials in Keychain, and bundled signed Opus. No browser Cookies or existing Doubao IME credentials are exported. These are private, version-sensitive endpoints; successful probes establish neither a billing guarantee nor public API stability.
+- Keep raw audio and each attempt's route snapshot, ASR/partial ASR, polish inputs/outputs, final text and errors in private local history. Seal successful stages before injection; processing failure must not paste partial text. Cancel closes the independent live cloud task while preserving the recording. Retry reuses the attempt's original routes; interrupted audio requires an explicit partial replay decision.
+- Longbiao approved Stage A quality restoration on 2026-11-10: on macOS 26+, Apple SpeechAnalyzer provides live preview; the complete recording is uploaded to the original ChatGPT account for final transcription, followed by the existing terminology alignment and whole-transcript ChatGPT polish. This supersedes B0 local final ASR. Earlier macOS versions and explicitly selected compatible recovery retain their existing paths. Keep `fastResults` with `volatileResults` for live text. Model capability must be checked by actual preparation; an AssetInventory status alone must not block an available engine. Further cloud polish providers require their own credentials/data destination decision.
 
 ## Known State
 
@@ -85,7 +89,7 @@
 - `/Applications/ChatType.app` is the app path for launch, permission, LaunchAgent, and user-flow proof.
 
 ## Browser Automation Constraint
-- Follow the global `~/.codex/AGENTS.md` official browser/GUI policy: Browser plugin for unauthenticated local/public rendering, Chrome plugin for signed-in/default-profile browser state, and Computer Use only for native desktop boundaries.
+- Follow the global `~/.codex/AGENTS.md` browser/GUI routing. Keep only this project's URL, account, extension, fixture, viewport, and acceptance details here; do not promote Chrome or `chrome-use` to a project-wide default.
 - Keep only repo-specific verification surfaces here; do not copy the full global policy block into this runbook.
 
 ## 限制类改动规则

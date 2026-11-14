@@ -179,33 +179,49 @@ func injectionPlanUsesNativePasteForFeishuComposerAccessibilityWrapper() {
 }
 
 @Test
-func injectionPlanDoesNotPasteWhenOnlyLaunchAppContextExists() {
+func injectionPlanDoesNotPasteWithoutEditorSignal() {
     let plan = TextInjector.injectionPlan(
         text: "ChatType",
         accessibilityTrusted: true,
         editableTextSnapshot: nil,
         fallbackEditableTextSnapshot: nil,
         hasEditableTextFocus: false,
-        hasFallbackEditableTextFocus: false,
-        hasLaunchAppContext: false
+        hasFallbackEditableTextFocus: false
     )
 
     #expect(plan == .clipboardFallback(reason: .noEditableTarget))
 }
 
 @Test
-func injectionPlanUsesNativePasteForLaunchAppEvenWhenAXFocusIsOpaque() {
-    let plan = TextInjector.injectionPlan(
-        text: "ChatType",
-        accessibilityTrusted: true,
-        editableTextSnapshot: nil,
-        fallbackEditableTextSnapshot: nil,
-        hasEditableTextFocus: false,
-        hasFallbackEditableTextFocus: false,
-        hasLaunchAppContext: true
-    )
+func pasteReadinessRejectsLaunchAppWithoutActualEditor() {
+    #expect(!TextInjector.isPasteTargetReady(
+        launchAppProcessIdentifier: 101,
+        frontmostProcessIdentifier: 101,
+        hasEditableTextFocus: false
+    ))
+    #expect(!TextInjector.isPasteTargetReady(
+        launchAppProcessIdentifier: 101,
+        frontmostProcessIdentifier: 202,
+        hasEditableTextFocus: true
+    ))
+    #expect(TextInjector.isPasteTargetReady(
+        launchAppProcessIdentifier: 101,
+        frontmostProcessIdentifier: 101,
+        hasEditableTextFocus: true
+    ))
+}
 
-    #expect(plan == .keyPressPaste)
+@Test(arguments: ["AXWebArea", "AXStaticText", "AXGroup"])
+func readableSelectionDoesNotEstablishEditableFocus(role: String) {
+    #expect(!FocusedElementInspector.isEditableTextFocus(role: role, valueIsSettable: false))
+    #expect(!FocusedElementInspector.isEditableTextFocus(role: role, valueIsSettable: true))
+}
+
+@Test(arguments: ["AXTextField", "AXTextArea", "AXComboBox"])
+func textFocusRequiresWritableEnabledControl(role: String) {
+    #expect(FocusedElementInspector.isEditableTextFocus(role: role, valueIsSettable: true))
+    #expect(!FocusedElementInspector.isEditableTextFocus(role: role, valueIsSettable: false))
+    #expect(!FocusedElementInspector.isEditableTextFocus(role: role, valueIsSettable: true, enabled: false))
 }
 
 @Test

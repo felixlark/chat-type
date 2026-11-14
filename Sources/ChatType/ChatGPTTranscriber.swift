@@ -8,6 +8,8 @@ private enum TranscriptionUploadLimit {
 enum TranscriptionError: LocalizedError {
     case invalidAudio
     case payloadTooLarge
+    case noUsableAudioSignal
+    case interruptedAudioInput(capturedSignalSeconds: Int, silentTailSeconds: Int)
     case transcriptionFailed(String)
     case invalidResponse
     case missingAuthTokenEnv(String)
@@ -19,6 +21,10 @@ enum TranscriptionError: LocalizedError {
             return "录音文件无效。"
         case .payloadTooLarge:
             return "录音文件超过 \(TranscriptionUploadLimit.label)，已超过 ChatGPT/OpenAI 转写上传上限，当前不发送。"
+        case .noUsableAudioSignal:
+            return "录音中没有检测到有效麦克风信号；为避免输出空白或不完整转写，ChatType 未发送这份录音并已将其保留。请检查输入设备后重新录制。"
+        case .interruptedAudioInput(let capturedSignalSeconds, let silentTailSeconds):
+            return "麦克风输入在约 \(capturedSignalSeconds) 秒后中断，随后约 \(silentTailSeconds) 秒只有数字静音；为避免输出不完整转写，ChatType 未发送这份录音并已将其保留。请检查输入设备后重新录制。"
         case .transcriptionFailed(let message):
             return "ChatGPT 转写失败：\(message)"
         case .invalidResponse:
@@ -38,6 +44,7 @@ private struct TranscriptionHTTPError: LocalizedError {
     let contentType: String?
     let server: String?
     let bodyPrefix: String?
+    var retryAfterSeconds: Int? = nil
 
     var isAuthFailure: Bool {
         statusCode == 401 || statusCode == 403
@@ -70,7 +77,8 @@ private struct TranscriptionHTTPError: LocalizedError {
             return "\(providerLabel) 转写失败：私有转写接口返回 Cloudflare 403 challenge；这不是 ChatType 会话过期。"
         }
 
-        return "\(providerLabel) 转写失败：\(message)"
+        let wait = retryAfterSeconds.map { "；请等待 \($0) 秒后点击 Retry" } ?? ""
+        return "\(providerLabel) 转写失败：\(message)\(wait)"
     }
 }
 
@@ -81,6 +89,10 @@ struct TranscriptionMetrics: Sendable, Equatable {
     let authMs: Int
     let transcribeMs: Int
     let promptIncluded: Bool
+    var encodingMs: Int = 0
+    var uploadedBytes: Int = 0
+    var uploadFormat: String = "wav"
+    var protocolRequestID: String? = nil
 }
 
 struct TranscriptionResult: Sendable, Equatable {
@@ -113,6 +125,33 @@ struct ChatGPTTranscriber: Sendable {
     let promptBuilder: TranscriptionPromptBuilder
     let bridgePromptCapability: BridgePromptCapabilityStore
     let cloudflareChallengeMaxAttempts: Int
+    static func retryAfterSeconds(_ value: String?, now: Date = Date()) -> Int? {
+        guard let value else { return nil }
+        if let seconds = Int(value.trimmingCharacters(in: .whitespacesAndNewlines)), seconds >= 0 {
+            return seconds
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        guard let date = formatter.date(from: value) else { return nil }
+        return max(0, Int(ceil(date.timeIntervalSince(now))))
+    }
+
+    static func isRetryable(_ error: Error) -> Bool {
+        if let http = error as? TranscriptionHTTPError {
+            return http.statusCode == 429 || (500...599).contains(http.statusCode)
+        }
+        if let url = error as? URLError {
+            return [.timedOut, .networkConnectionLost, .notConnectedToInternet,
+                    .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost].contains(url.code)
+        }
+        if case TranscriptionError.invalidResponse = error { return true }
+        return false
+    }
+
+    let usesLocalSpeechForFiles: Bool
+    let uploadMode: AudioUploadMode
     let dataLoader: @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
     init(
@@ -121,6 +160,8 @@ struct ChatGPTTranscriber: Sendable {
         promptBuilder: TranscriptionPromptBuilder = .init(),
         bridgePromptCapability: BridgePromptCapabilityStore = .shared,
         cloudflareChallengeMaxAttempts: Int = 3,
+        uploadMode: AudioUploadMode = .automatic,
+        usesLocalSpeechForFiles: Bool = false,
         dataLoader: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse) = { request in
             try await URLSession.shared.data(for: request)
         }
@@ -130,10 +171,34 @@ struct ChatGPTTranscriber: Sendable {
         self.promptBuilder = promptBuilder
         self.bridgePromptCapability = bridgePromptCapability
         self.cloudflareChallengeMaxAttempts = max(1, cloudflareChallengeMaxAttempts)
+        self.usesLocalSpeechForFiles = usesLocalSpeechForFiles
+        self.uploadMode = uploadMode
         self.dataLoader = dataLoader
     }
 
     func transcribe(_ audio: RecordedAudio) async throws -> TranscriptionResult {
+        var audio = audio
+        if audio.localTranscript == nil, usesLocalSpeechForFiles, config.provider == .chatGPTManagedAuth {
+            if #available(macOS 26.0, *) {
+                let url = audio.fileURL
+                audio.localTranscript = Task { try await LocalSpeechRecorder.transcribeFile(url, hintTerms: config.hintTerms) }
+            }
+        }
+        if let local = audio.localTranscript {
+            let started = DispatchTime.now().uptimeNanoseconds
+            let text = try await withTaskCancellationHandler {
+                try await local.value
+            } onCancel: { local.cancel() }
+            try Task.checkCancellation()
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw TranscriptionError.invalidResponse
+            }
+            let bytes = (try? Data(contentsOf: audio.fileURL).count) ?? 0
+            return TranscriptionResult(text: text, metrics: TranscriptionMetrics(
+                provider: config.provider, audioDurationMs: audio.durationMs, audioBytes: bytes,
+                authMs: 0, transcribeMs: elapsedMilliseconds(since: started), promptIncluded: false,
+                uploadedBytes: 0, uploadFormat: "local-speech"))
+        }
         let data = try Data(contentsOf: audio.fileURL)
         guard !data.isEmpty else {
             throw TranscriptionError.invalidAudio
@@ -142,13 +207,39 @@ struct ChatGPTTranscriber: Sendable {
             throw TranscriptionError.payloadTooLarge
         }
 
+        switch PCMRecordingIntegrityAnalyzer().analyze(wavData: data) {
+        case .noUsableSignal:
+            throw TranscriptionError.noUsableAudioSignal
+        case .interruptedInput(let capturedSignalSeconds, let silentTailSeconds):
+            if audio.isPartialReplay { break }
+            throw TranscriptionError.interruptedAudioInput(
+                capturedSignalSeconds: capturedSignalSeconds,
+                silentTailSeconds: silentTailSeconds
+            )
+        case nil:
+            break
+        }
+
+        let vocabularyStarted = ProcessingTiming.now()
+        let terms = (config.prioritizedHintTerms, config.promptHintTerms)
+        ProcessingTrace.current?.recordStage("asrVocabulary", since: vocabularyStarted)
+        let namesStarted = ProcessingTiming.now()
+        let relatedNames = PersonalNameHints.relatedTerms(in: audio.previewText, entries: config.activeDictionaryEntries)
+        ProcessingTrace.current?.recordStage("nameLookup", since: namesStarted)
+        let promptStarted = ProcessingTiming.now()
         let prompt = promptBuilder.buildPrompt(
-            hintTerms: config.promptHintTerms,
+            hintTerms: terms.0 + relatedNames + terms.1,
             speechCleanupEnabled: config.speechCleanupEnabled
         )
-
+        ProcessingTrace.current?.recordStage("asrPromptBuild", since: promptStarted)
         switch config.provider {
+        case .doubaoIME:
+            // Handled before the account-specific preparation above.
+            throw TranscriptionError.invalidResponse
         case .chatGPTManagedAuth:
+            let encodingStarted = DispatchTime.now().uptimeNanoseconds
+            let payload = try AudioUploadPreparation().prepare(audio: audio, original: data, mode: uploadMode)
+            let encodingMs = elapsedMilliseconds(since: encodingStarted)
             let authStarted = DispatchTime.now().uptimeNanoseconds
             var token = try await authManager.bestAvailableAccessToken()
             var accountID = authManager.chatGPTAccountID()
@@ -157,7 +248,7 @@ struct ChatGPTTranscriber: Sendable {
             let response: (text: String, promptIncluded: Bool)
             do {
                 response = try await transcribeViaChatGPTBridgeWithCloudflareRetries(
-                    audioData: data,
+                    audioData: payload,
                     token: token,
                     accountID: accountID,
                     prompt: prompt
@@ -168,7 +259,7 @@ struct ChatGPTTranscriber: Sendable {
                 accountID = authManager.chatGPTAccountID()
                 authMs += elapsedMilliseconds(since: refreshStarted)
                 response = try await transcribeViaChatGPTBridgeWithCloudflareRetries(
-                    audioData: data,
+                    audioData: payload,
                     token: token,
                     accountID: accountID,
                     prompt: prompt
@@ -183,7 +274,10 @@ struct ChatGPTTranscriber: Sendable {
                     audioBytes: data.count,
                     authMs: authMs,
                     transcribeMs: transcribeMs,
-                    promptIncluded: response.promptIncluded
+                    promptIncluded: response.promptIncluded,
+                    encodingMs: encodingMs,
+                    uploadedBytes: payload.data.count,
+                    uploadFormat: payload.filename
                 )
             )
         case .openAICompatible:
@@ -208,7 +302,7 @@ struct ChatGPTTranscriber: Sendable {
     }
 
     private func transcribeViaChatGPTBridgeWithCloudflareRetries(
-        audioData: Data,
+        audioData: AudioUploadPayload,
         token: String,
         accountID: String?,
         prompt: String
@@ -237,7 +331,7 @@ struct ChatGPTTranscriber: Sendable {
     }
 
     private func transcribeViaChatGPTBridge(
-        audioData: Data,
+        audioData: AudioUploadPayload,
         token: String,
         accountID: String?,
         prompt: String
@@ -272,7 +366,7 @@ struct ChatGPTTranscriber: Sendable {
             throw error
         } catch let error as TranscriptionHTTPError where !error.canRetryWithoutPrompt {
             throw error
-        } catch {
+        } catch let error as TranscriptionHTTPError where error.canRetryWithoutPrompt {
             let fallbackText = try await executeTranscriptionRequest(
                 makeChatGPTBridgeRequest(
                     audioData: audioData,
@@ -288,7 +382,7 @@ struct ChatGPTTranscriber: Sendable {
     }
 
     private func makeChatGPTBridgeRequest(
-        audioData: Data,
+        audioData: AudioUploadPayload,
         token: String,
         accountID: String?,
         prompt: String?
@@ -305,7 +399,9 @@ struct ChatGPTTranscriber: Sendable {
         let boundary = request.value(forHTTPHeaderField: "Content-Type")!.split(separator: "=").last.map(String.init) ?? makeBoundary()
         request.httpBody = makeMultipartBody(
             boundary: boundary,
-            audioData: audioData,
+            audioData: audioData.data,
+            filename: audioData.filename,
+            mimeType: audioData.mimeType,
             extraFields: prompt.map { ["prompt": $0] } ?? [:]
         )
         return request
@@ -353,7 +449,8 @@ struct ChatGPTTranscriber: Sendable {
                 message: providerMessage,
                 contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
                 server: httpResponse.value(forHTTPHeaderField: "Server"),
-                bodyPrefix: String(data: responseData.prefix(512), encoding: .utf8)
+                bodyPrefix: String(data: responseData.prefix(512), encoding: .utf8),
+                retryAfterSeconds: Self.retryAfterSeconds(httpResponse.value(forHTTPHeaderField: "Retry-After"))
             )
         }
 
@@ -372,7 +469,7 @@ struct ChatGPTTranscriber: Sendable {
         "ChatType-\(UUID().uuidString)"
     }
 
-    private func makeMultipartBody(boundary: String, audioData: Data, extraFields: [String: String]) -> Data {
+    private func makeMultipartBody(boundary: String, audioData: Data, filename: String = "voice.wav", mimeType: String = "audio/wav", extraFields: [String: String]) -> Data {
         var body = Data()
         for (name, value) in extraFields.sorted(by: { $0.key < $1.key }) {
             body.append(contentsOf: "--\(boundary)\r\n".utf8)
@@ -380,8 +477,8 @@ struct ChatGPTTranscriber: Sendable {
             body.append(contentsOf: "\(value)\r\n".utf8)
         }
         body.append(contentsOf: "--\(boundary)\r\n".utf8)
-        body.append(contentsOf: "Content-Disposition: form-data; name=\"file\"; filename=\"voice.wav\"\r\n".utf8)
-        body.append(contentsOf: "Content-Type: audio/wav\r\n\r\n".utf8)
+        body.append(contentsOf: "Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".utf8)
+        body.append(contentsOf: "Content-Type: \(mimeType)\r\n\r\n".utf8)
         body.append(audioData)
         body.append(contentsOf: "\r\n--\(boundary)--\r\n".utf8)
         return body
@@ -403,6 +500,20 @@ struct ChatGPTTranscriber: Sendable {
     private func elapsedMilliseconds(since start: UInt64) -> Int {
         Int((DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
     }
+}
+
+/// Keep the account transcriber injectable and account-only. Provider routing is
+/// explicit, so its test transport can never accidentally invoke a real socket.
+struct SelectedRouteTranscriber: Transcriber {
+    let account: ChatGPTTranscriber
+    func transcribe(_ audio: RecordedAudio) async throws -> TranscriptionResult {
+        if account.config.provider == .doubaoIME { return try await DoubaoTranscriber().transcribe(audio) }
+        return try await account.transcribe(audio)
+    }
+}
+
+extension ChatGPTTranscriber {
+    var selectedRoute: SelectedRouteTranscriber { SelectedRouteTranscriber(account: self) }
 }
 
 extension ChatGPTTranscriber: Transcriber {}

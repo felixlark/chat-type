@@ -40,9 +40,12 @@ struct LaunchAppContext: Sendable, Equatable {
 
 enum InjectionError: LocalizedError {
     case keyEventFailed
+    case clipboardUnavailable
 
     var errorDescription: String? {
         switch self {
+        case .clipboardUnavailable:
+            return "无法写入剪贴板。"
         case .keyEventFailed:
             return "生成 Cmd+V 事件失败。"
         }
@@ -50,11 +53,13 @@ enum InjectionError: LocalizedError {
 }
 
 enum ClipboardFallbackReason: Sendable, Equatable {
+    case userSelected
     case accessibilityPermissionRequired
     case noEditableTarget
 
     var statusDetail: String {
         switch self {
+        case .userSelected: return "Copied to clipboard as selected"
         case .accessibilityPermissionRequired:
             return "Copied to clipboard. Grant Accessibility access for auto-paste."
         case .noEditableTarget:
@@ -64,6 +69,7 @@ enum ClipboardFallbackReason: Sendable, Equatable {
 
     var overlaySubtitle: String {
         switch self {
+        case .userSelected: return "已按设置复制到剪贴板。"
         case .accessibilityPermissionRequired:
             return "Accessibility permission is off, so ChatType left the text in the clipboard."
         case .noEditableTarget:
@@ -79,6 +85,7 @@ enum InjectionOutcome: Sendable, Equatable {
 
 @MainActor
 protocol TextInjecting: AnyObject {
+    func copyToClipboard(text: String) throws -> InjectionOutcome
     func inject(
         text: String,
         preserveClipboard: Bool,
@@ -87,8 +94,18 @@ protocol TextInjecting: AnyObject {
     ) throws -> InjectionOutcome
 }
 
+extension TextInjecting {
+    func copyToClipboard(text: String) throws -> InjectionOutcome { throw InjectionError.clipboardUnavailable }
+}
+
 @MainActor
 final class TextInjector: TextInjecting {
+    func copyToClipboard(text: String) throws -> InjectionOutcome {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.setString(text, forType: .string) else { throw InjectionError.clipboardUnavailable }
+        return .copiedToClipboard(reason: .userSelected)
+    }
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "me.longbiaochen.chattype",
         category: "TextInjector"
@@ -113,14 +130,13 @@ final class TextInjector: TextInjecting {
         editableTextSnapshot _: EditableTextSnapshot?,
         fallbackEditableTextSnapshot _: EditableTextSnapshot?,
         hasEditableTextFocus: Bool,
-        hasFallbackEditableTextFocus: Bool,
-        hasLaunchAppContext: Bool = false
+        hasFallbackEditableTextFocus: Bool
     ) -> TextInsertionPlan {
         guard accessibilityTrusted else {
             return .clipboardFallback(reason: .accessibilityPermissionRequired)
         }
 
-        guard hasEditableTextFocus || hasFallbackEditableTextFocus || hasLaunchAppContext else {
+        guard hasEditableTextFocus || hasFallbackEditableTextFocus else {
             return .clipboardFallback(reason: .noEditableTarget)
         }
 
@@ -147,8 +163,7 @@ final class TextInjector: TextInjecting {
             editableTextSnapshot: nil,
             fallbackEditableTextSnapshot: nil,
             hasEditableTextFocus: hasEditableTextFocus,
-            hasFallbackEditableTextFocus: hasFallbackEditableTextFocus,
-            hasLaunchAppContext: launchAppContext != nil
+            hasFallbackEditableTextFocus: hasFallbackEditableTextFocus
         )
 
         logger.info(
@@ -188,6 +203,10 @@ final class TextInjector: TextInjecting {
         copyToPasteboard(text)
         usleep(60_000)
 
+        guard isPasteTargetReady(launchAppContext: launchAppContext) else {
+            return .copiedToClipboard(reason: .noEditableTarget)
+        }
+
         guard
             let source = CGEventSource(stateID: .hidSystemState),
             let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
@@ -225,18 +244,21 @@ final class TextInjector: TextInjecting {
     }
 
     private func isPasteTargetReady(launchAppContext: LaunchAppContext?) -> Bool {
-        guard let launchAppContext else {
-            return FocusedElementInspector.hasEditableTextFocus()
-        }
+        Self.isPasteTargetReady(
+            launchAppProcessIdentifier: launchAppContext?.processIdentifier,
+            frontmostProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            hasEditableTextFocus: FocusedElementInspector.hasEditableTextFocus()
+        )
+    }
 
-        guard
-            let frontmostApplication = NSWorkspace.shared.frontmostApplication,
-            frontmostApplication.processIdentifier == launchAppContext.processIdentifier
-        else {
-            return false
-        }
-
-        return true
+    nonisolated static func isPasteTargetReady(
+        launchAppProcessIdentifier: pid_t?,
+        frontmostProcessIdentifier: pid_t?,
+        hasEditableTextFocus: Bool
+    ) -> Bool {
+        guard hasEditableTextFocus else { return false }
+        guard let launchAppProcessIdentifier else { return true }
+        return frontmostProcessIdentifier == launchAppProcessIdentifier
     }
 
     private func restoreLaunchAppIfNeeded(_ launchAppContext: LaunchAppContext?) {

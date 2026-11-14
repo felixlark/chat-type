@@ -9,13 +9,13 @@ Usage:
   echo "post text" | scripts/post_x.sh [--print]
 
 Options:
-  --print         Print the official Chrome plugin workflow without sending the post.
+  --print         Print the approved xurl-ops workflow without sending the post.
   -h, --help      Show this help message.
 
 Notes:
   - Reads post text from the first positional argument or stdin.
-  - Live posting must be done through the official Chrome plugin in the signed-in browser.
-  - This CLI only prints the required manual/plugin workflow and refuses legacy automation.
+  - Live posting uses longbiao-x-post-workflow / xurl-ops after explicit publish authorization.
+  - This CLI only prints the approved workflow and does not publish by itself.
 EOF
 }
 
@@ -72,17 +72,17 @@ fi
 if [[ "$print_only" -eq 1 ]]; then
   cat <<EOF
 Resolved workflow:
-  transport: official Chrome plugin
-  browser: signed-in Chrome/default profile
-  compose_url: https://x.com/compose/post
+  transport: longbiao-x-post-workflow / xurl-ops
+  preflight: xurl-ops status (must resolve to felixlark)
+  publish: xurl-ops post "POST_TEXT"
   post_text: $text
-  verification: open the profile and confirm a fresh /status/ URL containing the post text
+  verification: read back the created post and confirm a fresh /status/ URL containing the post text
 EOF
   exit 0
 fi
 
 cat >&2 <<'EOF'
 Live X posting from scripts/post_x.sh is disabled.
-Use the official Chrome plugin with the signed-in browser, then verify the new post on the profile page.
+Use longbiao-x-post-workflow / xurl-ops with explicit publish authorization; it must preflight identity and read the created post back.
 EOF
 exit 2

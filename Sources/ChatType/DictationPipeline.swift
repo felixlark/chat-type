@@ -25,6 +25,7 @@ struct DictationMetrics: Sendable, Equatable {
     let textPolishErrorMessage: String?
     let estimatedPolishInputTokens: Int
     let estimatedPolishOutputTokens: Int
+    let timing: ProcessingTimingSnapshot?
 
     init(
         transcription: TranscriptionMetrics,
@@ -34,7 +35,8 @@ struct DictationMetrics: Sendable, Equatable {
         textPolishProvider: TextPolishProviderID? = nil,
         textPolishErrorMessage: String? = nil,
         estimatedPolishInputTokens: Int = 0,
-        estimatedPolishOutputTokens: Int = 0
+        estimatedPolishOutputTokens: Int = 0,
+        timing: ProcessingTimingSnapshot? = nil
     ) {
         self.transcription = transcription
         self.normalizationMs = normalizationMs
@@ -44,6 +46,7 @@ struct DictationMetrics: Sendable, Equatable {
         self.textPolishErrorMessage = textPolishErrorMessage
         self.estimatedPolishInputTokens = estimatedPolishInputTokens
         self.estimatedPolishOutputTokens = estimatedPolishOutputTokens
+        self.timing = timing
     }
 }
 
@@ -54,6 +57,7 @@ struct PreparedDictation: Sendable, Equatable {
     let exactReplacementCount: Int
     let fuzzyReplacementCount: Int
     let metrics: DictationMetrics
+    var stages: DictationStageAudit? = nil
 }
 
 struct DictationPipeline: DictationPreparing {
@@ -62,15 +66,40 @@ struct DictationPipeline: DictationPreparing {
     let importedEntries: [TerminologyEntry]
     let hintTerms: [String]
     var textPolisher: (any TextPolishing)?
+    var alignmentEnabled: Bool = true
+    var correctionsEnabled: Bool = true
+    var audit: (@Sendable (DictationStageAudit) throws -> Void)? = nil
 
     func prepare(audio: RecordedAudio) async throws -> PreparedDictation {
+        let trace = ProcessingTiming()
+        return try await ProcessingTrace.$current.withValue(trace) {
+            try await prepareMeasured(audio: audio, trace: trace)
+        }
+    }
+
+    private func prepareMeasured(audio: RecordedAudio, trace: ProcessingTiming) async throws -> PreparedDictation {
         let transcription = try await transcriber.transcribe(audio)
+        try Task.checkCancellation()
+        var stages = DictationStageAudit(asrText: transcription.text)
+        stages.asrRequestID = transcription.metrics.protocolRequestID
+        stages.partialAudio = audio.isPartialReplay
+        if transcription.metrics.provider == .doubaoIME {
+            stages.protocolVersion = "DoubaoIME-1.1.0/v2/Opus-16000"
+        }
+        try audit?(stages)
+        let terms = importedEntries.filter { $0.type == .term }
+        // Identity rules are literal locks; retain them during alignment and text polish.
+        let alignmentEntries = terms + (correctionsEnabled ? importedEntries.filter { $0.type == .correction && $0.original == $0.replacement } : [])
+        let namesStarted = ProcessingTiming.now()
+        let relatedHints = hintTerms + PersonalNameHints.relatedTerms(in: transcription.text, entries: importedEntries)
+        trace.recordStage("nameLookup", since: namesStarted)
         let normalizationStarted = DispatchTime.now().uptimeNanoseconds
-        let prePolish = normalizer.normalize(
+        let prePolish = (alignmentEnabled ? normalizer : PassthroughNormalizer()).normalize(
             text: transcription.text,
-            importedEntries: importedEntries,
+            importedEntries: alignmentEntries,
             hintTerms: hintTerms
         )
+        trace.recordStage("preNormalization", since: normalizationStarted)
         var normalizationMs = elapsedMilliseconds(since: normalizationStarted)
 
         var finalText = prePolish.text
@@ -82,60 +111,71 @@ struct DictationPipeline: DictationPreparing {
         var polishMs = 0
 
         if let textPolisher {
+            stages.polishInput = prePolish.text
+            try audit?(stages)
             textPolishAttempted = true
             let polishStarted = DispatchTime.now().uptimeNanoseconds
             do {
-                let polished = try await textPolisher.polish(
+                var polished = try await textPolisher.polish(
                     text: prePolish.text,
-                    terminologyEntries: importedEntries,
-                    hintTerms: hintTerms
+                    terminologyEntries: alignmentEntries,
+                    hintTerms: relatedHints
                 )
+                stages.polishOutput = polished.text
+                stages.polishOutputs = [polished.text]
+                try audit?(stages)
+
+                if isSuspiciousPolishTruncation(original: prePolish.text, polished: polished.text) {
+                    // The same long-form request can occasionally return a short but otherwise
+                    // successful response. Retry once before using the existing safe fallback.
+                    polished = try await textPolisher.polish(
+                        text: prePolish.text,
+                        terminologyEntries: alignmentEntries,
+                        hintTerms: relatedHints
+                    )
+                    stages.polishOutput = polished.text
+                    stages.polishOutputs?.append(polished.text)
+                    try audit?(stages)
+                }
                 polishMs = elapsedMilliseconds(since: polishStarted)
                 estimatedPolishInputTokens = polished.estimatedInputTokens
                 estimatedPolishOutputTokens = polished.estimatedOutputTokens
 
-                guard !isSuspiciousPolishTruncation(original: prePolish.text, polished: polished.text) else {
-                    textPolishErrorMessage = "AI Polish output looked truncated; ChatType used the normalized transcript instead."
-                    return PreparedDictation(
-                        rawText: transcription.text,
-                        finalText: prePolish.text,
-                        normalizationApplied: prePolish.applied,
-                        exactReplacementCount: prePolish.exactReplacementCount,
-                        fuzzyReplacementCount: prePolish.fuzzyReplacementCount,
-                        metrics: DictationMetrics(
-                            transcription: transcription.metrics,
-                            normalizationMs: normalizationMs,
-                            polishMs: polishMs,
-                            textPolishAttempted: textPolishAttempted,
-                            textPolishProvider: nil,
-                            textPolishErrorMessage: textPolishErrorMessage,
-                            estimatedPolishInputTokens: estimatedPolishInputTokens,
-                            estimatedPolishOutputTokens: estimatedPolishOutputTokens
-                        )
-                    )
+                if isSuspiciousPolishTruncation(original: prePolish.text, polished: polished.text) {
+                    throw TextPolishError.invalidResponse
+                } else {
+                    textPolishProvider = polished.provider
+                    let postPolishStarted = DispatchTime.now().uptimeNanoseconds
+                    let postPolish = (alignmentEnabled ? normalizer : PassthroughNormalizer()).normalize(text: polished.text, importedEntries: alignmentEntries, hintTerms: relatedHints)
+                    trace.recordStage("postNormalization", since: postPolishStarted)
+                    normalizationMs += elapsedMilliseconds(since: postPolishStarted)
+                    finalText = postPolish.text
                 }
-
-                textPolishProvider = polished.provider
-
-                let postPolishStarted = DispatchTime.now().uptimeNanoseconds
-                let postPolish = normalizer.normalize(
-                    text: polished.text,
-                    importedEntries: importedEntries,
-                    hintTerms: hintTerms
-                )
-                normalizationMs += elapsedMilliseconds(since: postPolishStarted)
-                finalText = postPolish.text
+            } catch is CancellationError { throw CancellationError()
+            } catch let error as RecorderError { throw error
             } catch {
                 polishMs = elapsedMilliseconds(since: polishStarted)
                 textPolishErrorMessage = error.localizedDescription
+                stages.error = error.localizedDescription
+                if let partial = error as? DoubaoOrganizationFailure {
+                    stages.polishOutput = partial.partialText
+                    stages.polishOutputs = (stages.polishOutputs ?? []) + [partial.partialText]
+                }
+                try audit?(stages)
+                throw DictationPipelineFailure(stages: stages, detail: error.localizedDescription)
             }
         }
 
+        let corrections = TerminologyNormalizer().applyCorrections(text: finalText, entries: correctionsEnabled ? importedEntries : [])
+        finalText = corrections.text
+        stages.finalText = formatted(finalText, trace: trace)
+        try Task.checkCancellation()
+        try audit?(stages)
         return PreparedDictation(
             rawText: transcription.text,
-            finalText: finalText,
+            finalText: stages.finalText!,
             normalizationApplied: prePolish.applied || finalText != prePolish.text,
-            exactReplacementCount: prePolish.exactReplacementCount,
+            exactReplacementCount: prePolish.exactReplacementCount + corrections.exactReplacementCount,
             fuzzyReplacementCount: prePolish.fuzzyReplacementCount,
             metrics: DictationMetrics(
                 transcription: transcription.metrics,
@@ -145,9 +185,18 @@ struct DictationPipeline: DictationPreparing {
                 textPolishProvider: textPolishProvider,
                 textPolishErrorMessage: textPolishErrorMessage,
                 estimatedPolishInputTokens: estimatedPolishInputTokens,
-                estimatedPolishOutputTokens: estimatedPolishOutputTokens
-            )
+                estimatedPolishOutputTokens: estimatedPolishOutputTokens,
+                            timing: trace.snapshot(ready: true)
+            ),
+            stages: stages
         )
+    }
+
+    private func formatted(_ text: String, trace: ProcessingTiming) -> String {
+        let start = ProcessingTiming.now()
+        let result = DictationTextFormatter().format(text)
+        trace.recordStage("formatting", since: start)
+        return result
     }
 
     private func elapsedMilliseconds(since start: UInt64) -> Int {
@@ -180,5 +229,11 @@ struct DictationPipeline: DictationPreparing {
         text.reduce(0) { count, character in
             "。！？!?；;\n".contains(character) ? count + 1 : count
         }
+    }
+}
+
+struct PassthroughNormalizer: TranscriptNormalizing {
+    func normalize(text: String, importedEntries: [TerminologyEntry], hintTerms: [String]) -> NormalizationResult {
+        NormalizationResult(text: text, applied: false, exactReplacementCount: 0, fuzzyReplacementCount: 0)
     }
 }

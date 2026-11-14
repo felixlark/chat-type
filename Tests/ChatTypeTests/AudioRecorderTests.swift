@@ -110,7 +110,7 @@ struct AudioRecorderTests {
 
     @MainActor
     @Test
-    func cancelRecordingDiscardsActiveSessionAndDeletesTempFile() async throws {
+    func cancelRecordingStopsSessionAndPreservesRawFile() async throws {
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("cancel-recording-test.wav")
         try Data("wave".utf8).write(to: fileURL)
 
@@ -128,7 +128,7 @@ struct AudioRecorderTests {
         try recorder.cancelRecording()
 
         #expect(session.stopCallCount == 1)
-        #expect(FileManager.default.fileExists(atPath: fileURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: fileURL.path) == true)
 
         #expect(throws: RecorderError.noActiveRecording) {
             try recorder.stopRecording()
@@ -159,4 +159,40 @@ struct AudioRecorderTests {
         #expect(session.stopCallCount == 1)
         try? FileManager.default.removeItem(at: fileURL)
     }
+    @MainActor
+    @Test
+    func storageFailurePreventsMicrophoneSessionCreation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("not a directory".utf8).write(to: root)
+        let recorder = AudioRecorder(sampleRateHz: 24_000, permissionProvider: { .granted },
+            permissionRequester: { true }, sessionFactory: { _, _ in
+                Issue.record("Audio session must not be created without a writable archive")
+                return FakeRecordingSession()
+            }, recoveryStore: RecoveryStore(directoryURL: root))
+        await #expect(throws: (any Error).self) { try await recorder.startRecording() }
+    }
+
+    @MainActor
+    @Test
+    func cancelRealArchiveKeepsOneJournalAndRawSamples() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = RecoveryStore(directoryURL: root)
+        let session = FakeRecordingSession()
+        let recorder = AudioRecorder(sampleRateHz: 24_000, permissionProvider: { .granted },
+            permissionRequester: { true }, sessionFactory: { url, _ in
+                try Data("PCM samples".utf8).write(to: url)
+                return session
+            }, recoveryStore: store)
+        try await recorder.startRecording()
+        let initial = try #require(store.loadRecent(limit: 10).first)
+        #expect(initial.outcome == "recording")
+        try recorder.cancelRecording()
+        let records = try store.loadRecent(limit: 10)
+        #expect(records.count == 1)
+        #expect(records.first?.outcome == "cancelled")
+        #expect(try Data(contentsOf: initial.audioURL(baseDirectory: root)) == Data("PCM samples".utf8))
+    }
+
 }

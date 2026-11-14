@@ -18,6 +18,10 @@ struct LatencySample: Codable, Sendable, Equatable {
     let totalProcessingMs: Int
     let resultStatus: String
     let errorCategory: String?
+    let uploadedAudioBytes: Int?
+    let uploadEncodingMs: Int?
+    let uploadAudioFormat: String?
+    let processingTiming: ProcessingTimingSnapshot?
 
     init(
         timestamp: Date,
@@ -36,7 +40,11 @@ struct LatencySample: Codable, Sendable, Equatable {
         injectMs: Int,
         totalProcessingMs: Int,
         resultStatus: String,
-        errorCategory: String?
+        errorCategory: String?,
+        uploadedAudioBytes: Int? = nil,
+        uploadEncodingMs: Int? = nil,
+        uploadAudioFormat: String? = nil,
+        processingTiming: ProcessingTimingSnapshot? = nil
     ) {
         self.timestamp = timestamp
         self.audioDurationMs = audioDurationMs
@@ -55,6 +63,10 @@ struct LatencySample: Codable, Sendable, Equatable {
         self.totalProcessingMs = totalProcessingMs
         self.resultStatus = resultStatus
         self.errorCategory = errorCategory
+        self.uploadedAudioBytes = uploadedAudioBytes
+        self.uploadEncodingMs = uploadEncodingMs
+        self.uploadAudioFormat = uploadAudioFormat
+        self.processingTiming = processingTiming
     }
 }
 

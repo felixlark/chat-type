@@ -3,10 +3,10 @@ import Testing
 @testable import ChatType
 
 @Test
-func defaultConfigUsesChatGPTAccountDefaults() throws {
+func defaultConfigUsesDoubaoWithAccountRouteRetained() throws {
     let config = AppConfig()
     #expect(config.transcription.hotkeyKeyCode == 96)
-    #expect(config.transcription.provider == .chatGPTManagedAuth)
+    #expect(config.transcription.provider == .doubaoIME)
     #expect(config.transcription.openAITranscriptionURL == "https://api.openai.com/v1/audio/transcriptions")
     #expect(config.transcription.openAIModel == "gpt-4o-mini-transcribe")
     #expect(config.transcription.openAIAuthTokenEnv == "OPENAI_API_KEY")
@@ -102,6 +102,7 @@ func configRoundTripPreservesHiddenHintTerms() throws {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
     var config = AppConfig()
+    config.transcription.hotkeyKeyCode = 79 // This Mac's physical F5 is isolated as F18.
     config.transcription.hintTerms = [
         "budget v2.xlsx",
         "ChatType",
@@ -114,6 +115,7 @@ func configRoundTripPreservesHiddenHintTerms() throws {
     try encoder.encode(config).write(to: configURL)
 
     let decoded = try JSONDecoder().decode(AppConfig.self, from: Data(contentsOf: configURL))
+    #expect(decoded.transcription.hotkeyKeyCode == 79)
     #expect(decoded.transcription.hintTerms == [
         "budget v2.xlsx",
         "ChatType",
@@ -233,6 +235,52 @@ func legacyImportedTerminologyEntriesMigrateIntoUserDictionaryEntries() throws {
     #expect(migrated.original == "TypeWhisper")
     #expect(migrated.aliases == ["Type Whisper", "Takwiisper"])
     #expect(migrated.source == "dictionary-import")
+}
+
+@Test
+func configDecodeRemovesRetiredBulkSourcesAndCleansContactPositions() throws {
+    let json = """
+    {
+      "transcription": {
+        "terminology": {
+          "entries": [
+            {
+              "type": "term",
+              "original": "发展",
+              "aliases": [],
+              "source": "THUOCL: https://example.com/THUOCL_caijing.txt",
+              "usageCount": 0,
+              "createdAt": "2026-08-27T00:00:00Z"
+            },
+            {
+              "type": "term",
+              "original": "刘鑫财 漳州龙轴组织部 部长",
+              "aliases": [],
+              "source": "smart-shadow-weixin-remark",
+              "usageCount": 0,
+              "createdAt": "2026-08-27T00:00:00Z"
+            },
+            {
+              "type": "term",
+              "original": "ChatType",
+              "aliases": [],
+              "source": "user",
+              "usageCount": 0,
+              "createdAt": "2026-08-27T00:00:00Z"
+            }
+          ]
+        }
+      }
+    }
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: json)
+
+    #expect(decoded.transcription.terminology.entries.map(\.original) == [
+        "刘鑫财",
+        "漳州龙轴组织部",
+        "ChatType",
+    ])
 }
 
 @Test

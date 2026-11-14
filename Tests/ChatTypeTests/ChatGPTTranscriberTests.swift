@@ -62,7 +62,7 @@ private func makeAudioFixture(
 
 @Test
 func managedAuthSendsAudioAboveLegacyTenMegabyteLimit() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
 
     let capture = RequestCapture()
@@ -94,7 +94,7 @@ func managedAuthSendsAudioAboveLegacyTenMegabyteLimit() async throws {
 
 @Test
 func managedAuthSendsOfficialChatGPTAccountContextHeaders() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
 
     let transcriber = ChatGPTTranscriber(
@@ -122,7 +122,7 @@ func managedAuthSendsOfficialChatGPTAccountContextHeaders() async throws {
 
 @Test
 func rejectsAudioAboveOfficialTwentyFiveMegabyteLimit() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
 
     let transcriber = ChatGPTTranscriber(
@@ -147,8 +147,73 @@ func rejectsAudioAboveOfficialTwentyFiveMegabyteLimit() async throws {
 }
 
 @Test
+func rejectsInterruptedPCMRecordingBeforeNetworkRequest() async throws {
+    var config = legacyAccountConfig().transcription
+    config.provider = .chatGPTManagedAuth
+
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("interrupted-\(UUID().uuidString).wav")
+    var samples = Data()
+    for amplitude: Int16 in [2_000, 1] {
+        let seconds = amplitude == 2_000 ? 6 : 114
+        let raw = UInt16(bitPattern: amplitude)
+        for _ in 0..<(100 * seconds) {
+            samples.append(UInt8(raw & 0xFF))
+            samples.append(UInt8((raw >> 8) & 0xFF))
+        }
+    }
+    var wav = Data("RIFF".utf8)
+    func appendUInt16(_ value: UInt16) {
+        wav.append(UInt8(value & 0xFF))
+        wav.append(UInt8((value >> 8) & 0xFF))
+    }
+    func appendUInt32(_ value: UInt32) {
+        wav.append(UInt8(value & 0xFF))
+        wav.append(UInt8((value >> 8) & 0xFF))
+        wav.append(UInt8((value >> 16) & 0xFF))
+        wav.append(UInt8((value >> 24) & 0xFF))
+    }
+    appendUInt32(UInt32(36 + samples.count))
+    wav.append(Data("WAVEfmt ".utf8))
+    appendUInt32(16)
+    appendUInt16(1)
+    appendUInt16(1)
+    appendUInt32(100)
+    appendUInt32(200)
+    appendUInt16(2)
+    appendUInt16(16)
+    wav.append(Data("data".utf8))
+    appendUInt32(UInt32(samples.count))
+    wav.append(samples)
+    try wav.write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let transcriber = ChatGPTTranscriber(
+        authManager: FakeChatGPTAuthManager(),
+        config: config,
+        bridgePromptCapability: BridgePromptCapabilityStore(),
+        dataLoader: { _ in
+            Issue.record("Interrupted recording must fail before a network request")
+            throw URLError(.badServerResponse)
+        }
+    )
+
+    var caughtError: Error?
+    do {
+        _ = try await transcriber.transcribe(
+            RecordedAudio(fileURL: url, durationMs: 120_000)
+        )
+    } catch {
+        caughtError = error
+    }
+
+    #expect(caughtError?.localizedDescription.contains("麦克风输入在约 6 秒后中断") == true)
+    #expect(caughtError?.localizedDescription.contains("未发送") == true)
+}
+
+@Test
 func openAICompatibleRouteIncludesPromptField() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .openAICompatible
     config.openAIAuthTokenEnv = "CHATTYPE_TEST_OPENAI_KEY"
     config.hintTerms = ["budget v2.xlsx", "ChatType"]
@@ -191,7 +256,7 @@ func openAICompatibleRouteIncludesPromptField() async throws {
 
 @Test
 func managedAuthFallsBackWhenPromptFieldIsRejected() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
     config.hintTerms = ["ChatType"]
 
@@ -239,7 +304,7 @@ func managedAuthFallsBackWhenPromptFieldIsRejected() async throws {
 
 @Test
 func managedAuthRefreshesAccessTokenAfterForbidden() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
 
     let capture = RequestCapture()
@@ -289,7 +354,7 @@ func managedAuthRefreshesAccessTokenAfterForbidden() async throws {
 
 @Test
 func managedAuthReportsRetryableErrorAfterThreeCloudflareChallenges() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
     config.hintTerms = ["ChatType"]
     config.openAIAuthTokenEnv = "CHATTYPE_TEST_MISSING_RECOVERY_KEY"
@@ -339,7 +404,7 @@ func managedAuthReportsRetryableErrorAfterThreeCloudflareChallenges() async thro
 
 @Test
 func managedAuthManualRetryPolicyAttemptsCloudflareChallengeOnlyOnce() async throws {
-    var config = AppConfig().transcription
+    var config = legacyAccountConfig().transcription
     config.provider = .chatGPTManagedAuth
     config.hintTerms = ["ChatType"]
 
@@ -380,4 +445,41 @@ func managedAuthManualRetryPolicyAttemptsCloudflareChallengeOnlyOnce() async thr
     #expect(caughtError?.localizedDescription.contains("403") == true)
     #expect(capture.urls() == [config.chatGPTURL])
     #expect(capture.authorizations() == ["Bearer desktop-token"])
+}
+
+@Test func managedAuthCancellationDoesNotRepeatUploadWithoutPrompt() async throws {
+    let count = AttemptCounter()
+    let transcriber = ChatGPTTranscriber(authManager: FakeChatGPTAuthManager(), config: legacyAccountConfig().transcription,
+        bridgePromptCapability: BridgePromptCapabilityStore(), dataLoader: { _ in
+            _ = count.next()
+            throw CancellationError()
+        })
+    let audio = try makeAudioFixture()
+    defer { try? FileManager.default.removeItem(at: audio.fileURL) }
+    do {
+        _ = try await transcriber.transcribe(audio)
+        Issue.record("Cancellation ignored")
+    } catch is CancellationError { }
+    #expect(count.next() == 2)
+}
+
+@Test func localPreviewSelectsRelatedNameBeforeASRPromptBudget() async throws {
+    var config = legacyAccountConfig().transcription
+    config.hintTerms = ["pstack"]
+    config.terminology.entries = (0..<200).map { TerminologyEntry(canonical: "AUnrelatedTerm\($0)", aliases: []) }
+        + [TerminologyEntry(canonical: "林锦钗", aliases: [], source: "macos-contacts")]
+    var audio = try makeAudioFixture()
+    defer { try? FileManager.default.removeItem(at: audio.fileURL) }
+    audio.previewText = "请联系林锦猜处理这次验收"
+    let capture = RequestCapture()
+    let transcriber = ChatGPTTranscriber(authManager: FakeChatGPTAuthManager(), config: config,
+        bridgePromptCapability: BridgePromptCapabilityStore(), dataLoader: { request in
+            capture.append(request, body: String(decoding: request.httpBody ?? Data(), as: UTF8.self))
+            return (Data(#"{"text":"请联系林锦钗处理验收。"}"#.utf8),
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        })
+    let result = try await transcriber.transcribe(audio)
+    #expect(result.metrics.promptIncluded)
+    #expect(capture.bodies().first?.contains("林锦钗") == true)
+    #expect(capture.bodies().first?.contains(audio.previewText) == false)
 }

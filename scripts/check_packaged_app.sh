@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="$ROOT/dist/ChatType.app"
+DIST_ROOT="${CHATTYPE_DIST_PATH:-$ROOT/dist}"
+APP="$DIST_ROOT/ChatType.app"
 PLIST="$APP/Contents/Info.plist"
 
 "$ROOT/scripts/package_app.sh" >/dev/null
@@ -27,6 +28,11 @@ fi
 ENTITLEMENTS="$(/usr/bin/codesign -d --entitlements :- "$APP" 2>/dev/null || true)"
 if [[ "$ENTITLEMENTS" != *"com.apple.security.device.audio-input"* ]]; then
   echo "Packaged app is missing hardened runtime audio input entitlement." >&2
+  exit 1
+fi
+
+if [[ "$ENTITLEMENTS" != *"com.apple.security.personal-information.addressbook"* ]]; then
+  echo "Packaged app is missing hardened runtime Contacts entitlement." >&2
   exit 1
 fi
 

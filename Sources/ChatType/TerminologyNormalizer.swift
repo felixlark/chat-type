@@ -1,4 +1,23 @@
 import Foundation
+import NaturalLanguage
+
+private final class EnglishTermVocabulary: @unchecked Sendable {
+    static let shared = EnglishTermVocabulary()
+    private let lock = NSLock()
+    private var loaded = false
+    private var embedding: NLEmbedding?
+
+    func contains(_ word: String) -> Bool? {
+        lock.withLock {
+            if !loaded {
+                embedding = NLEmbedding.wordEmbedding(for: .english)
+                loaded = true
+            }
+            return embedding?.contains(word.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                locale: Locale(identifier: "en_US_POSIX")))
+        }
+    }
+}
 
 struct NormalizationResult: Sendable, Equatable {
     let text: String
@@ -13,6 +32,7 @@ private struct ExactRule {
     let sortKey: Int
     let priority: Int
     let preserveMixedCaseFromLowercaseCanonical: Bool
+    var protectLiterals = false
 }
 
 private struct FuzzyRule {
@@ -141,6 +161,7 @@ private extension Character {
 }
 
 struct TerminologyNormalizer: TranscriptNormalizing {
+    var isKnownEnglishWord: @Sendable (String) -> Bool? = { EnglishTermVocabulary.shared.contains($0) }
     func normalize(
         text: String,
         importedEntries: [TerminologyEntry],
@@ -151,12 +172,9 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         var output = simplifiedText
         var applied = artifactStrippedText != text || simplifiedText != artifactStrippedText
 
-        let correctionPass = applyExactRules(
-            to: output,
-            rules: correctionRules(from: importedEntries)
-        )
+        let correctionPass = applyCorrections(text: output, entries: importedEntries)
         output = correctionPass.text
-        applied = applied || correctionPass.replacementCount > 0
+        applied = applied || correctionPass.exactReplacementCount > 0
         let correctionReplacementKeys = protectedCorrectionReplacementKeys(from: importedEntries)
 
         let candidateIndex = terminologyCandidateIndex(for: importedEntries)
@@ -178,7 +196,8 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         let fuzzyPass = applyFuzzyRules(
             to: output,
             rules: fuzzyRules(from: fuzzyCandidates),
-            protectedCanonicalKeys: correctionReplacementKeys
+            protectedCanonicalKeys: correctionReplacementKeys,
+            protectedAcronymRanges: acronymRanges(in: output, entries: exactCandidates)
         )
         output = fuzzyPass.text
         applied = applied || fuzzyPass.replacementCount > 0
@@ -190,9 +209,36 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         return NormalizationResult(
             text: output,
             applied: applied,
-            exactReplacementCount: correctionPass.replacementCount + exactPass.replacementCount,
+            exactReplacementCount: correctionPass.exactReplacementCount + exactPass.replacementCount,
             fuzzyReplacementCount: fuzzyPass.replacementCount
         )
+    }
+
+    /// Match against the original text, longest first. Generated output is never rematched.
+    func applyCorrections(text: String, entries: [TerminologyEntry]) -> NormalizationResult {
+        let protected = protectedLiteralRanges(in: text)
+        var candidates: [(range: NSRange, value: String, order: Int)] = []
+        for (order, rule) in correctionRules(from: entries).enumerated() {
+            for match in rule.regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                guard !protected.contains(where: { NSIntersectionRange($0, match.range).length > 0 }),
+                      let range = Range(match.range, in: text), String(text[range]) != rule.canonical else { continue }
+                candidates.append((match.range, rule.canonical, order))
+            }
+        }
+        candidates.sort {
+            if $0.range.length != $1.range.length { return $0.range.length > $1.range.length }
+            return $0.order < $1.order
+        }
+        var accepted: [(range: NSRange, value: String, order: Int)] = []
+        for candidate in candidates where !accepted.contains(where: { NSIntersectionRange($0.range, candidate.range).length > 0 }) {
+            accepted.append(candidate)
+        }
+        var output = text
+        for candidate in accepted.sorted(by: { $0.range.location > $1.range.location }) {
+            if let range = Range(candidate.range, in: output) { output.replaceSubrange(range, with: candidate.value) }
+        }
+        return NormalizationResult(text: output, applied: output != text,
+            exactReplacementCount: accepted.count, fuzzyReplacementCount: 0)
     }
 
     private func applyExactRules(
@@ -215,8 +261,11 @@ struct TerminologyNormalizer: TranscriptNormalizing {
                 range: NSRange(output.startIndex..., in: output)
             )
 
+            guard !matches.isEmpty else { continue }
+            let protectedRanges = rule.protectLiterals ? protectedLiteralRanges(in: output) : []
             for match in matches.reversed() {
-                guard let range = Range(match.range, in: output) else {
+                guard !protectedRanges.contains(where: { NSIntersectionRange($0, match.range).length > 0 }),
+                      let range = Range(match.range, in: output) else {
                     continue
                 }
 
@@ -243,7 +292,8 @@ struct TerminologyNormalizer: TranscriptNormalizing {
     private func applyFuzzyRules(
         to text: String,
         rules: [FuzzyRule],
-        protectedCanonicalKeys: Set<String> = []
+        protectedCanonicalKeys: Set<String> = [],
+        protectedAcronymRanges: [NSRange] = []
     ) -> FuzzyPassResult {
         guard !rules.isEmpty else {
             return FuzzyPassResult(text: text, replacementCount: 0)
@@ -285,6 +335,14 @@ struct TerminologyNormalizer: TranscriptNormalizing {
             guard let winner = bestFuzzyMatch(for: candidate, rules: rules) else {
                 continue
             }
+            if winner.distance > 0 {
+                guard !protectedAcronymRanges.contains(where: { NSIntersectionRange($0, candidateRange).length > 0 }) else { continue }
+                let words = candidate.components(separatedBy: CharacterSet(charactersIn: " ._-"))
+                    .filter { !$0.isEmpty }
+                let known = words.map(isKnownEnglishWord)
+                // A missing local vocabulary narrows guessing; exact aliases and formatting still work.
+                guard !known.contains(where: { $0 == nil }), !known.allSatisfy({ $0 == true }) else { continue }
+            }
             guard candidate != winner.canonical else {
                 continue
             }
@@ -298,6 +356,18 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         }
 
         return FuzzyPassResult(text: output, replacementCount: replacementCount)
+    }
+
+    private func acronymRanges(in text: String, entries: [TerminologyEntry]) -> [NSRange] {
+        entries.flatMap { entry -> [NSRange] in
+            let term = entry.canonical
+            guard (2...6).contains(term.count),
+                  term.utf8.allSatisfy({ (65...90).contains($0) || (48...57).contains($0) }),
+                  term.utf8.contains(where: { (65...90).contains($0) }),
+                  let regex = try? NSRegularExpression(pattern: exactPattern(for: term), options: .caseInsensitive)
+            else { return [] }
+            return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).map(\.range)
+        }
     }
 
     private func bestFuzzyMatch(
@@ -545,7 +615,7 @@ struct TerminologyNormalizer: TranscriptNormalizing {
                 let replacement = entry.replacement ?? ""
                 return normalizedTerms(from: [entry.original] + entry.aliases).compactMap { term in
                     guard let regex = try? NSRegularExpression(
-                        pattern: exactPattern(for: term),
+                        pattern: correctionPattern(for: term),
                         options: [.caseInsensitive]
                     ) else {
                         return nil
@@ -556,7 +626,8 @@ struct TerminologyNormalizer: TranscriptNormalizing {
                         regex: regex,
                         sortKey: collapsedLatinSkeleton(for: term).count,
                         priority: 1_000,
-                        preserveMixedCaseFromLowercaseCanonical: false
+                        preserveMixedCaseFromLowercaseCanonical: false,
+                        protectLiterals: true
                     )
                 }
             }
@@ -676,6 +747,13 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         return #"(?<![A-Za-z0-9])\#(corePattern)(?![A-Za-z0-9])"#
     }
 
+    private func correctionPattern(for term: String) -> String {
+        let literal = NSRegularExpression.escapedPattern(for: term)
+        let left = term.first?.isASCIIAlphanumeric == true ? #"(?<![A-Za-z0-9_])"# : ""
+        let right = term.last?.isASCIIAlphanumeric == true ? #"(?![A-Za-z0-9_])"# : ""
+        return left + literal + right
+    }
+
     private func mixedScriptLiteralPattern(for term: String) -> String {
         let characters = Array(term)
         var pattern = ""
@@ -720,6 +798,7 @@ struct TerminologyNormalizer: TranscriptNormalizing {
 
     private func protectedLiteralRanges(in text: String) -> [NSRange] {
         let patterns = [
+            #"(?s)```.*?```|`[^`\n]*`"#,
             #"https?://[^\s,，。.!！?？;；:：\)\）\]\】]+"#,
             #"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b"#,
             #"(?<![:/])(?:~|/)[^\s,，。.!！?？;；:：\)\）\]\】]+"#,

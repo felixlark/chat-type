@@ -1,5 +1,17 @@
 # ChatType 运维规约与 2026-08-24 故障复盘
 
+## 126 豆包路线与阶段选择（2026-11-14）
+
+本节为当前行为；下文带日期的旧事故与验收记录保留其历史范围。产品负责人已批准豆包默认及独立阶段选择。全新配置默认豆包 ASR 与豆包整段整理；旧配置保留已保存的路线，负责人本机按本轮授权切换后以安装版读回为准。Dictation 的六步分别提供实时预览、识别服务、术语对齐、润色服务、文本修正、粘贴或仅复制的控制。Save Settings 只影响下一次录音，正在处理和手动重试使用录音开始时的快照。
+
+豆包录音为本机 16 kHz 单声道 PCM WAV；实时开启时从增长文件连续编码 Opus 并上传，预览与终稿来自同一个云端会话。关闭预览后停录再上传。固定服务为 `is.snssdk.com` 配置、`frontier-audio-ime-ws.doubao.com` ASR、`ime.doubao.com` 文本整理。配置凭据仅由应用存入自身 Keychain；不导出输入法或浏览器凭据。尚未证实豆包云端热词参数，词库仍在 ChatType 本机对齐。私有协议可能变更、限流或拒绝；探测成功不代表免费或稳定性承诺。
+
+原 ChatGPT 技术路线保留：macOS 26+ 可用 Apple SpeechAnalyzer 预览，完整录音通过原账户转写，再走独立选定的润色。ChatGPT 只要被任一启用的云端阶段选择，就要求原应用会话；兼容 ASR、GLM 与 Qwen 保留原独立凭据和费用边界。不会因豆包失败自动上传到其他服务。
+
+原声与每次尝试存于本地私有恢复库；记录路线、ASR/部分 ASR、实际润色输入和各次输出、终稿、错误及请求标识，不记录凭据。取消保留音频并关闭直播任务。中断录音保留已采集部分，显式确认后才重放残段；新录音使用新条目。手动 Retry 重用同一音频且追加尝试，不覆盖旧失败。处理失败不自动粘贴部分结果。输出前审计失败会阻止注入；输出后落盘失败提示核对目标，避免盲目重复粘贴。
+
+构建需要固定 SHA 的 Xiph Opus 1.6.1，缓存位于 Library/Caches/chat-type；发布包带同身份签名的 dylib 和许可证。真实验收分别记录：单元/协议模拟、受控音频服务探测、安装版全流程、真实 F5 麦克风及取消/重试/粘贴。任一层不能代替下一层。实施证据见 [126 交付记录](doubao-implementation-2026-11-14.md)。
+
 ## 结论
 
 本轮效率低的主因不是单个缺陷复杂，而是没有先把故障分成“应用生命周期、安装包、登录、浏览器回调、转写传输、系统权限”六个独立层级。一个层级刚出现新现象，就直接修改下一层，造成诊断、实现、安装和验收交叉推进。
@@ -119,6 +131,14 @@
 
 前一门槛不能替代后一门槛。遇到权限、验证码或上游阻断时，结论必须是 `partial`，并写明唯一待完成动作。
 
+### 本机 F5／Fn 固定配置（2026-11-14）
+
+用户指定：豆包输入法使用实体 Fn，ChatType 使用实体 F5。已由用户实体键盘验证两者独立唤起，以及安装版 127 的 F5 开停和可见文字输出。
+
+本机 Karabiner 的 `Default profile` 将 F5 输出为 F18，ChatType 的 `transcription.hotkeyKeyCode` 为 **79**。该独立事件通道避免 F1–F12 转换中附带的 Fn 事件误唤起豆包；不能因为界面仍写 F5，就把内部键码改回默认 96。豆包自己的免按模式保留 Fn，ChatType 安装流程不改写豆包数据。
+
+本机选择记录在 `~/Library/Application Support/ChatType/keyboard-binding.json`，与 `config.json`、`~/.config/karabiner/karabiner.json` 一起位于 App 包之外。`scripts/install_app.sh` 在替换 App 前调用 `preserve_local_keyboard.py`，只对已保存该选择的机器恢复 F5→F18 和键码 79，保留其他设置及其他用户的选择。升级、重装及配置整理须保留这些用户文件；不得恢复旧 Fn+F5→Codex Plus 规则。主动清除全部用户数据也会清除本机选择，不属于普通 App 重装。
+
 ### H. 品牌视觉所有权
 
 - App 图标、菜单栏图标 renderer、产品名称、颜色和其他品牌视觉属于产品负责人控制的不变量；当前请求没有明确授权时禁止修改。
@@ -172,3 +192,72 @@
 - 基准测试改为 LaunchServices 启动，避免 TCC 将 app 误判为裸二进制。
 
 macOS Speech 兜底已经完整移除。当前产品严格保留设计内两条转写路径：默认 `chatGPTManagedAuth`，以及用户显式选择并自行配置的 `openAICompatible` 高级恢复路径。
+
+## 长录音采集完整性门禁
+
+- `HTTP 200` 和非空文本只证明转写服务处理了收到的音频，不能证明本地麦克风在整段录音中持续提供信号。
+- 录音已经出现有效声音后，如果电平连续 15 秒低于数字静音阈值，ChatType 自动结束本次采集；停止后仍以 WAV 内容复检。
+- PCM WAV 全程无有效信号，或长录音尾部存在至少 15 秒数字静音时，不调用转写端点、不粘贴残缺文本，并把原音频及明确的输入中断错误写入 Recovery。
+- 排查“不完整转写”时必须先对齐 WAV 时长、非静音区间、上传字节数和 ASR 字数；只有 WAV 含完整语音而响应漏尾，才能归类为上游转写截断。
+
+## 原始录音持久保存（2026-10-07）
+
+- 每次 F5 开始采集前，在 `~/Library/Application Support/ChatType/Recovery/Audio/` 预留私有 WAV，并在 `Recovery/Records/` 原子写入且同步独立记录。目录权限 0700，音频和记录权限 0600。目录或记录不可写时不开始录音。
+- 麦克风直接向该持久文件连续写入，不经过可清理临时目录；录音期间每秒同步文件，停止时再次同步。保存失败立即停止采集并报告错误，已写入文件仍保留。
+- ESC、HUD 关闭、取消处理、处理成功或失败、开始下一段、退出和安装升级都不删除原音频。最近 10 条只是展示限制，所有记录和旧索引继续保留，不能自动修剪原音频。
+- 正常启动时识别上次未结束的录音或处理，恢复 WAV 长度字段并标记 interrupted。修复只更新文件头，保留 PCM 样本；异常文件原样保留。旧 recovery-history.jsonl 只读兼容，新记录独立存储，音频路径不迁移。
+- 软件保证已接收的音频持续落盘并同步，不能承诺磁盘物理损坏、整盘丢失或尚未交付给应用的设备缓冲音频可恢复。此修复不能还原此前已经删除的那段录音。
+- 回归必须覆盖：开始时记录存在、不可写不启动、录音取消和处理取消保留、重启恢复、超过展示条数不删除、History 复制原文件。安装版用真实 F5/ESC/HUD 关闭验证；完成后保留正常运行。
+- 构建缓存默认 `~/Library/Caches/chat-type/swiftpm/`，新包装产物默认 `~/Local/chat-type/dist/`（可用 CHATTYPE_DIST_PATH 显式设置），避免将新产物写入 iCloud Documents。既有 dist 不清理。
+
+## Long-recording upload optimization
+
+Managed ChatGPT STT keeps the durable 24 kHz PCM WAV as the recovery source. Recordings of at least 15 seconds use a temporary M4A/AAC upload derivative at 64 kbps per channel, with the original sample rate and channel count. Short recordings and local encoder failures retain WAV uploads. Original integrity checks and the 25 MB source-file guard run before encoding; cancellation is propagated, and temporary derivatives are removed after reading. The advanced OpenAI-compatible route retains its existing WAV behavior.
+
+The destination remains the existing private `https://chatgpt.com/backend-api/transcribe` account route. No Platform transcription API, extra credentials, Cookies or provider are introduced. Private-route codec acceptance was measured on the installed app; public API format documentation alone does not establish compatibility. Auth/Cloudflare limits are unchanged. Only an explicit 400/422 rejection triggers the existing prompt-free retry; cancellation, network errors and empty successful responses do not initiate a duplicate upload.
+
+Anonymous latency samples include optional `uploadedAudioBytes`, `uploadEncodingMs` and `uploadAudioFormat`; old JSONL samples remain readable. Original `audioBytes` continues to mean the recovery WAV size. Transcription timing excludes encoding, while `totalProcessingMs` includes it. The installed benchmark supports `CHATTYPE_BENCHMARK_UPLOAD_MODES=wav,aac,flac` with publicly authored fixtures, alternating format order and bounded runs. It reports actual encoded format, bytes and URLSession upload/wait/receive timings without credentials.
+
+Measured on 2026-10-07: 53.23s synthetic Chinese audio, 3 runs/format, STT including preparation median WAV 20.544s vs M4A 6.165s; 106.86s audio WAV 46.294s vs M4A 8.113s. These small samples characterize this machine/account/network, not a universal SLA. All 18 requests succeeded with complete endings. Numbers and punctuation were normalized for character-error comparison; mean errors WAV/M4A were 2.99%/2.45% (53s) and 2.59%/2.93% (107s). This is not a general quality guarantee. Benchmark artifacts are in `~/Local/chat-type/latency-optimization/stt/`.
+
+References: [Apple AVAudioFile](https://developer.apple.com/documentation/avfaudio/avaudiofile), [Apple URLSessionTaskMetrics](https://developer.apple.com/documentation/foundation/urlsessiontaskmetrics), [OpenAI speech-to-text format guide](https://developers.openai.com/api/docs/guides/speech-to-text), and the unofficial account-backed implementation [codex-asr](https://github.com/Wangnov/codex-asr). Polish remains the existing `gpt-5.6-terra` production model; the earlier Luna comparison does not establish a quality/tail-latency advantage.
+
+
+## 本机通讯录候选报告（111）
+
+此入口复用已安装 ChatType 的现有 Contacts 授权，只读 Apple Contacts 公开框架，不请求新权限。姓名、昵称、机构与账户关联只留本机；命令在认证和正常应用初始化前分流，不调用转写或润色服务。没有联系人合并/删除或新清单启用入口，真实转写继续使用原词库与规则。
+
+通过 LaunchServices 从正式安装路径运行独立进程：
+
+```bash
+open -W -n /Applications/ChatType.app --args contacts-report
+```
+
+输出目录为 `~/Library/Application Support/ChatType/ContactsReports/Report-<UUID>/`。`index.html` 供本人在本机核对来源、同名/同昵称候选和原始卡片关联；`name-catalog.json` 是未接入真实转写的分层清单；`summary.json` 只含匿名计数、耗时和路径。目录权限 0700、文件 0600，静态 HTML 禁止外部资源。不要把报告或清单作为云模型/评审输入。
+
+可选参数 `--check-cases` 后跟本机 JSON 文件路径；文件为数组，每项包含非空唯一 `id`、查询 `text`、预期姓名数组 `expected`，负例的预期数组留空。原词库与新清单沿同一姓名匹配规则比较，首例首查询可能含索引准备，另测预热后 5 轮中位数；只代表本地查询时间。已知漏召回必须如实记录，不据此宣称完整语音识别验收。
+
+未授权、采集期间联系人变化、配置字节变化或发布失败会终止本次生成，已有完整报告保留。处理完成后恢复正常菜单栏运行：
+
+```bash
+open -n /Applications/ChatType.app
+```
+
+恢复 110 时仅替换已安装应用；保持联系人、配置和已生成报告。联系人实体写入、候选规则调整及分层清单启用均按各自批准范围办理。
+
+
+## Control panel acceptance
+
+The installed control panel has five destinations: Account, Dictation, Terminology, History and Settings. Account owns service credentials and model selection; Dictation owns processing behavior and an inspectable six-step route. A route preview uses the displayed draft; Save Settings applies changes to the next recording.
+
+Terms hold standard spellings and names. Replacement holds explicit final-text corrections; rules run once after polish or its fallback, use literal whole-word matching for English and exact contiguous text for Chinese, and preserve code, paths and links. Identity rules additionally protect their literal text through alignment and polish. macOS input shortcuts are not imported; legacy rules migrate to target standard spellings with a 0600 original-byte backup made before decoding or writing config. To reverse that migration, restore the previous app before restoring the backup.
+
+WeChat import calls the existing wechat-decrypt get_contacts read tool using its installed isolated runtime. Import is a draft operation, merging current entries while retaining unrelated edits. No private database is opened by ChatType. Reports contain counts and bounded failure categories, not names or credentials.
+
+Acceptance covers 17k+ library opening, bilingual search, source grouping, pagination, add/edit/remove a task-owned temporary entry, import/save feedback, page navigation from a scrolled page, the six flow steps, and the SMAppService login item switch. Recheck the signed /Applications/ChatType.app after packaging, then leave its normal menu-bar runtime running.
+
+## 124 自动粘贴焦点修复（2026-11-12）
+
+无编辑光标时，读取selectedText/selectedTextRange成功、窗口中存在输入框或仅持有启动应用上下文，都不能证明可以粘贴。当前门禁只接受实际focused文本控件、可写AXValue且未禁用；原应用回退不搜索任意后代。恢复目标应用并确认PID后再次核实际编辑焦点，60ms等待后发键前重核；不满足时只保留系统剪贴板。终端或自定义编辑器无法提供该证据时可能保守回退，不宣称全编辑器兼容。
+
+真实安装版124已验证Chrome可编辑目标粘贴与BODY无编辑焦点只复制，取消/重入分支及原音频保留；本轮没有触发真实可重试错误，不能据此签署Retry交互或完整固定矩阵通过。证据与速度基线的版本区别见[同机原声结果](doubao-installed-comparison-results-2026-11-12.md)。

@@ -29,9 +29,12 @@ enum RuntimePreflight {
         var issues: [RuntimePreflightIssue] = []
         let provider = authSnapshotProvider ?? defaultAuthSnapshotProvider
 
-        if config.transcription.provider == .chatGPTManagedAuth {
+        if config.transcription.provider == .chatGPTManagedAuth
+            || (config.transcription.textPolish.isEnabled
+                && config.transcription.textPolish.provider == .chatGPTAuth) {
             appendChatGPTAuthIssues(into: &issues, authSnapshotProvider: provider)
-        } else if config.transcription.provider == .openAICompatible {
+        }
+        if config.transcription.provider == .openAICompatible {
             let envName = normalizedEnvName(config.transcription.openAIAuthTokenEnv)
             let token = environment[envName]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if token.isEmpty {

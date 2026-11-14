@@ -79,6 +79,24 @@ private struct FakeTextPolisher: TextPolishing {
 
 private struct FakePolishError: Error {}
 
+private actor SequencedTextPolisher: TextPolishing {
+    private var results: [Result<TextPolishResult, Error>]
+    private(set) var callCount = 0
+
+    init(results: [Result<TextPolishResult, Error>]) {
+        self.results = results
+    }
+
+    func polish(
+        text: String,
+        terminologyEntries: [TerminologyEntry],
+        hintTerms: [String]
+    ) async throws -> TextPolishResult {
+        callCount += 1
+        return try results.removeFirst().get()
+    }
+}
+
 @Test
 func terminologyNormalizerPreservesHintTermsWithoutModelRewrite() {
     let result = TerminologyNormalizer().normalize(
@@ -788,7 +806,7 @@ func dictationPipelineRunsTextPolishBetweenNormalizationPasses() async throws {
 }
 
 @Test
-func dictationPipelineFallsBackToNormalizedTextWhenTextPolishFails() async throws {
+func dictationPipelinePreservesStagesAndBlocksOutputWhenTextPolishFails() async throws {
     let pipeline = DictationPipeline(
         transcriber: FakeTranscriber(
             result: TranscriptionResult(
@@ -814,17 +832,19 @@ func dictationPipelineFallsBackToNormalizedTextWhenTextPolishFails() async throw
         durationMs: 2_000
     )
 
-    let result = try await pipeline.prepare(audio: audio)
+    do {
+        _ = try await pipeline.prepare(audio: audio)
+        Issue.record("Incomplete polish must not produce injectable output")
+    } catch let failure as DictationPipelineFailure {
+        #expect(failure.stages.asrText == "请把 chattype 的术语写对。")
+        #expect(failure.stages.polishInput == "请把 ChatType 的术语写对。")
+        #expect(failure.stages.finalText == nil)
+    }
 
-    #expect(result.finalText == "请把 ChatType 的术语写对。")
-    #expect(result.metrics.textPolishAttempted)
-    #expect(result.metrics.textPolishProvider == nil)
-    #expect(result.metrics.textPolishErrorMessage?.isEmpty == false)
-    #expect(result.metrics.polishMs >= 0)
 }
 
 @Test
-func dictationPipelineFallsBackWhenTextPolishSuspiciouslyTruncatesLongInput() async throws {
+func dictationPipelineBlocksOutputWhenTextPolishSuspiciouslyTruncatesLongInput() async throws {
     let transcript = """
     第一点先把 Dictation 和 AI Polish 拆开。第二点 ChatGPT 的 transcribe API 属于 ASR，不要跟二次 rewrite 混在一起。第三点 ChatGPT Auth rewrite 要单独说明。第四点如果后面有新的决定，要以后面的决定为准。
     """
@@ -863,14 +883,82 @@ func dictationPipelineFallsBackWhenTextPolishSuspiciouslyTruncatesLongInput() as
         durationMs: 12_000
     )
 
+    do {
+        _ = try await pipeline.prepare(audio: audio)
+        Issue.record("Truncated polish must not produce injectable output")
+    } catch let failure as DictationPipelineFailure {
+        #expect(failure.stages.asrText == transcript)
+        #expect(failure.stages.polishOutput == "先把 Dictation 和 AI Polish 拆开。")
+        #expect(failure.stages.polishOutputs?.count == 2)
+        #expect(failure.stages.finalText == nil)
+    }
+
+}
+
+@Test
+func dictationPipelineRetriesOnceWhenFirstTextPolishResultLooksTruncated() async throws {
+    let transcript = """
+    第一点先说明厦门工学院聚生智能产业学院的背景和我担任特聘教授的缘由。第二点说明傅院长希望补充省外专家推荐函。第三点请郭院长协助联系浙江大学相关专家并帮忙牵线。第四点附上五到十位专家名单和完整调研报告。
+    """
+    let polisher = SequencedTextPolisher(results: [
+        .success(
+            TextPolishResult(
+                text: "请郭院长协助联系专家。",
+                provider: .chatGPTAuth,
+                applied: true,
+                estimatedInputTokens: 760,
+                estimatedOutputTokens: 160
+            )
+        ),
+        .success(
+            TextPolishResult(
+                text: """
+                请以我的口吻给郭院长起草微信：
+
+                1. 说明厦门工学院聚生智能产业学院的背景；
+                2. 说明傅院长希望补充省外专家推荐函；
+                3. 请郭院长协助联系浙江大学相关专家；
+                4. 附上专家名单和调研报告。
+                """,
+                provider: .chatGPTAuth,
+                applied: true,
+                estimatedInputTokens: 760,
+                estimatedOutputTokens: 160
+            )
+        ),
+    ])
+    let pipeline = DictationPipeline(
+        transcriber: FakeTranscriber(
+            result: TranscriptionResult(
+                text: transcript,
+                metrics: .init(
+                    provider: .chatGPTManagedAuth,
+                    audioDurationMs: 115_000,
+                    audioBytes: 5_500_000,
+                    authMs: 20,
+                    transcribeMs: 5_800,
+                    promptIncluded: false
+                )
+            )
+        ),
+        normalizer: TerminologyNormalizer(),
+        importedEntries: [],
+        hintTerms: ["浙江大学"],
+        textPolisher: polisher
+    )
+
+    let audio = RecordedAudio(
+        fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("fake-polish-retry.wav"),
+        durationMs: 115_000
+    )
+
     let result = try await pipeline.prepare(audio: audio)
 
-    #expect(result.finalText.contains("ChatGPT Auth rewrite"))
-    #expect(result.finalText.contains("以后面的决定为准"))
-    #expect(result.metrics.textPolishAttempted)
-    #expect(result.metrics.textPolishProvider == nil)
-    #expect(result.metrics.textPolishErrorMessage?.contains("truncated") == true)
-    #expect(result.metrics.estimatedPolishInputTokens == 1_500)
+    #expect(await polisher.callCount == 2)
+    #expect(result.finalText.contains("省外专家推荐函"))
+    #expect(result.finalText.contains("专家名单和调研报告"))
+    #expect(result.metrics.textPolishProvider == .chatGPTAuth)
+    #expect(result.metrics.textPolishErrorMessage == nil)
 }
 
 @Test
@@ -1048,4 +1136,76 @@ func terminologyNormalizerKeepsUnicodeStressProbesStable() {
         hintTerms: []
     )
     #expect(width.text == "全角 Ｃｈａｔ 与半角 Chat 以及中文 聊天记录 都出现一次。")
+}
+
+private actor NameHintCapturingPolisher: TextPolishing {
+    private(set) var receivedHints: [String] = []
+    func polish(text: String, terminologyEntries: [TerminologyEntry], hintTerms: [String]) async throws -> TextPolishResult {
+        receivedHints = hintTerms
+        return TextPolishResult(text: "请联系林锦钗。", provider: .chatGPTAuth, applied: true,
+            estimatedInputTokens: 10, estimatedOutputTokens: 10)
+    }
+}
+
+@Test func fullTranscriptPolishReceivesRelatedPersonalNameCandidates() async throws {
+    let polisher = NameHintCapturingPolisher()
+    let pipeline = DictationPipeline(transcriber: FakeTranscriber(result: TranscriptionResult(text: "请联系林锦猜。",
+        metrics: TranscriptionMetrics(provider: .chatGPTManagedAuth, audioDurationMs: 1_000, audioBytes: 100,
+                                      authMs: 0, transcribeMs: 1, promptIncluded: true))),
+        normalizer: TerminologyNormalizer(),
+        importedEntries: [TerminologyEntry(canonical: "林锦钗", aliases: [], source: "macos-contacts")],
+        hintTerms: ["pstack"], textPolisher: polisher)
+    let result = try await pipeline.prepare(audio: RecordedAudio(fileURL: URL(fileURLWithPath: "/fake.wav"), durationMs: 1_000))
+    let hints = await polisher.receivedHints
+    #expect(hints == ["pstack", "林锦钗"])
+    #expect(result.rawText == "请联系林锦猜。")
+    #expect(result.finalText == "请联系林锦钗。")
+}
+
+@Test(arguments: ["off", "failure", "truncated", "success"])
+func replacementRunsOnceAtFinalOutputAcrossPolishBranches(branch: String) async throws {
+    let text = "alpha 这是需要完整保留的语音转写文本。" + String(repeating: "请保留这里的全部工作内容和验收要求。", count: 9)
+    let corrections = [
+        TerminologyEntry(type: .correction, original: "alpha", replacement: "beta", aliases: [], source: "user", usageCount: 0, createdAt: "test"),
+        TerminologyEntry(type: .correction, original: "beta", replacement: "gamma", aliases: [], source: "user", usageCount: 0, createdAt: "test")
+    ]
+    let polisher: (any TextPolishing)? = branch == "off" ? nil : FakeTextPolisher(result: branch == "failure"
+        ? .failure(FakePolishError())
+        : .success(TextPolishResult(text: branch == "truncated" ? "短句" : text, provider: .chatGPTAuth,
+            applied: true, estimatedInputTokens: 10, estimatedOutputTokens: 10)))
+    let pipeline = DictationPipeline(transcriber: FakeTranscriber(result: TranscriptionResult(text: text,
+        metrics: .init(provider: .chatGPTManagedAuth, audioDurationMs: 2_000, audioBytes: 1000, authMs: 0, transcribeMs: 0, promptIncluded: false))),
+        normalizer: TerminologyNormalizer(), importedEntries: corrections, hintTerms: [], textPolisher: polisher)
+    if branch == "failure" || branch == "truncated" {
+        do {
+            _ = try await pipeline.prepare(audio: RecordedAudio(fileURL: URL(fileURLWithPath: "/tmp/fake.wav"), durationMs: 2_000))
+            Issue.record("Failed polish must block correction and injection")
+        } catch let failure as DictationPipelineFailure {
+            #expect(failure.stages.finalText == nil)
+            #expect(failure.stages.asrText == text)
+        }
+        return
+    }
+    let result = try await pipeline.prepare(audio: RecordedAudio(fileURL: URL(fileURLWithPath: "/tmp/fake.wav"), durationMs: 2_000))
+    #expect(result.finalText.hasPrefix("beta"))
+    #expect(!result.finalText.contains("gamma"))
+    #expect(result.exactReplacementCount == 1)
+
+}
+
+@Test func aPartialSecondPolishAttemptDoesNotEraseTheFirstOutput() async throws {
+    let raw = String(repeating:"请保留这一条完整要求。",count:12)
+    let polisher = SequencedTextPolisher(results:[
+        .success(TextPolishResult(text:"短句。",provider:.doubaoIME,applied:true,estimatedInputTokens:0,estimatedOutputTokens:0)),
+        .failure(DoubaoOrganizationFailure(partialText:"第二次未完",detail:"流中断"))])
+    let pipeline = DictationPipeline(transcriber:FakeTranscriber(result:TranscriptionResult(text:raw,
+        metrics:.init(provider:.doubaoIME,audioDurationMs:1,audioBytes:1,authMs:0,transcribeMs:0,promptIncluded:false))),
+        normalizer:TerminologyNormalizer(),importedEntries:[],hintTerms:[],textPolisher:polisher)
+    do {
+        _ = try await pipeline.prepare(audio:RecordedAudio(fileURL:URL(fileURLWithPath:"/tmp/not-read.wav"),durationMs:1))
+        Issue.record("Partial polish must not produce a final result")
+    } catch let failure as DictationPipelineFailure {
+        #expect(failure.stages.polishOutputs == ["短句。","第二次未完"])
+        #expect(failure.stages.finalText == nil)
+    }
 }

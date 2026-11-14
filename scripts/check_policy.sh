@@ -16,8 +16,9 @@ if ! rg -q 'ChatGPT-Account-ID' "$TRANSCRIBER"; then
   exit 1
 fi
 
-if rg -n 'import Speech|OnDeviceSpeech|SystemOnDevice|requiresOnDeviceRecognition' "$ROOT/Sources/ChatType"; then
-  echo "ChatType source must not add a third on-device Speech transcription route." >&2
+# B0 local SpeechAnalyzer was approved on 2026-11-09; keep it in the audited recorder.
+if rg -n 'import Speech' "$ROOT/Sources/ChatType" --glob '!LocalSpeechRecorder.swift'; then
+  echo "Speech framework imports must remain in the audited local recorder." >&2
   exit 1
 fi
 

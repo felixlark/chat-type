@@ -11,9 +11,9 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     init(
         config: AppConfig,
         authManager: ChatGPTAuthManager,
-        onSave: @escaping (AppConfig) -> Void,
-        onImportAppleContactRemarks: @escaping (AppConfig) async -> Result<AppConfig, any Error>,
-        onImportWeixinRemarks: @escaping (AppConfig) async -> Result<AppConfig, any Error>,
+        onSave: @escaping (AppConfig) -> Result<Void, any Error>,
+        onImportAppleContactRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
+        onImportWeixinRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
         onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
         onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
         recoveryDirectoryURL: URL,
@@ -40,11 +40,12 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
 
         let window = CommandClosingWindow(
             contentRect: NSRect(x: 0, y: 0, width: 980, height: 720),
-            styleMask: [.titled, .closable, .miniaturizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false,
             onQuit: { NSApp.terminate(nil) }
         )
+        window.minSize = NSSize(width: 940, height: 680)
         window.title = "ChatType Settings"
         window.isReleasedWhenClosed = false
         window.isRestorable = false
@@ -135,11 +136,9 @@ private struct PreferencesView: View {
     private enum SettingsSection: String, CaseIterable, Identifiable {
         case account = "Account"
         case dictation = "Dictation"
-        case polish = "AI Polish"
-        case recovery = "History"
         case terminology = "Terminology"
-        case paste = "Paste"
-        case advanced = "Advanced"
+        case recovery = "History"
+        case settings = "Settings"
 
         var id: String { rawValue }
 
@@ -149,37 +148,39 @@ private struct PreferencesView: View {
                 return "person.crop.circle"
             case .dictation:
                 return "mic"
-            case .polish:
-                return "wand.and.stars"
             case .recovery:
                 return "clock.arrow.circlepath"
             case .terminology:
                 return "text.book.closed"
-            case .paste:
-                return "doc.on.clipboard"
-            case .advanced:
+            case .settings:
                 return "gearshape"
             }
         }
     }
 
+    @StateObject private var loginItem = LoginItemController()
+    @State private var saveMessage = "Changes apply to the next recording after saving."
+    @State private var saveIsError = false
+    @State private var importingNames = false
     @State private var config: AppConfig
-    @State private var showsAdvancedRecovery: Bool
     @State private var permissionRefreshNonce: Int = 0
     @State private var terminologyImportMessage: String?
     @State private var terminologyImportIsError = false
-    @State private var isImportingContactRemarks = false
-    @State private var isImportingWeixinRemarks = false
-    @State private var editingTerminologyIndex: Int?
-    @State private var editingTerminologyType: TerminologyEntryType = .term
-    @State private var editingOriginal = ""
-    @State private var editingReplacement = ""
     @State private var authSnapshot: ChatGPTAuthSnapshot
     @State private var browserBridgeSnapshot: BrowserBridgeSnapshot
     @State private var isConnectingBrowserLogin = false
     @State private var copiedDeviceCode: String?
     @State private var selectedSection: SettingsSection = .account
     @State private var textPolishUsage: [TextPolishProviderID: TextPolishUsage] = [:]
+    @State private var unattributedPolishAttempts = 0
+    @State private var qwenKeyInput = ""
+    @State private var qwenKeySaved = false
+    @State private var polishTestGeneration = UUID()
+    @State private var glmKeyInput = ""
+    @State private var glmKeySaved = false
+    @State private var testingTextPolish = false
+    private let qwenKeyStore: any QwenKeyStoring
+    private let glmKeyStore: any GLMKeyStoring
     @State private var textPolishMessage: String?
     @State private var textPolishMessageIsError = false
     @State private var recentHistoryRecords: [TranscriptionHistoryRecord] = []
@@ -188,9 +189,9 @@ private struct PreferencesView: View {
     @State private var copiedHistoryItemID: String?
 
     let authManager: ChatGPTAuthManager
-    let onSave: (AppConfig) -> Void
-    let onImportAppleContactRemarks: (AppConfig) async -> Result<AppConfig, any Error>
-    let onImportWeixinRemarks: (AppConfig) async -> Result<AppConfig, any Error>
+    let onSave: (AppConfig) -> Result<Void, any Error>
+    let onImportAppleContactRemarks: () async -> Result<TerminologyImportResult, any Error>
+    let onImportWeixinRemarks: () async -> Result<TerminologyImportResult, any Error>
     let onLoadRecentHistory: () -> [TranscriptionHistoryRecord]
     let onLoadRecoveryHistory: () -> [RecoveryRecord]
     let recoveryDirectoryURL: URL
@@ -200,23 +201,29 @@ private struct PreferencesView: View {
     init(
         initialConfig: AppConfig,
         authManager: ChatGPTAuthManager,
-        onSave: @escaping (AppConfig) -> Void,
-        onImportAppleContactRemarks: @escaping (AppConfig) async -> Result<AppConfig, any Error>,
-        onImportWeixinRemarks: @escaping (AppConfig) async -> Result<AppConfig, any Error>,
+        onSave: @escaping (AppConfig) -> Result<Void, any Error>,
+        onImportAppleContactRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
+        onImportWeixinRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
         onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
         onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
         recoveryDirectoryURL: URL,
         onRetryRecoveryRecord: @escaping (RecoveryRecord) -> Void,
         onOpenConfigFolder: @escaping () -> Void,
-        focusRecoveryHistory: Bool = false
+        focusRecoveryHistory: Bool = false,
+        glmKeyStore: any GLMKeyStoring = KeychainGLMKeyStore(),
+        qwenKeyStore: any QwenKeyStoring = KeychainQwenKeyStore()
     ) {
+        self.qwenKeyStore = qwenKeyStore
+        _qwenKeySaved = State(initialValue: qwenKeyStore.contains())
+        self.glmKeyStore = glmKeyStore
+        _glmKeySaved = State(initialValue: glmKeyStore.contains())
         _config = State(initialValue: initialConfig)
-        _showsAdvancedRecovery = State(initialValue: initialConfig.transcription.provider == .openAICompatible)
-        _terminologyImportMessage = State(initialValue: Self.terminologyStatusMessage(for: initialConfig))
         _authSnapshot = State(initialValue: authManager.authSnapshot())
         _browserBridgeSnapshot = State(initialValue: authManager.browserBridgeSnapshot())
         _copiedDeviceCode = State(initialValue: nil)
-        _textPolishUsage = State(initialValue: Self.loadTextPolishUsage())
+        let polishUsage = Self.loadTextPolishUsage()
+        _textPolishUsage = State(initialValue: polishUsage.usage)
+        _unattributedPolishAttempts = State(initialValue: polishUsage.unattributed)
         _selectedSection = State(initialValue: focusRecoveryHistory ? .recovery : .account)
         self.authManager = authManager
         self.onSave = onSave
@@ -238,10 +245,10 @@ private struct PreferencesView: View {
     }
 
     private var chatGPTAccountStatus: SetupStatus {
-        if config.transcription.provider == .openAICompatible {
+        if !config.transcription.needsChatGPT {
             return SetupStatus(
-                title: "Advanced recovery route selected",
-                subtitle: "ChatGPT account checks are bypassed while you use your own compatible API."
+                title: "ChatGPT is optional for this route",
+                subtitle: "Only a selected ChatGPT recognition or polish stage requires its account."
             )
         }
 
@@ -321,14 +328,32 @@ private struct PreferencesView: View {
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .id(selectedSection)
 
                 Divider()
 
                 HStack {
                     Button("Open Config Folder", action: onOpenConfigFolder)
                     Spacer()
+                    Text(saveMessage).font(.caption).foregroundStyle(saveIsError ? .red : .secondary)
+                        .lineLimit(2)
                     Button("Save Settings") {
-                        onSave(config)
+                        if config.transcription.textPolish.mode != .disabled {
+                            if config.transcription.textPolish.provider == .qwenFlash && !qwenKeyStore.contains() {
+                                selectedSection = .account
+                                saveMessage = "Save the Qwen API key in Account, or turn AI Polish off."
+                                saveIsError = true; return
+                            }
+                            if config.transcription.textPolish.provider == .glmFlash && !glmKeyStore.contains() {
+                                selectedSection = .account
+                                saveMessage = "Save the GLM API key in Account, or turn AI Polish off."
+                                saveIsError = true; return
+                            }
+                        }
+                        switch onSave(config) {
+                        case .success: saveMessage = "Saved · applies to the next recording."; saveIsError = false
+                        case .failure(let error): saveMessage = error.localizedDescription; saveIsError = true
+                        }
                     }
                     .keyboardShortcut(.defaultAction)
                 }
@@ -336,9 +361,14 @@ private struct PreferencesView: View {
                 .background(Color(nsColor: .windowBackgroundColor))
             }
         }
-        .frame(minWidth: 980, minHeight: 720)
+        .frame(minWidth: 920, minHeight: 640)
+        .onChange(of: config) { _ in
+            saveMessage = "Unsaved changes · save to apply to the next recording."
+            saveIsError = false
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             permissionRefreshNonce += 1
+            loginItem.refresh()
             authSnapshot = authManager.authSnapshot()
             browserBridgeSnapshot = authManager.browserBridgeSnapshot()
             refreshTextPolishStatus()
@@ -365,7 +395,7 @@ private struct PreferencesView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("ChatType")
                     .font(.system(size: 24, weight: .semibold))
-                Text("F5 dictation workflow")
+                Text("Speak. Make it clear.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -396,15 +426,22 @@ private struct PreferencesView: View {
             }
 
             Spacer()
+            Label("F5  start / stop", systemImage: "mic")
+                .font(.caption).foregroundStyle(.secondary).padding(16)
         }
-        .frame(width: 210)
+        .frame(width: 180)
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private var sectionHeader: some View {
         VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Text("ChatType")
+                Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
+                Text(selectedSection.rawValue)
+            }.font(.caption).foregroundStyle(.secondary)
             Text(selectedSection.rawValue)
-                .font(.system(size: 24, weight: .semibold))
+                .font(.system(size: 22, weight: .semibold))
             Text(sectionSubtitle)
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
@@ -413,20 +450,11 @@ private struct PreferencesView: View {
 
     private var sectionSubtitle: String {
         switch selectedSection {
-        case .account:
-            return "Connect ChatGPT, verify permissions, and keep the first-run flow healthy."
-        case .dictation:
-            return "Configure the F5 recording route and ASR behavior."
-        case .polish:
-            return "Rewrite long transcripts into concise, agent-friendly plans after ASR."
-        case .recovery:
-            return "Copy or retry recent audio, ASR, and AI-polished results."
-        case .terminology:
-            return "Maximize glossary recall and preserve casing for product and technical terms."
-        case .paste:
-            return "Control paste behavior while keeping clipboard recovery conservative."
-        case .advanced:
-            return "Recovery routes and lower-level compatibility settings."
+        case .account: return "Your accounts, services and models. Set up once, then press F5."
+        case .dictation: return "From your voice to finished text. See what each step receives and sends."
+        case .terminology: return "The words you use, spelled the way you intend."
+        case .recovery: return "Review original recognition, finished text and saved audio."
+        case .settings: return "Local preferences, login items and paste behavior."
         }
     }
 
@@ -435,51 +463,95 @@ private struct PreferencesView: View {
         switch selectedSection {
         case .account:
             accountOverviewCard
-        case .dictation:
-            dictationCard
-        case .polish:
+            transcriptionAccountCard
             aiPolishCard
-        case .recovery:
-            recoveryHistoryCard
+        case .dictation:
+            ProcessingFlowView(config: $config.transcription, injection: $config.injection, chatGPTReady: authSnapshot.state == .ready,
+                glmReady: glmKeySaved, qwenReady: qwenKeySaved)
+            dictationCard
         case .terminology:
-            settingsCard(title: "Terminology Dictionary") {
-                terminologyDictionarySection
-            }
-        case .paste:
-            settingsCard(title: "Paste & Clipboard") {
-                Toggle("Restore clipboard after paste", isOn: $config.injection.preserveClipboard)
-                Text("When no editable focus is detected, ChatType leaves the polished transcript in the clipboard for manual Cmd+V.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-        case .advanced:
-            advancedRecoveryCard
+            TerminologyEditor(terminology: $config.transcription.terminology,
+                importContacts: onImportAppleContactRemarks, importWeChat: onImportWeixinRemarks, importing: $importingNames)
+        case .recovery: recoveryHistoryCard
+        case .settings: localSettingsCard
         }
     }
 
-    private static func terminologyStatusMessage(for config: AppConfig) -> String? {
-        let entries = config.transcription.terminology.entries
-        guard !entries.isEmpty else {
-            return nil
+    private var transcriptionAccountCard: some View {
+        settingsCard(title: "Audio transcription service") {
+            Picker("Service", selection: $config.transcription.provider) {
+                ForEach(TranscriptionProvider.allCases) { Text($0.title).tag($0) }
+            }.accessibilityIdentifier("transcription-service")
+            if config.transcription.provider == .chatGPTManagedAuth {
+                routeRow(title: "Model", value: "Selected by ChatGPT", detail: "The private transcription service does not expose a selectable model ID.")
+                Text("Complete recordings go to chatgpt.com. Local Codex login supplies the ChatGPT session. This private backend can change or return a challenge; saved audio remains available in History.")
+                    .foregroundStyle(.secondary)
+            } else if config.transcription.provider == .doubaoIME {
+                Text(config.transcription.provider.caption).foregroundStyle(.secondary)
+                Text("不需要豆包账户登录。音频发送到 frontier-audio-ime-ws.doubao.com；先从 is.snssdk.com 取得配置。模型由服务端决定。已知识别与改口整理仍可能出错，请核对终稿。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("更新豆包识别配置") {
+                    Task {
+                        do { _ = try await DoubaoCredentials.shared.key(refresh: true); saveMessage = "豆包配置已保存到 Keychain；未上传音频。"; saveIsError = false }
+                        catch { saveMessage = error.localizedDescription; saveIsError = true }
+                    }
+                }
+            } else {
+                TextField("Transcription endpoint", text: $config.transcription.openAITranscriptionURL)
+                TextField("Audio model", text: $config.transcription.openAIModel)
+                TextField("API key environment variable", text: $config.transcription.openAIAuthTokenEnv)
+                Text("Advanced recovery uses your own API credentials and may incur usage charges. ChatGPT login credentials are never sent to this endpoint. No automatic provider switching.")
+                    .foregroundStyle(.secondary)
+            }
         }
+    }
 
-        let terms = entries.filter { $0.type == .term }.count
-        let replacements = entries.filter { $0.type == .correction }.count
-        return "\(terms) terms · \(replacements) replacements"
+    private var localSettingsCard: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            settingsCard(title: "Startup") {
+                Toggle("Launch ChatType at login", isOn: Binding(get: { loginItem.isEnabled }, set: { loginItem.setEnabled($0) }))
+                    .accessibilityIdentifier("launch-at-login")
+                Text("Starts the installed menu-bar app when you sign in to this Mac. This switch takes effect immediately.")
+                    .foregroundStyle(.secondary)
+                if loginItem.status == .requiresApproval {
+                    Text("Waiting for approval in macOS Login Items.").foregroundStyle(.orange)
+                    Button("Open Login Items") { loginItem.openSystemSettings() }
+                }
+                if let message = loginItem.message { Text(message).foregroundStyle(.red) }
+            }
+            settingsCard(title: "Paste & clipboard") {
+                Toggle("仅复制到剪贴板", isOn: $config.injection.clipboardOnly)
+            Toggle("Restore clipboard after paste", isOn: $config.injection.preserveClipboard)
+                Text("With a focused editable target, finished text is pasted there. Otherwise it remains in the clipboard for Cmd+V.")
+                    .foregroundStyle(.secondary)
+                Toggle("Recording feedback sounds", isOn: $config.transcription.feedbackSoundsEnabled)
+            }
+            settingsCard(title: "Permissions") {
+                setupRow(title: "Microphone", status: microphoneStatus)
+                setupRow(title: "Accessibility", status: accessibilityStatus)
+                ForEach(microphoneRepairActions + accessibilityRepairActions) { repairActionButton($0) }
+            }
+            settingsCard(title: "Local data") {
+                Text("Configuration and vocabulary stay in ChatType’s local folder; credentials use macOS Keychain. History contains recognized text and recoverable recordings.")
+                    .foregroundStyle(.secondary)
+                Button("Open Local Data Folder", action: onOpenConfigFolder)
+            }
+        }
     }
 
     private static func loadTextPolishUsage(
         directoryURL: URL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/ChatType", isDirectory: true)
-    ) -> [TextPolishProviderID: TextPolishUsage] {
+    ) -> (usage: [TextPolishProviderID: TextPolishUsage], unattributed: Int) {
         let dataURL = directoryURL.appendingPathComponent("latency.jsonl")
         guard let contents = try? String(contentsOf: dataURL, encoding: .utf8) else {
-            return [:]
+            return ([:], 0)
         }
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         var usage: [TextPolishProviderID: TextPolishUsage] = [:]
+        var unattributed = 0
 
         for line in contents.split(separator: "\n") {
             guard
@@ -494,7 +566,10 @@ private struct PreferencesView: View {
                 continue
             }
 
-            let provider = sample.textPolishProvider.flatMap(TextPolishProviderID.init(rawValue:)) ?? .chatGPTAuth
+            guard let provider = sample.textPolishProvider.flatMap(TextPolishProviderID.init(rawValue:)) else {
+                unattributed += 1
+                continue
+            }
             var current = usage[provider] ?? TextPolishUsage()
             current.attempts += 1
             if sample.textPolishProvider != nil {
@@ -507,11 +582,13 @@ private struct PreferencesView: View {
             usage[provider] = current
         }
 
-        return usage
+        return (usage, unattributed)
     }
 
     private func refreshTextPolishStatus() {
-        textPolishUsage = Self.loadTextPolishUsage()
+        let loaded = Self.loadTextPolishUsage()
+        textPolishUsage = loaded.usage
+        unattributedPolishAttempts = loaded.unattributed
     }
 
     private func refreshRecentHistory() {
@@ -546,14 +623,8 @@ private struct PreferencesView: View {
         )
     }
 
-    private var filteredTerminologyEntries: [(offset: Int, entry: TerminologyEntry)] {
-        config.transcription.terminology.entries.enumerated().compactMap { offset, entry in
-            entry.type == editingTerminologyType ? (offset: offset, entry: entry) : nil
-        }
-    }
-
     private var accountOverviewCard: some View {
-        settingsCard(title: "Account & Permissions") {
+        settingsCard(title: "ChatGPT account") {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
                     compactSetupTile(title: "ChatGPT", status: chatGPTAccountStatus)
@@ -563,7 +634,7 @@ private struct PreferencesView: View {
 
                 HStack(alignment: .center, spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(authSnapshot.userEmail ?? "Connect ChatGPT to start dictation.")
+                        Text(authSnapshot.userEmail ?? "豆包无需 ChatGPT 登录；选择 ChatGPT 阶段时再连接。")
                             .font(.system(size: 12, weight: .medium))
                         Text("F5 starts and stops recording. Output pastes when an editable target is focused; otherwise it stays in the clipboard.")
                             .font(.system(size: 11))
@@ -575,6 +646,9 @@ private struct PreferencesView: View {
                     chatGPTSetupActions
                 }
 
+                if let terminologyImportMessage {
+                    Text(terminologyImportMessage).font(.caption).foregroundStyle(terminologyImportIsError ? .red : .secondary)
+                }
                 if microphoneStatus.isReady == false || accessibilityStatus.isReady == false {
                     Divider()
                     HStack(spacing: 10) {
@@ -588,64 +662,36 @@ private struct PreferencesView: View {
     }
 
     private var dictationCard: some View {
-        settingsCard(title: "Dictation / ASR") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Hotkey")
-                    Spacer()
-                    Text("F5")
-                        .monospaced()
-                        .foregroundStyle(.secondary)
-                }
-
-                Toggle("Feedback sounds", isOn: $config.transcription.feedbackSoundsEnabled)
-                Toggle("ASR prompt cleanup", isOn: $config.transcription.speechCleanupEnabled)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Default ASR route")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    Text("ChatGPT Account")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("Uses the ChatGPT backend transcribe API. This ASR response is already lightly polished by ChatGPT and is separate from the AI Polish rewrite tab.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                historySection(
-                    title: "Recent Dictation History",
-                    textSource: .dictation
-                )
+        settingsCard(title: "Writing preferences") {
+            HStack {
+                Button("豆包识别＋豆包整理") {
+                    config.transcription.provider = .doubaoIME
+                    config.transcription.textPolish.provider = .doubaoIME
+                    config.transcription.textPolish.mode = .automaticWhenKeyAvailable
+                }.accessibilityIdentifier("preset-doubao")
+                Button("ChatGPT 识别＋ChatGPT 润色") {
+                    config.transcription.provider = .chatGPTManagedAuth
+                    config.transcription.textPolish.provider = .chatGPTAuth
+                    config.transcription.textPolish.chatGPTAuthEnabled = true
+                    config.transcription.textPolish.mode = .automaticWhenKeyAvailable
+                }.accessibilityIdentifier("preset-chatgpt")
             }
-        }
-    }
-
-    private var advancedRecoveryCard: some View {
-        settingsCard(title: "Current Product Route") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("ChatType ships as a ChatGPT account dictation app. The normal path uses the ChatGPT backend for ASR and the ChatGPT-authenticated Responses endpoint for AI Polish.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    routeRow(
-                        title: "Dictation",
-                        value: "ChatGPT Account",
-                        detail: config.transcription.chatGPTURL
-                    )
-                    routeRow(
-                        title: "AI Polish",
-                        value: "ChatGPT Auth",
-                        detail: "\(config.transcription.textPolish.chatGPTResponseModel) via \(config.transcription.textPolish.chatGPTResponseURL)"
-                    )
-                }
-
-                if config.transcription.provider == .openAICompatible {
-                    Divider()
-                    Text("Advanced transcription recovery is selected. It uses the configured OpenAI-compatible ASR environment variable, but ChatType no longer ships a provider-key fallback matrix or text-polish provider key UI.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                }
+            Text("组合只更改两个云端阶段；每阶段的选择仍可单独调整，保存后用于下一次录音。")
+                .font(.caption).foregroundStyle(.secondary)
+            Toggle("Clean filler words and spoken corrections", isOn: $config.transcription.speechCleanupEnabled)
+                .disabled(config.transcription.provider == .doubaoIME)
+            if config.transcription.provider == .doubaoIME {
+                Text("豆包识别的清理方式由服务端决定；本地术语对齐和纠错可在上方分别开关。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
+            Text("Asks the audio transcription service to remove fillers and repetitions while preserving your intended meaning. F5 starts and stops; Escape cancels.").foregroundStyle(.secondary)
+            Toggle("Polish the full transcript", isOn: Binding(
+                get: { config.transcription.textPolish.isEnabled },
+                set: { config.transcription.textPolish.setEnabled($0) }
+            )).accessibilityIdentifier("polish-enabled")
+            Text("Uses the service and model selected in Account. Input is the complete recognized text plus relevant terms. Audio stays in the transcription step. If polish fails, the completed stages are saved and processing remains incomplete; no text is pasted.")
+                .foregroundStyle(.secondary)
+            Button("Configure services & models") { selectedSection = .account }
         }
     }
 
@@ -669,36 +715,68 @@ private struct PreferencesView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
+    private var polishRouteDetail: String {
+        switch config.transcription.textPolish.provider {
+        case .doubaoIME: return "豆包文字整理 · ime.doubao.com（私有接口）"
+        case .chatGPTAuth: return "\(config.transcription.textPolish.chatGPTResponseModel) via \(config.transcription.textPolish.chatGPTResponseURL)"
+        case .glmFlash: return "glm-4.7-flash via open.bigmodel.cn"
+        case .qwenFlash: return "qwen-flash via dashscope.aliyuncs.com (Beijing)"
+        }
+    }
+
     private var aiPolishCard: some View {
-        settingsCard(title: "AI Polish") {
+        settingsCard(title: "Text polish service") {
             VStack(alignment: .leading, spacing: 12) {
-                Picker("Mode", selection: $config.transcription.textPolish.mode) {
-                    Text("Auto").tag(TextPolishMode.automaticWhenKeyAvailable)
-                    Text("Always rewrite").tag(TextPolishMode.always)
-                    Text("Off").tag(TextPolishMode.disabled)
+                Picker("Service", selection: Binding(get: { config.transcription.textPolish.provider }, set: { config.transcription.textPolish.selectProvider($0) })) {
+                    ForEach(TextPolishProviderID.allCases) { provider in
+                        Text(provider.title).tag(provider)
+                    }
                 }
-                .pickerStyle(.segmented)
-
-                HStack(spacing: 16) {
-                    Toggle("Show estimates", isOn: $config.transcription.textPolish.showCostEstimates)
-                    if let textPolishMessage {
-                        Text(textPolishMessage)
+                .onChange(of: config.transcription.textPolish.provider) { _ in
+                    if config.transcription.textPolish.provider == .chatGPTAuth { config.transcription.textPolish.chatGPTAuthEnabled = true }
+                    polishTestGeneration = UUID()
+                    testingTextPolish = false
+                    textPolishMessage = nil
+                    textPolishMessageIsError = false
+                }
+                if config.transcription.textPolish.provider == .qwenFlash {
+                    HStack {
+                        SecureField("Qwen API Key", text: $qwenKeyInput)
+                            .accessibilityIdentifier("qwen-api-key")
+                        Button("Save Key") { saveQwenKey() }
+                        Text(qwenKeySaved ? "Key saved" : "Key not saved")
                             .font(.system(size: 11))
-                            .foregroundStyle(textPolishMessageIsError ? .red : .secondary)
-                            .lineLimit(1)
                     }
-                    Spacer()
-                    Button("Test Connection") {
-                        testTextPolishSelection()
-                    }
-                    .buttonStyle(.bordered)
+                    Text("Qwen Flash, Beijing: eligible free quota is used first, then usage billing. Full transcript and relevant glossary go to dashscope.aliyuncs.com; ASR follows the selected dictation route. Save Settings applies the provider to the next recording.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
-
+                if config.transcription.textPolish.provider == .glmFlash {
+                    HStack {
+                        SecureField("GLM API Key", text: $glmKeyInput)
+                            .accessibilityIdentifier("glm-api-key")
+                        Button("Save Key") { saveGLMKey() }
+                        Text(glmKeySaved ? "Key saved" : "Key not saved")
+                            .font(.system(size: 11))
+                    }
+                    Text("GLM-4.7-Flash uses your vendor account quota and current pricing. Full transcript and relevant glossary go to open.bigmodel.cn; ASR follows the selected dictation route. Save Settings applies the provider to the next recording.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                if config.transcription.textPolish.provider == .chatGPTAuth {
+                    HStack {
+                        Text("Text model").frame(width: 90, alignment: .leading)
+                        TextField("Model ID", text: $config.transcription.textPolish.chatGPTResponseModel)
+                            .accessibilityIdentifier("polish-model")
+                    }
+                    Text("Text model: only the text polish step uses this model. A larger model may improve rewriting and take longer; available models follow your ChatGPT account. Audio recognition uses its own server-selected model.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Text(config.transcription.textPolish.provider == .doubaoIME
+                    ? "输入：上一阶段的全文。输出：整理后的全文。本地词表不作为额外提示上传；不承诺云端热词生效。服务：ime.doubao.com。"
+                    : "Input: aligned full transcript + relevant glossary. Output: rewritten text. Selected service: \(polishRouteDetail). Credentials stay in Keychain. A saved key has not been verified by a request.")
+                    .font(.caption).foregroundStyle(.secondary)
                 polishStatusSection
-                historySection(
-                    title: "Recent Polish History",
-                    textSource: .polish
-                )
             }
         }
     }
@@ -794,7 +872,7 @@ private struct PreferencesView: View {
                     Image(systemName: "arrow.clockwise")
                         .frame(width: 12, height: 12)
                 }
-                .help("Retry")
+                .help("Recognize saved audio using current terminology and settings")
                 .accessibilityLabel("Retry")
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -842,21 +920,39 @@ private struct PreferencesView: View {
     }
 
     private var polishStatusSection: some View {
-        let usage = textPolishUsage[.chatGPTAuth] ?? TextPolishUsage()
+        let provider = config.transcription.textPolish.provider
+        let usage = textPolishUsage[provider] ?? TextPolishUsage()
+        let ready = provider == .qwenFlash ? qwenKeySaved : provider == .glmFlash ? glmKeySaved : provider == .doubaoIME ? true : authSnapshot.state == .ready
+        let detail: String
+        switch provider {
+        case .doubaoIME:
+            detail = "仅发送整理输入文本到 ime.doubao.com。无须账户登录，服务可用性与费用未作保证；未实测前不显示已连接。"
+        case .chatGPTAuth:
+            detail = ready ? "Account connected. Selected model: \(config.transcription.textPolish.chatGPTResponseModel)." : authSnapshot.detail
+        case .glmFlash:
+            detail = ready ? "GLM key saved. API availability is checked when polishing." : "Save a GLM API Key first."
+        case .qwenFlash:
+            detail = ready ? "Qwen key saved. Free quota and usage billing follow your Beijing account." : "Save a Qwen API Key first."
+        }
         return HStack(alignment: .top, spacing: 10) {
-            Image(systemName: authSnapshot.state == .ready ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(authSnapshot.state == .ready ? .green : .orange)
+            Image(systemName: ready ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(ready ? .green : .orange)
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("ChatGPT Auth rewrite")
+                Text("\(provider.title) rewrite")
                     .font(.system(size: 12, weight: .semibold))
-                Text(authSnapshot.state == .ready ? "Ready with \(config.transcription.textPolish.chatGPTResponseModel)." : authSnapshot.detail)
+                Text(detail)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                Text("Usage: \(usage.attempts) attempts, \(usage.succeeded) succeeded, \(usage.failed) failed, \(usage.inputTokens) input tokens, \(usage.outputTokens) output tokens.")
+                Text(provider == .doubaoIME ? "记录：\(usage.attempts) 次尝试，\(usage.succeeded) 次完成；服务未提供 token 用量与费用。" : "Attributed usage: \(usage.attempts) attempts, \(usage.succeeded) succeeded, \(usage.inputTokens) input tokens, \(usage.outputTokens) output tokens.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                if unattributedPolishAttempts > 0 {
+                    Text("\(unattributedPolishAttempts) attempts have an unknown provider, including failed polish attempts.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer()
@@ -971,25 +1067,65 @@ private struct PreferencesView: View {
         }
     }
 
-    private func testTextPolishSelection() {
-        let selected = TextPolishProviderSelector().selectProvider(
-            config: config.transcription.textPolish,
-            chatGPTAuthAvailable: authSnapshot.state == .ready
-        )
-        if let selected {
-            let model = config.transcription.textPolish.chatGPTResponseModel
-            textPolishMessage = "Ready: \(selected.id.title) / \(model)."
+    private func saveQwenKey() {
+        do {
+            try qwenKeyStore.save(qwenKeyInput)
+            qwenKeyInput = ""
+            qwenKeySaved = qwenKeyStore.contains()
+            textPolishMessage = "Qwen Key saved. Save Settings to apply the provider."
             textPolishMessageIsError = false
-        } else {
-            textPolishMessage = "ChatGPT Auth is not ready. Connect ChatGPT first."
+        } catch {
+            textPolishMessage = error.localizedDescription
             textPolishMessageIsError = true
         }
     }
 
-    private var terminologyDictionarySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            terminologyImportRow
-            terminologyWorkspace
+    private func saveGLMKey() {
+        do {
+            try glmKeyStore.save(glmKeyInput)
+            glmKeyInput = ""
+            glmKeySaved = glmKeyStore.contains()
+            textPolishMessage = "GLM Key saved. Save Settings to apply the provider."
+            textPolishMessageIsError = false
+        } catch {
+            textPolishMessage = error.localizedDescription
+            textPolishMessageIsError = true
+        }
+    }
+
+    private func testTextPolishSelection() {
+        let selected = TextPolishProviderSelector().selectProvider(
+            config: config.transcription.textPolish,
+            chatGPTAuthAvailable: authSnapshot.state == .ready,
+            glmKeyAvailable: glmKeyStore.contains(),
+            qwenKeyAvailable: qwenKeyStore.contains()
+        )
+        guard let selected else {
+            textPolishMessage = config.transcription.textPolish.provider == .qwenFlash ? "先保存 Qwen API Key，或检查 Mode。" : config.transcription.textPolish.provider == .glmFlash ? "先保存 GLM API Key，或检查 Mode。" : "ChatGPT Auth is not ready. Connect ChatGPT first."
+            textPolishMessageIsError = true
+            return
+        }
+        let generation = UUID()
+        polishTestGeneration = generation
+        testingTextPolish = true
+        textPolishMessage = "Testing \(selected.id.title)…"
+        textPolishMessageIsError = false
+        let polisher = OpenAICompatibleTextPolisher(
+            config: config.transcription.textPolish, chatGPTAuthProvider: authManager,
+            chatGPTAuthAvailable: authSnapshot.state == .ready, glmKeyStore: glmKeyStore, qwenKeyStore: qwenKeyStore
+        )
+        Task { @MainActor in
+            defer { if polishTestGeneration == generation { testingTextPolish = false } }
+            do {
+                _ = try await polisher.polish(text: "请保留 ChatType 与 F5，只整理这句话。", terminologyEntries: [], hintTerms: [])
+                guard polishTestGeneration == generation else { return }
+                textPolishMessage = "Connected: \(selected.id.title)."
+                textPolishMessageIsError = false
+            } catch {
+                guard polishTestGeneration == generation else { return }
+                textPolishMessage = error.localizedDescription
+                textPolishMessageIsError = true
+            }
         }
     }
 
@@ -1019,7 +1155,7 @@ private struct PreferencesView: View {
                     connectViaBrowser()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(browserLoginIsInProgress || config.transcription.provider == .openAICompatible)
+                .disabled(browserLoginIsInProgress)
 
                 Button("Refresh Session") {
                     Task {
@@ -1030,7 +1166,6 @@ private struct PreferencesView: View {
                     }
                 }
                 .buttonStyle(.bordered)
-                .disabled(config.transcription.provider == .openAICompatible)
 
                 Button("Sign out") {
                     do {
@@ -1138,283 +1273,6 @@ private struct PreferencesView: View {
             .clipShape(Capsule())
     }
 
-    private var terminologyImportRow: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                Label("Dictionary sources", systemImage: "person.2")
-                    .font(.system(size: 12, weight: .semibold))
-
-                Text(terminologyImportMessage ?? terminologyEntryCountSummary)
-                    .font(.system(size: 11))
-                    .foregroundStyle(terminologyImportIsError ? .red : .secondary)
-                    .lineLimit(2)
-            }
-
-            Spacer(minLength: 12)
-
-            Button {
-                importAppleContactRemarks()
-            } label: {
-                Label(
-                    isImportingContactRemarks ? "Importing…" : "Contacts Remarks",
-                    systemImage: "person.crop.circle.badge.plus"
-                )
-            }
-            .disabled(isImportingContactRemarks)
-            .accessibilityIdentifier("import-contact-remarks")
-
-            Button {
-                importWeixinRemarks()
-            } label: {
-                Label(
-                    isImportingWeixinRemarks ? "Importing…" : "WeChat Remarks",
-                    systemImage: "message"
-                )
-            }
-            .disabled(isImportingWeixinRemarks)
-            .accessibilityIdentifier("import-weixin-remarks")
-        }
-        .padding(12)
-        .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
-        }
-    }
-
-    private var terminologyWorkspace: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Picker("Entry type", selection: terminologyTypeBinding) {
-                Text("Terms").tag(TerminologyEntryType.term)
-                Text("Replacement").tag(TerminologyEntryType.correction)
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 360)
-            .labelsHidden()
-            .accessibilityIdentifier("terminology-entry-type")
-
-            HStack(alignment: .bottom, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(editingTerminologyType == .term ? "Preferred spelling" : "Spoken or incorrect text")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    TextField(
-                        editingTerminologyType == .term ? "e.g. OpenClaw" : "e.g. opencloud",
-                        text: $editingOriginal
-                    )
-                    .accessibilityIdentifier("terminology-original")
-                }
-
-                if editingTerminologyType == .correction {
-                    Image(systemName: "arrow.right")
-                        .foregroundStyle(.secondary)
-                        .padding(.bottom, 6)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Replace with")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                        TextField("e.g. OpenClaw", text: $editingReplacement)
-                            .accessibilityIdentifier("terminology-replacement")
-                    }
-                }
-
-                if editingTerminologyIndex != nil {
-                    Button("Cancel") {
-                        clearTerminologyEditor(preservingType: true)
-                    }
-                }
-
-                Button(terminologyEditorActionTitle) {
-                    saveTerminologyEditor()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canSaveTerminologyEntry)
-                .accessibilityIdentifier("terminology-save-entry")
-            }
-
-            Divider()
-
-            HStack {
-                Text(editingTerminologyType == .term ? "Terms" : "Replacement")
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer()
-                Text("\(filteredTerminologyEntries.count) entries")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-
-            terminologyList
-        }
-        .padding(12)
-        .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
-        }
-    }
-
-    private var terminologyEntryCountSummary: String {
-        let entries = config.transcription.terminology.entries
-        let terms = entries.filter { $0.type == .term }.count
-        let replacements = entries.filter { $0.type == .correction }.count
-        return "\(terms) terms · \(replacements) replacements"
-    }
-
-    private var terminologyEditorActionTitle: String {
-        if editingTerminologyIndex != nil {
-            return "Save Changes"
-        }
-        return editingTerminologyType == .term ? "Add Term" : "Add Replacement"
-    }
-
-    private var terminologyList: some View {
-        Group {
-            if filteredTerminologyEntries.isEmpty {
-                Text(editingTerminologyType == .term ? "No terms yet." : "No replacements yet.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 8)
-            } else {
-                LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach(filteredTerminologyEntries, id: \.offset) { index, entry in
-                        terminologyEntryRow(index: index, entry: entry)
-                    }
-                }
-            }
-        }
-    }
-
-    private func terminologyEntryRow(index: Int, entry: TerminologyEntry) -> some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                if entry.type == .correction {
-                    Text("\(entry.original) -> \(entry.replacement ?? "")")
-                        .font(.system(size: 12, weight: .medium))
-                } else {
-                    Text(entry.original)
-                        .font(.system(size: 12, weight: .medium))
-                }
-                Text(entry.source)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Button("Edit") {
-                editTerminologyEntry(at: index)
-            }
-            .buttonStyle(.borderless)
-
-            Button("Delete") {
-                config.transcription.terminology.entries.remove(at: index)
-            }
-            .buttonStyle(.borderless)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func editTerminologyEntry(at index: Int) {
-        let entry = config.transcription.terminology.entries[index]
-        editingTerminologyIndex = index
-        editingTerminologyType = entry.type
-        editingOriginal = entry.original
-        editingReplacement = entry.replacement ?? ""
-    }
-
-    private func saveTerminologyEditor() {
-        let original = editingOriginal.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !original.isEmpty else {
-            return
-        }
-
-        let replacement = editingTerminologyType == .correction
-            ? editingReplacement.trimmingCharacters(in: .whitespacesAndNewlines)
-            : nil
-        let entry = TerminologyEntry(
-            type: editingTerminologyType,
-            original: original,
-            replacement: replacement,
-            aliases: [],
-            source: "user",
-            usageCount: 0,
-            createdAt: ISO8601DateFormatter().string(from: Date())
-        )
-
-        if let editingTerminologyIndex {
-            config.transcription.terminology.entries[editingTerminologyIndex] = entry
-        } else {
-            config.transcription.terminology.entries.append(entry)
-        }
-
-        clearTerminologyEditor(preservingType: true)
-    }
-
-    private func clearTerminologyEditor(preservingType: Bool = false) {
-        let currentType = editingTerminologyType
-        editingTerminologyIndex = nil
-        editingTerminologyType = preservingType ? currentType : .term
-        editingOriginal = ""
-        editingReplacement = ""
-    }
-
-    private var canSaveTerminologyEntry: Bool {
-        let original = editingOriginal.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !original.isEmpty else {
-            return false
-        }
-
-        if editingTerminologyType == .correction {
-            return !editingReplacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-
-        return true
-    }
-
-    private func importAppleContactRemarks() {
-        isImportingContactRemarks = true
-        Task {
-            let result = await onImportAppleContactRemarks(config)
-            await MainActor.run {
-                isImportingContactRemarks = false
-                applyTerminologyImportResult(result, sourceLabel: "Contacts")
-            }
-        }
-    }
-
-    private func importWeixinRemarks() {
-        isImportingWeixinRemarks = true
-        Task {
-            let result = await onImportWeixinRemarks(config)
-            await MainActor.run {
-                isImportingWeixinRemarks = false
-                applyTerminologyImportResult(result, sourceLabel: "WeChat")
-            }
-        }
-    }
-
-    private func applyTerminologyImportResult(
-        _ result: Result<AppConfig, any Error>,
-        sourceLabel: String
-    ) {
-        switch result {
-        case .success(let updatedConfig):
-            config = updatedConfig
-            terminologyImportMessage = "Imported \(sourceLabel) remarks. \(terminologyEntryCountSummary)"
-            terminologyImportIsError = false
-            editingTerminologyType = .term
-        case .failure(let error):
-            terminologyImportMessage = error.localizedDescription
-            terminologyImportIsError = true
-        }
-    }
-
     private func settingsCard<Content: View>(
         title: String,
         @ViewBuilder content: () -> Content
@@ -1506,7 +1364,6 @@ private struct PreferencesView: View {
                     }
                 }
                 .buttonStyle(.bordered)
-                .disabled(config.transcription.provider == .openAICompatible)
 
                 if authSnapshot.state == .ready || authSnapshot.state == .expired {
                     Button("Sign out") {
@@ -1606,19 +1463,6 @@ private struct PreferencesView: View {
         )
     }
 
-    private var terminologyTypeBinding: Binding<TerminologyEntryType> {
-        Binding(
-            get: { editingTerminologyType },
-            set: { newType in
-                editingTerminologyType = newType
-                editingTerminologyIndex = nil
-                editingOriginal = ""
-                editingReplacement = ""
-            }
-        )
-    }
-
-    @ViewBuilder
     private func permissionSetupSection(
         title: String,
         status: SetupStatus,

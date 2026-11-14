@@ -9,3 +9,5 @@ DerivedData/
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
 *.log
+__pycache__/
+/volc-login-qr.png
