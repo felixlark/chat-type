@@ -10,6 +10,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
 
     init(
         config: AppConfig,
+        draft: PreferencesDraft? = nil,
         authManager: ChatGPTAuthManager,
         onSave: @escaping (AppConfig) -> Result<Void, any Error>,
         onImportAppleContactRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
@@ -18,6 +19,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
         recoveryDirectoryURL: URL,
         onRetryRecoveryRecord: @escaping (RecoveryRecord) -> Void,
+        onReprocessRecoveryRecord: @escaping (RecoveryRecord) -> Void,
         onOpenConfigFolder: @escaping () -> Void,
         focusRecoveryHistory: Bool = false,
         onClose: @escaping () -> Void = {}
@@ -25,6 +27,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         self.onClose = onClose
         let view = PreferencesView(
             initialConfig: config,
+            draft: draft,
             authManager: authManager,
             onSave: onSave,
             onImportAppleContactRemarks: onImportAppleContactRemarks,
@@ -33,6 +36,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
             onLoadRecoveryHistory: onLoadRecoveryHistory,
             recoveryDirectoryURL: recoveryDirectoryURL,
             onRetryRecoveryRecord: onRetryRecoveryRecord,
+            onReprocessRecoveryRecord: onReprocessRecoveryRecord,
             onOpenConfigFolder: onOpenConfigFolder,
             focusRecoveryHistory: focusRecoveryHistory
         )
@@ -159,10 +163,11 @@ private struct PreferencesView: View {
     }
 
     @StateObject private var loginItem = LoginItemController()
-    @State private var saveMessage = "Changes apply to the next recording after saving."
-    @State private var saveIsError = false
+    @ObservedObject private var draft: PreferencesDraft
+    private var saveMessage: String { get { draft.message } nonmutating set { draft.message = newValue } }
+    private var saveIsError: Bool { get { draft.isError } nonmutating set { draft.isError = newValue } }
     @State private var importingNames = false
-    @State private var config: AppConfig
+    private var config: AppConfig { get { draft.config } nonmutating set { draft.config = newValue } }
     @State private var permissionRefreshNonce: Int = 0
     @State private var terminologyImportMessage: String?
     @State private var terminologyImportIsError = false
@@ -196,10 +201,12 @@ private struct PreferencesView: View {
     let onLoadRecoveryHistory: () -> [RecoveryRecord]
     let recoveryDirectoryURL: URL
     let onRetryRecoveryRecord: (RecoveryRecord) -> Void
+    let onReprocessRecoveryRecord: (RecoveryRecord) -> Void
     let onOpenConfigFolder: () -> Void
 
     init(
         initialConfig: AppConfig,
+        draft: PreferencesDraft? = nil,
         authManager: ChatGPTAuthManager,
         onSave: @escaping (AppConfig) -> Result<Void, any Error>,
         onImportAppleContactRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
@@ -208,6 +215,7 @@ private struct PreferencesView: View {
         onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
         recoveryDirectoryURL: URL,
         onRetryRecoveryRecord: @escaping (RecoveryRecord) -> Void,
+        onReprocessRecoveryRecord: @escaping (RecoveryRecord) -> Void,
         onOpenConfigFolder: @escaping () -> Void,
         focusRecoveryHistory: Bool = false,
         glmKeyStore: any GLMKeyStoring = KeychainGLMKeyStore(),
@@ -217,7 +225,7 @@ private struct PreferencesView: View {
         _qwenKeySaved = State(initialValue: qwenKeyStore.contains())
         self.glmKeyStore = glmKeyStore
         _glmKeySaved = State(initialValue: glmKeyStore.contains())
-        _config = State(initialValue: initialConfig)
+        _draft = ObservedObject(wrappedValue: draft ?? PreferencesDraft(config: initialConfig))
         _authSnapshot = State(initialValue: authManager.authSnapshot())
         _browserBridgeSnapshot = State(initialValue: authManager.browserBridgeSnapshot())
         _copiedDeviceCode = State(initialValue: nil)
@@ -233,6 +241,7 @@ private struct PreferencesView: View {
         self.onLoadRecoveryHistory = onLoadRecoveryHistory
         self.recoveryDirectoryURL = recoveryDirectoryURL
         self.onRetryRecoveryRecord = onRetryRecoveryRecord
+        self.onReprocessRecoveryRecord = onReprocessRecoveryRecord
         self.onOpenConfigFolder = onOpenConfigFolder
     }
 
@@ -338,22 +347,7 @@ private struct PreferencesView: View {
                     Text(saveMessage).font(.caption).foregroundStyle(saveIsError ? .red : .secondary)
                         .lineLimit(2)
                     Button("Save Settings") {
-                        if config.transcription.textPolish.mode != .disabled {
-                            if config.transcription.textPolish.provider == .qwenFlash && !qwenKeyStore.contains() {
-                                selectedSection = .account
-                                saveMessage = "Save the Qwen API key in Account, or turn AI Polish off."
-                                saveIsError = true; return
-                            }
-                            if config.transcription.textPolish.provider == .glmFlash && !glmKeyStore.contains() {
-                                selectedSection = .account
-                                saveMessage = "Save the GLM API key in Account, or turn AI Polish off."
-                                saveIsError = true; return
-                            }
-                        }
-                        switch onSave(config) {
-                        case .success: saveMessage = "Saved · applies to the next recording."; saveIsError = false
-                        case .failure(let error): saveMessage = error.localizedDescription; saveIsError = true
-                        }
+                        _ = draft.apply(using: onSave)
                     }
                     .keyboardShortcut(.defaultAction)
                 }
@@ -363,7 +357,7 @@ private struct PreferencesView: View {
         }
         .frame(minWidth: 920, minHeight: 640)
         .onChange(of: config) { _ in
-            saveMessage = "Unsaved changes · save to apply to the next recording."
+            saveMessage = "尚未应用 · F5 新录音或按当前流程重跑时会应用；正在处理的录音保持原路线。"
             saveIsError = false
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -374,6 +368,15 @@ private struct PreferencesView: View {
             refreshTextPolishStatus()
             refreshRecentHistory()
             refreshRecoveryHistory()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .recoveryRecordDidChange).receive(on: RunLoop.main)) { update in
+            guard update.userInfo?["directory"] as? String == recoveryDirectoryURL.path,
+                  let record = update.object as? RecoveryRecord else { return }
+            // Update the touched row directly: no synchronous scan/decode of
+            // the entire original-audio archive on the UI or processing path.
+            recentRecoveryRecords.removeAll { $0.id == record.id }
+            recentRecoveryRecords.append(record)
+            recentRecoveryRecords = Array(recentRecoveryRecords.sorted { $0.timestamp < $1.timestamp }.suffix(10))
         }
         .onReceive(
             NotificationCenter.default.publisher(for: .chatGPTAuthStateDidChange)
@@ -450,7 +453,7 @@ private struct PreferencesView: View {
 
     private var sectionSubtitle: String {
         switch selectedSection {
-        case .account: return "Your accounts, services and models. Set up once, then press F5."
+        case .account: return "ChatGPT 登录状态；所有语音处理服务和模型统一在 Dictation 中选择。"
         case .dictation: return "From your voice to finished text. See what each step receives and sends."
         case .terminology: return "The words you use, spelled the way you intend."
         case .recovery: return "Review original recognition, finished text and saved audio."
@@ -463,14 +466,12 @@ private struct PreferencesView: View {
         switch selectedSection {
         case .account:
             accountOverviewCard
-            transcriptionAccountCard
-            aiPolishCard
         case .dictation:
-            ProcessingFlowView(config: $config.transcription, injection: $config.injection, chatGPTReady: authSnapshot.state == .ready,
-                glmReady: glmKeySaved, qwenReady: qwenKeySaved)
-            dictationCard
+            ProcessingFlowView(config: $draft.config.transcription, injection: $draft.config.injection, chatGPTReady: authSnapshot.state == .ready,
+                glmReady: glmKeySaved, qwenReady: qwenKeySaved,
+                recognitionOptions: transcriptionAccountCard, polishOptions: aiPolishCard)
         case .terminology:
-            TerminologyEditor(terminology: $config.transcription.terminology,
+            TerminologyEditor(terminology: $draft.config.transcription.terminology,
                 importContacts: onImportAppleContactRemarks, importWeChat: onImportWeixinRemarks, importing: $importingNames)
         case .recovery: recoveryHistoryCard
         case .settings: localSettingsCard
@@ -479,9 +480,11 @@ private struct PreferencesView: View {
 
     private var transcriptionAccountCard: some View {
         settingsCard(title: "Audio transcription service") {
-            Picker("Service", selection: $config.transcription.provider) {
+            Picker("Service", selection: $draft.config.transcription.provider) {
                 ForEach(TranscriptionProvider.allCases) { Text($0.title).tag($0) }
-            }.accessibilityIdentifier("transcription-service")
+            }.accessibilityIdentifier("stage-asr-provider")
+            Toggle("Clean filler words and spoken corrections", isOn: $draft.config.transcription.speechCleanupEnabled)
+                .disabled(config.transcription.provider == .doubaoIME)
             if config.transcription.provider == .chatGPTManagedAuth {
                 routeRow(title: "Model", value: "Selected by ChatGPT", detail: "The private transcription service does not expose a selectable model ID.")
                 Text("Complete recordings go to chatgpt.com. Local Codex login supplies the ChatGPT session. This private backend can change or return a challenge; saved audio remains available in History.")
@@ -497,9 +500,9 @@ private struct PreferencesView: View {
                     }
                 }
             } else {
-                TextField("Transcription endpoint", text: $config.transcription.openAITranscriptionURL)
-                TextField("Audio model", text: $config.transcription.openAIModel)
-                TextField("API key environment variable", text: $config.transcription.openAIAuthTokenEnv)
+                TextField("Transcription endpoint", text: $draft.config.transcription.openAITranscriptionURL)
+                TextField("Audio model", text: $draft.config.transcription.openAIModel)
+                TextField("API key environment variable", text: $draft.config.transcription.openAIAuthTokenEnv)
                 Text("Advanced recovery uses your own API credentials and may incur usage charges. ChatGPT login credentials are never sent to this endpoint. No automatic provider switching.")
                     .foregroundStyle(.secondary)
             }
@@ -518,13 +521,6 @@ private struct PreferencesView: View {
                     Button("Open Login Items") { loginItem.openSystemSettings() }
                 }
                 if let message = loginItem.message { Text(message).foregroundStyle(.red) }
-            }
-            settingsCard(title: "Paste & clipboard") {
-                Toggle("仅复制到剪贴板", isOn: $config.injection.clipboardOnly)
-            Toggle("Restore clipboard after paste", isOn: $config.injection.preserveClipboard)
-                Text("With a focused editable target, finished text is pasted there. Otherwise it remains in the clipboard for Cmd+V.")
-                    .foregroundStyle(.secondary)
-                Toggle("Recording feedback sounds", isOn: $config.transcription.feedbackSoundsEnabled)
             }
             settingsCard(title: "Permissions") {
                 setupRow(title: "Microphone", status: microphoneStatus)
@@ -661,40 +657,6 @@ private struct PreferencesView: View {
         }
     }
 
-    private var dictationCard: some View {
-        settingsCard(title: "Writing preferences") {
-            HStack {
-                Button("豆包识别＋豆包整理") {
-                    config.transcription.provider = .doubaoIME
-                    config.transcription.textPolish.provider = .doubaoIME
-                    config.transcription.textPolish.mode = .automaticWhenKeyAvailable
-                }.accessibilityIdentifier("preset-doubao")
-                Button("ChatGPT 识别＋ChatGPT 润色") {
-                    config.transcription.provider = .chatGPTManagedAuth
-                    config.transcription.textPolish.provider = .chatGPTAuth
-                    config.transcription.textPolish.chatGPTAuthEnabled = true
-                    config.transcription.textPolish.mode = .automaticWhenKeyAvailable
-                }.accessibilityIdentifier("preset-chatgpt")
-            }
-            Text("组合只更改两个云端阶段；每阶段的选择仍可单独调整，保存后用于下一次录音。")
-                .font(.caption).foregroundStyle(.secondary)
-            Toggle("Clean filler words and spoken corrections", isOn: $config.transcription.speechCleanupEnabled)
-                .disabled(config.transcription.provider == .doubaoIME)
-            if config.transcription.provider == .doubaoIME {
-                Text("豆包识别的清理方式由服务端决定；本地术语对齐和纠错可在上方分别开关。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Text("Asks the audio transcription service to remove fillers and repetitions while preserving your intended meaning. F5 starts and stops; Escape cancels.").foregroundStyle(.secondary)
-            Toggle("Polish the full transcript", isOn: Binding(
-                get: { config.transcription.textPolish.isEnabled },
-                set: { config.transcription.textPolish.setEnabled($0) }
-            )).accessibilityIdentifier("polish-enabled")
-            Text("Uses the service and model selected in Account. Input is the complete recognized text plus relevant terms. Audio stays in the transcription step. If polish fails, the completed stages are saved and processing remains incomplete; no text is pasted.")
-                .foregroundStyle(.secondary)
-            Button("Configure services & models") { selectedSection = .account }
-        }
-    }
-
     private func routeRow(title: String, value: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Text(title)
@@ -727,11 +689,14 @@ private struct PreferencesView: View {
     private var aiPolishCard: some View {
         settingsCard(title: "Text polish service") {
             VStack(alignment: .leading, spacing: 12) {
+                Toggle("启用全文润色", isOn: Binding(get: { config.transcription.textPolish.isEnabled }, set: { config.transcription.textPolish.setEnabled($0) }))
+                    .accessibilityIdentifier("stage-polish-enabled")
                 Picker("Service", selection: Binding(get: { config.transcription.textPolish.provider }, set: { config.transcription.textPolish.selectProvider($0) })) {
                     ForEach(TextPolishProviderID.allCases) { provider in
                         Text(provider.title).tag(provider)
                     }
                 }
+                .accessibilityIdentifier("stage-polish-provider")
                 .onChange(of: config.transcription.textPolish.provider) { _ in
                     if config.transcription.textPolish.provider == .chatGPTAuth { config.transcription.textPolish.chatGPTAuthEnabled = true }
                     polishTestGeneration = UUID()
@@ -747,7 +712,7 @@ private struct PreferencesView: View {
                         Text(qwenKeySaved ? "Key saved" : "Key not saved")
                             .font(.system(size: 11))
                     }
-                    Text("Qwen Flash, Beijing: eligible free quota is used first, then usage billing. Full transcript and relevant glossary go to dashscope.aliyuncs.com; ASR follows the selected dictation route. Save Settings applies the provider to the next recording.")
+                    Text("Qwen Flash, Beijing: eligible free quota is used first, then usage billing. Full transcript and relevant glossary go to dashscope.aliyuncs.com; ASR follows the selected dictation route. F5 新录音或按当前流程重跑时应用这些选择。")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -759,14 +724,14 @@ private struct PreferencesView: View {
                         Text(glmKeySaved ? "Key saved" : "Key not saved")
                             .font(.system(size: 11))
                     }
-                    Text("GLM-4.7-Flash uses your vendor account quota and current pricing. Full transcript and relevant glossary go to open.bigmodel.cn; ASR follows the selected dictation route. Save Settings applies the provider to the next recording.")
+                    Text("GLM-4.7-Flash uses your vendor account quota and current pricing. Full transcript and relevant glossary go to open.bigmodel.cn; ASR follows the selected dictation route. F5 新录音或按当前流程重跑时应用这些选择。")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
                 if config.transcription.textPolish.provider == .chatGPTAuth {
                     HStack {
                         Text("Text model").frame(width: 90, alignment: .leading)
-                        TextField("Model ID", text: $config.transcription.textPolish.chatGPTResponseModel)
+                        TextField("Model ID", text: $draft.config.transcription.textPolish.chatGPTResponseModel)
                             .accessibilityIdentifier("polish-model")
                     }
                     Text("Text model: only the text polish step uses this model. A larger model may improve rewriting and take longer; available models follow your ChatGPT account. Audio recognition uses its own server-selected model.")
@@ -824,7 +789,7 @@ private struct PreferencesView: View {
         return HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
-                    Text(item.target)
+                    Text("来源：\(item.target)")
                         .font(.system(size: 11, weight: .medium))
                     Text(item.outcome)
                         .font(.system(size: 10))
@@ -832,6 +797,11 @@ private struct PreferencesView: View {
                     Text(item.timestamp.formatted(date: .numeric, time: .shortened))
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
+                }
+                if let record = recentRecoveryRecords.first(where: { $0.id == item.recordID }),
+                   let snapshot = record.attempts?.last?.snapshot ?? record.snapshot {
+                    Text("本次流程 · ASR：\(snapshot.provider.title) · 润色：\(snapshot.textPolish.isEnabled ? snapshot.textPolish.provider.title : "关闭")")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Text(item.text)
                     .font(.system(size: 12))
@@ -867,17 +837,19 @@ private struct PreferencesView: View {
                 .controlSize(.small)
 
                 Button {
-                    retryRecoveryHistoryItem(item)
+                    if let record = recentRecoveryRecords.first(where: { $0.id == item.recordID }) { onReprocessRecoveryRecord(record) }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .frame(width: 12, height: 12)
+                    Text("按当前流程重跑")
                 }
-                .help("Recognize saved audio using current terminology and settings")
-                .accessibilityLabel("Retry")
+                .help("应用 Dictation 当前选择，以新尝试重新处理；原声和旧尝试保留。")
+                .accessibilityLabel("按当前流程重跑")
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                Menu("更多") {
+                    Button("重试原路线") { retryRecoveryHistoryItem(item) }
+                }.menuStyle(.borderlessButton).fixedSize()
             }
-            .frame(width: 132, alignment: .trailing)
+            .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -1072,7 +1044,7 @@ private struct PreferencesView: View {
             try qwenKeyStore.save(qwenKeyInput)
             qwenKeyInput = ""
             qwenKeySaved = qwenKeyStore.contains()
-            textPolishMessage = "Qwen Key saved. Save Settings to apply the provider."
+            textPolishMessage = "Qwen Key 已保存；F5 新录音或按当前流程重跑时应用所选服务。"
             textPolishMessageIsError = false
         } catch {
             textPolishMessage = error.localizedDescription
@@ -1085,7 +1057,7 @@ private struct PreferencesView: View {
             try glmKeyStore.save(glmKeyInput)
             glmKeyInput = ""
             glmKeySaved = glmKeyStore.contains()
-            textPolishMessage = "GLM Key saved. Save Settings to apply the provider."
+            textPolishMessage = "GLM Key 已保存；F5 新录音或按当前流程重跑时应用所选服务。"
             textPolishMessageIsError = false
         } catch {
             textPolishMessage = error.localizedDescription

@@ -49,6 +49,7 @@ struct DictationAttempt: Codable, Sendable, Equatable, Identifiable {
     var snapshot: TranscriptionConfig
     var stages: DictationStageAudit
     var outcome: String
+    var injectionSnapshot: InjectionConfig? = nil
     var schemaVersion: Int? = 1
 }
 

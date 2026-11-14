@@ -49,17 +49,17 @@ func processingOverlayStateShowsCancelControlWithoutTimer() {
 }
 
 @Test
-func successAndOrdinaryErrorStatesRemainNonInteractive() {
+func successHidesCancelWhileOrdinaryErrorCanBeDismissed() {
     #expect(OverlayVisualState.success(.pasted).showsCancelControl == false)
-    #expect(OverlayVisualState.error("boom").showsCancelControl == false)
+    #expect(OverlayVisualState.error("boom").showsCancelControl == true)
     #expect(OverlayVisualState.error("boom").showsRetryControl == false)
 }
 
 @Test
-func retryableErrorStateShowsRetryControlWithoutCancelControl() {
+func retryableErrorStateShowsRetryAndCancelControls() {
     let state = OverlayVisualState.retryableError("Cloudflare 403")
 
-    #expect(state.showsCancelControl == false)
+    #expect(state.showsCancelControl == true)
     #expect(state.showsRetryControl == true)
     #expect(state.trailingText == nil)
 }
@@ -201,7 +201,7 @@ func overlayControllerUsesIntegratedSessionControlInsideMainPanel() {
 
 @MainActor
 @Test
-func overlayControllerOnlyShowsInlineCancelControlForActiveSessionStates() {
+func overlayControllerHidesInlineCancelAfterSuccess() {
     let overlay = OverlayController(presentsPanel: false)
 
     overlay.showRecording(elapsedText: "00:04")
@@ -219,12 +219,12 @@ func overlayControllerOnlyShowsInlineCancelControlForActiveSessionStates() {
 
 @MainActor
 @Test
-func overlayControllerRetryableErrorShowsRetryControlOnly() {
+func overlayControllerRetryableErrorShowsRetryAndCancelControls() {
     let overlay = OverlayController(presentsPanel: false)
 
     overlay.showRetryableError("Cloudflare 403")
 
-    #expect(overlay.debugSnapshot.isCancelControlVisible == false)
+    #expect(overlay.debugSnapshot.isCancelControlVisible == true)
     #expect(overlay.debugSnapshot.isRetryControlVisible == true)
 }
 
@@ -240,6 +240,37 @@ func overlayControllerCancelControlRoutesClickIntoOnCancel() {
 
     #expect(overlay.debugSimulateCancelControlClick() == true)
     #expect(cancelCallCount == 1)
+}
+
+@MainActor
+@Test
+func errorCloseControlDismissesPanelAndAllowsNewRecording() {
+    for retryable in [false, true] {
+        let overlay = OverlayController(presentsPanel: false)
+        var cancelCallCount = 0
+        var retryCallCount = 0
+        overlay.onCancel = {
+            cancelCallCount += 1
+            overlay.hide()
+        }
+        overlay.onRetry = { retryCallCount += 1 }
+        if retryable { overlay.showRetryableError("Transcription failed") }
+        else { overlay.showError("Microphone unavailable") }
+
+        #expect(overlay.debugSnapshot.isPresented)
+        #expect(overlay.debugSnapshot.controlsInsidePanel)
+        #expect(overlay.debugSimulateCancelControlClick())
+        #expect(cancelCallCount == 1)
+        #expect(retryCallCount == 0)
+        #expect(!overlay.debugSnapshot.isPresented)
+        #expect(!overlay.debugSnapshot.isRetryControlVisible)
+
+        overlay.showRecording(elapsedText: "00:00")
+        #expect(overlay.debugSnapshot.isPresented)
+        #expect(overlay.debugSnapshot.isCancelControlVisible)
+        overlay.hide()
+        overlay.onCancel = nil
+    }
 }
 
 @MainActor
@@ -310,7 +341,7 @@ private actor OverlayDeadlineGate {
         for _ in 0..<8 { overlay.refreshGeometry() }
         overlay.updateRecording(level: 0.8, elapsedText: "00:09")
         overlay.updateTranscriptPreview("晚到的实时文字")
-        #expect(!overlay.debugSnapshot.isCancelControlVisible)
+        #expect(overlay.debugSnapshot.isCancelControlVisible == isError)
         #expect(overlay.debugSnapshot.transcript == "保留全文直到终态结束。")
         #expect(overlay.debugSnapshot.isPresented)
         await gate.fire()

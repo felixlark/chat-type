@@ -34,9 +34,9 @@ enum StreamingEvaluationCLI {
             throw EvaluationError.unsupportedRoute
         }
         let output = URL(fileURLWithPath: destination)
-        let growing = output.deletingPathExtension().appendingPathExtension("wav")
+        let archive = output.deletingPathExtension().appendingPathExtension("recovery")
         guard !FileManager.default.fileExists(atPath: output.path),
-              !FileManager.default.fileExists(atPath: growing.path) else { throw EvaluationError.outputExists }
+              !FileManager.default.fileExists(atPath: archive.path) else { throw EvaluationError.outputExists }
         try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true,
                                               attributes: [.posixPermissions: 0o700])
         let sourceURL = URL(fileURLWithPath: source)
@@ -44,58 +44,94 @@ enum StreamingEvaluationCLI {
         var pcm = Data()
         while let frame = try reader.next() { pcm.append(frame) }
         guard !pcm.isEmpty else { throw EvaluationError.emptyAudio }
+        let recovery = RecoveryStore(directoryURL: archive)
+        let growing = try recovery.beginRecording()
+        let attemptID = UUID()
         try header(pcmBytes: 0).write(to: growing)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: growing.path)
         let auth = ChatGPTAuthManager()
         if t.needsChatGPT { await auth.prewarmSession() }
         let observations = Observations()
-        let live = t.provider == .doubaoIME ? DoubaoLiveRecognition(url: growing, sessionAudit: { observations.receive($0) }) : nil
-        defer { live?.cancel() }
-        let handle = try FileHandle(forWritingTo: growing)
-        defer { try? handle.close() }
-        try handle.seekToEnd()
-        let clock = ContinuousClock()
-        let began = clock.now
+        // A detached producer keeps the actual capture clock running even while
+        // the main actor persists a large first snapshot or opens the socket.
         let captureTick = ProcessingTiming.now()
-        var offset = 0
-        var firstPreviewMs: Double?
-        while offset < pcm.count {
-            let end = min(offset + 640, pcm.count)
-            let frameEndNs = Int64(end) * 1_000_000_000 / 32_000
-            try await clock.sleep(until: began.advanced(by: .nanoseconds(frameEndNs)))
-            try handle.write(contentsOf: pcm[offset..<end]); offset = end
-            if firstPreviewMs == nil, let live, !(await live.state.preview).isEmpty {
-                firstPreviewMs = ProcessingTiming.milliseconds(since: captureTick)
+        let began = ContinuousClock().now
+        let capturePCM = pcm
+        let capture = Task.detached {
+            let handle = try FileHandle(forWritingTo: growing)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            let clock = ContinuousClock()
+            var offset = 0
+            while offset < capturePCM.count {
+                let end = min(offset + 640, capturePCM.count)
+                try await clock.sleep(until: began.advanced(by: .nanoseconds(Int64(end) * 1_000_000_000 / 32_000)))
+                try handle.write(contentsOf: capturePCM[offset..<end]); offset = end
             }
+            let stop = ProcessingTiming.now()
+            try handle.seek(toOffset: 0); try handle.write(contentsOf: header(pcmBytes: capturePCM.count))
+            try handle.synchronize()
+            return (stop, ProcessingTiming.milliseconds(since: stop))
         }
-        // This boundary corresponds to entering stopRecording(), before sealing.
-        let stopTick = ProcessingTiming.now()
-        try handle.seek(toOffset: 0); try handle.write(contentsOf: header(pcmBytes: pcm.count))
-        try handle.synchronize(); try handle.close()
-        let sealMs = ProcessingTiming.milliseconds(since: stopTick)
+        defer { capture.cancel() }
+        try recovery.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: growing,
+            durationMs: 0, asrText: nil, polishText: nil, appName: nil, appBundleIdentifier: nil,
+            outcome: "recording", errorMessage: nil, snapshot: t, attemptID: attemptID,
+            injectionSnapshot: config.injection))
+        let sessionAudit: @Sendable ([DoubaoSessionAttempt]) throws -> Void = { sessions in
+            observations.receive(sessions)
+            try recovery.recordASRSessions(audioURL: growing, attemptID: attemptID, sessions: sessions)
+        }
+        let live = t.provider == .doubaoIME ? DoubaoLiveRecognition(url: growing, sessionAudit: sessionAudit) : nil
+        defer { live?.cancel() }
+        let (stopTick, sealMs) = try await capture.value
         var audio = RecordedAudio(fileURL: growing, durationMs: pcm.count * 1000 / 32_000)
+        try recovery.finishRecording(audio, outcome: "recorded")
         if let live { audio.cloudTranscript = live.finish(audio) }
+        let durationMs = audio.durationMs
+        let audit: @Sendable (DictationStageAudit) throws -> Void = { stages in
+            observations.stage(stages)
+            let started = ProcessingTiming.now()
+            defer { ProcessingTrace.current?.recordStage("recoveryAudit", since: started) }
+            try recovery.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: growing,
+                durationMs: durationMs, asrText: stages.asrText, polishText: stages.polishOutput,
+                appName: nil, appBundleIdentifier: nil, outcome: "processing", errorMessage: stages.error,
+                snapshot: t, attemptID: attemptID, stages: stages, injectionSnapshot: config.injection))
+        }
         let pipeline = DictationPipeline(transcriber: ChatGPTTranscriber(authManager: auth, config: t,
             usesLocalSpeechForFiles: false).selectedRoute, normalizer: TerminologyNormalizer(),
             importedEntries: t.activeDictionaryEntries, hintTerms: t.prioritizedHintTerms,
             textPolisher: t.textPolish.isEnabled ? OpenAICompatibleTextPolisher(config: t.textPolish,
                 chatGPTAuthProvider: auth, chatGPTAuthAvailable: t.needsChatGPT && auth.authSnapshot().state == .ready) : nil,
             alignmentEnabled: t.terminologyAlignmentEnabled, correctionsEnabled: t.correctionRulesEnabled,
-            audit: { observations.stage($0) })
-        var row: [String: Any] = ["mode": "paced-growing-WAV-production-live-worker",
+            audit: audit)
+        var row: [String: Any] = ["mode": "paced-growing-WAV-production-live-worker-with-durable-audit",
             "boundary": "stop/seal entry to prepared final; excludes HID, microphone and GUI insertion",
             "provider": t.provider.rawValue, "polishProvider": t.textPolish.provider.rawValue,
             "audioDurationMs": audio.durationMs, "captureWallMs": Double(stopTick - captureTick) / 1_000_000,
             "sourceSHA256": hash(try Data(contentsOf: sourceURL)), "replayedPCMSHA256": hash(pcm),
             "sealMs": sealMs, "stopTickNs": stopTick]
-        row["firstPreviewMs"] = firstPreviewMs
         do {
-            let result = try await pipeline.prepare(audio: audio)
+            try audit(.init())
+            let result = try await DoubaoSessionAudit.$observer.withValue(sessionAudit) {
+                try await pipeline.prepare(audio: audio)
+            }
+            try recovery.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: growing,
+                durationMs: durationMs, asrText: result.rawText, polishText: result.stages?.polishOutput,
+                appName: nil, appBundleIdentifier: nil, outcome: "readyToInject", errorMessage: nil,
+                snapshot: t, attemptID: attemptID, stages: result.stages, injectionSnapshot: config.injection))
             let readyTick = ProcessingTiming.now()
             row["readyTickNs"] = readyTick
             row["stopToFinalMs"] = Double(readyTick - stopTick) / 1_000_000
             row["status"] = "success"; row["rawText"] = result.rawText; row["finalText"] = result.finalText
             row["asrTotalMs"] = result.metrics.transcription.transcribeMs
+            row["liveFinishToLastSendMs"] = result.metrics.transcription.liveFinishToLastSendMs
+            row["sessionFinishWaitMs"] = result.metrics.transcription.sessionFinishWaitMs
+            row["processingTiming"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(result.metrics.timing))
+            try recovery.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: growing,
+                durationMs: durationMs, asrText: result.rawText, polishText: result.stages?.polishOutput,
+                appName: nil, appBundleIdentifier: nil, outcome: "prepared", errorMessage: nil,
+                snapshot: t, attemptID: attemptID, stages: result.stages, injectionSnapshot: config.injection))
             row["polishMs"] = result.metrics.polishMs
             row["polishInput"] = result.stages?.polishInput
             row["polishProviderOutput"] = result.stages?.polishOutput
@@ -103,8 +139,23 @@ enum StreamingEvaluationCLI {
         } catch {
             row["status"] = "failed"; row["error"] = error.localizedDescription
             row["stopToFailureMs"] = ProcessingTiming.milliseconds(since: stopTick)
-            if let failure = error as? DoubaoTranscriptionFailure { observations.receive(failure.sessions ?? []) }
+            var stages = (error as? DictationPipelineFailure)?.stages ?? .init()
+            if let failure = error as? DoubaoTranscriptionFailure {
+                observations.receive(failure.sessions ?? [])
+                stages.asrSessions = failure.sessions; stages.asrPartialText = failure.partialText
+            }
+            stages.error = error.localizedDescription
+            try recovery.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: growing,
+                durationMs: durationMs, asrText: stages.asrText, polishText: stages.polishOutput,
+                appName: nil, appBundleIdentifier: nil, outcome: "error", errorMessage: stages.error,
+                snapshot: t, attemptID: attemptID, stages: stages, injectionSnapshot: config.injection))
         }
+        if let live, let tick = await live.state.firstTextAtNs {
+            row["firstPreviewMs"] = Double(tick - captureTick) / 1_000_000
+            row["previewDuringCapture"] = tick < stopTick
+        }
+        row["auditWriteStats"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(recovery.persistenceStats()))
+        row["archive"] = archive.path
         let observed = observations.snapshot()
         if let asrReady = observed.1 { row["stopToASRMs"] = Double(asrReady - stopTick) / 1_000_000 }
         row["sessions"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(observed.0))

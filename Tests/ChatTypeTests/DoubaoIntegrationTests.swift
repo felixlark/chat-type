@@ -180,6 +180,7 @@ private final class TestDoubaoSocket: DoubaoSocket, @unchecked Sendable {
     var networkFailureDuringAudio = false
     var discoveryFailure = false
     var partialBeforeDiscovery = false
+    var startDelayMs = 0
     private var receiveFailure: (any Error)?
     init() {
         queue = [Self.reply("TaskStarted"), Self.reply("SessionStarted")]
@@ -200,6 +201,9 @@ private final class TestDoubaoSocket: DoubaoSocket, @unchecked Sendable {
         let fields = try DoubaoProtobuf.decode(data)
         guard case .bytes(let method) = fields[5] else { throw DoubaoError.malformedMessage }
         let name = String(decoding: method, as: UTF8.self)
+        if name == "StartSession", startDelayMs > 0 {
+            try await Task.sleep(for: .milliseconds(startDelayMs))
+        }
         try lock.withLock {
             if closed { throw URLError(.cancelled) }
             sent.append(name)
@@ -464,6 +468,13 @@ private final class RecoverySocketSequence: @unchecked Sendable {
     #expect(r.protectionReason != nil)
 }
 
+private final class TestWorkerCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func finish() { lock.withLock { done = true } }
+    var completed: Bool { lock.withLock { done } }
+}
+
 @Test func liveDiscoveryRecoveryKeepsRecordingAndResetsSessionState() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
     defer { try? FileManager.default.removeItem(at: url) }
@@ -471,11 +482,17 @@ private final class RecoverySocketSequence: @unchecked Sendable {
     let state = DoubaoLiveState()
     let bad = TestDoubaoSocket(); bad.discoveryFailure = true
     let next = TestDoubaoSocket(); let sequence = RecoverySocketSequence([bad, next])
+    let completion = TestWorkerCompletion()
     let task = Task {
-        try await DoubaoTranscriber(keyProvider: { "test-only" }, socketFactory: { _ in sequence.make() })
+        defer { completion.finish() }
+        return try await DoubaoTranscriber(keyProvider: { "test-only" }, socketFactory: { _ in sequence.make() })
             .run(url: url, durationMs: 0, live: state)
     }
-    while !next.methods.contains("TaskRequest") { await Task.yield() }
+    let deadline = ContinuousClock().now.advanced(by: .seconds(2))
+    while !next.methods.contains("TaskRequest"), !completion.completed {
+        try #require(ContinuousClock().now < deadline, "Receiver failure must wake a sender waiting for audio")
+        try await Task.sleep(for: .milliseconds(1))
+    }
     await state.finish(RecordedAudio(fileURL: url, durationMs: 80))
     let r = try await task.value
     #expect(r.text == "完整识别。")
@@ -514,4 +531,23 @@ private struct SafetyTestASR: Transcriber {
     #expect(preview.text.hasPrefix("已保留原文"))
     #expect(preview.errorMessage != nil)
     #expect(try JSONDecoder().decode(RecoveryRecord.self, from: JSONEncoder().encode(record)) == record)
+}
+
+@Test func capturedBacklogDrainsAfterSlowHandshakeWithoutASecondMediaClock() async throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try doubaoTestWAV(samples: 128_000).write(to: url)
+    let socket = TestDoubaoSocket(); socket.startDelayMs = 150
+    let state = DoubaoLiveState()
+    await state.finish(RecordedAudio(fileURL: url, durationMs: 8_000))
+    let began = ContinuousClock().now
+    let result = try await DoubaoTranscriber(keyProvider: { "test-only" }, socketFactory: { _ in socket })
+        .run(url: url, durationMs: 0, live: state)
+    // Eight seconds of available audio separates the old media-clock delay
+    // from cloud CI scheduling noise. This is a regression bound, not an SLO.
+    #expect(began.duration(to: .now) < .seconds(4))
+    #expect(socket.methods.filter { $0 == "TaskRequest" }.count == 400)
+    #expect(result.text == "完整识别。")
+    #expect(result.metrics.liveFinishToLastSendMs != nil)
+    #expect(result.metrics.sessionFinishWaitMs != nil)
 }

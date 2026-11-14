@@ -22,6 +22,9 @@ struct LatencySample: Codable, Sendable, Equatable {
     let uploadEncodingMs: Int?
     let uploadAudioFormat: String?
     let processingTiming: ProcessingTimingSnapshot?
+    var liveFinishToLastSendMs: Int? = nil
+    var sessionFinishWaitMs: Int? = nil
+    var recoveryWriteStats: RecoveryWriteStats? = nil
 
     init(
         timestamp: Date,
@@ -44,7 +47,10 @@ struct LatencySample: Codable, Sendable, Equatable {
         uploadedAudioBytes: Int? = nil,
         uploadEncodingMs: Int? = nil,
         uploadAudioFormat: String? = nil,
-        processingTiming: ProcessingTimingSnapshot? = nil
+        processingTiming: ProcessingTimingSnapshot? = nil,
+        liveFinishToLastSendMs: Int? = nil,
+        sessionFinishWaitMs: Int? = nil,
+        recoveryWriteStats: RecoveryWriteStats? = nil
     ) {
         self.timestamp = timestamp
         self.audioDurationMs = audioDurationMs
@@ -67,6 +73,9 @@ struct LatencySample: Codable, Sendable, Equatable {
         self.uploadEncodingMs = uploadEncodingMs
         self.uploadAudioFormat = uploadAudioFormat
         self.processingTiming = processingTiming
+        self.liveFinishToLastSendMs = liveFinishToLastSendMs
+        self.sessionFinishWaitMs = sessionFinishWaitMs
+        self.recoveryWriteStats = recoveryWriteStats
     }
 }
 

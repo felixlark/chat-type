@@ -45,6 +45,7 @@ private final class FakeCoordinatorRecorder: RecordingControlling {
 private final class FakeCoordinatorOverlay: OverlayControlling {
     var onCancel: (@MainActor () -> Void)?
     var onRetry: (@MainActor () -> Void)?
+    var onReprocess: (@MainActor () -> Void)?
     var onShowProcessing: (@MainActor () -> Void)?
     private(set) var hideCallCount = 0
     private(set) var recordingElapsedTexts: [String] = []
@@ -207,14 +208,16 @@ private final class CoordinatorPipelineScript: @unchecked Sendable {
     private var outcomes: [ScriptedCoordinatorPipelineOutcome]
     private(set) var policies: [TranscriptionAttemptPolicy] = []
     private(set) var audioPaths: [String] = []
+    private(set) var configs: [TranscriptionConfig] = []
 
     init(outcomes: [ScriptedCoordinatorPipelineOutcome]) {
         self.outcomes = outcomes
     }
 
-    func makePipeline(policy: TranscriptionAttemptPolicy) -> any DictationPreparing {
+    func makePipeline(policy: TranscriptionAttemptPolicy, config: TranscriptionConfig? = nil) -> any DictationPreparing {
         lock.lock()
         policies.append(policy)
+        if let config { configs.append(config) }
         lock.unlock()
         return ScriptedCoordinatorPipeline(script: self)
     }
@@ -1006,4 +1009,151 @@ private struct UnwritableRecovery: RecoveryRecording {
     #expect(record.attempts?.first?.stages.asrRequestID == "request-before-retry")
     #expect(record.attempts?.map(\.snapshot.provider) == [.doubaoIME,.doubaoIME])
     #expect(record.audioSHA256 != nil)
+}
+
+
+@Test(arguments: [false, true]) @MainActor
+func manualActionsDistinguishOriginalRouteFromCurrentVisibleFlow(useCurrent: Bool) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = RecoveryStore(directoryURL: root.appendingPathComponent("Recovery"))
+    let recorder = FakeCoordinatorRecorder(), overlay = FakeCoordinatorOverlay(), menu = FakeCoordinatorStatusMenu()
+    let injector = FakeCoordinatorInjector()
+    let script = CoordinatorPipelineScript(outcomes: [.doubaoPartial, .success("完整结果")])
+    let original = AppConfig()
+    let draft = PreferencesDraft(config: original)
+    let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
+        config: original, notifier: FakeCoordinatorNotifier(), injector: injector, overlay: overlay,
+        authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
+        historyRecorder: FakeCoordinatorHistoryRecorder(), recoveryRecorder: store, soundFeedback: FakeSoundFeedback(),
+        recorderFactory: { _ in recorder }, statusMenuFactory: { _,_,_ in menu },
+        pipelineFactory: { c,_,p in script.makePipeline(policy: p, config: c) })
+    coordinator.preferencesDraft = draft; coordinator.statusMenu = menu
+    coordinator.handleHotkeyPress(); await waitForCoordinatorState(coordinator, toBecome: .recording)
+    // Changing future choices during recording cannot redirect this attempt.
+    draft.config.transcription.provider = .chatGPTManagedAuth
+    draft.config.transcription.textPolish.provider = .chatGPTAuth
+    draft.config.transcription.textPolish.chatGPTAuthEnabled = true
+    draft.config.transcription.textPolish.chatGPTResponseModel = "selected-model"
+    draft.config.injection.preserveClipboard = true
+    coordinator.handleHotkeyPress(); await waitForCondition { overlay.retryableErrors.count == 1 }
+    if useCurrent { overlay.onReprocess?() } else { overlay.onRetry?() }
+    await waitForCondition { injector.injectCallCount == 1 }
+    let expected: TranscriptionProvider = useCurrent ? .chatGPTManagedAuth : .doubaoIME
+    #expect(script.configs.map(\.provider) == [.doubaoIME, expected])
+    #expect(script.configs.last?.textPolish.provider == (useCurrent ? .chatGPTAuth : .doubaoIME))
+    if useCurrent { #expect(script.configs.last?.textPolish.chatGPTResponseModel == "selected-model") }
+    let record = try #require(store.loadRecent().last)
+    #expect(record.attempts?.map(\.snapshot.provider) == [.doubaoIME, expected])
+    #expect(record.attempts?.first?.injectionSnapshot?.preserveClipboard == false)
+    #expect(record.attempts?.last?.injectionSnapshot?.preserveClipboard == useCurrent)
+    #expect(draft.hasChanges == !useCurrent)
+    #expect(script.audioPaths[0] == script.audioPaths[1])
+    #expect(record.attempts?.first?.stages.asrPartialText == "前半句")
+}
+
+@Test(arguments: ["cancelled", "interrupted", "partial", "outputUnknown"]) @MainActor
+func currentFlowReplayRequiresEveryApplicableSavedAudioDecision(source: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = RecoveryStore(directoryURL: root.appendingPathComponent("Recovery"))
+    let url = try store.beginRecording(); try Data("retained audio".utf8).write(to: url)
+    let id = UUID(); var stages = DictationStageAudit(); stages.partialAudio = source == "partial"
+    try store.record(.init(timestamp: Date(), sourceAudioURL: url, durationMs: 1000, asrText: nil,
+        polishText: nil, appName: nil, appBundleIdentifier: nil, outcome: source == "partial" ? "error" : source,
+        errorMessage: nil, snapshot: AppConfig().transcription, attemptID: id, stages: stages))
+    let record = try #require(store.loadRecent().first)
+    let script = CoordinatorPipelineScript(outcomes: [])
+    var decisions: [RecoveryReplayDecision] = []
+    let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
+        config: AppConfig(), notifier: FakeCoordinatorNotifier(), injector: FakeCoordinatorInjector(),
+        overlay: FakeCoordinatorOverlay(), authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
+        historyRecorder: FakeCoordinatorHistoryRecorder(), recoveryRecorder: store,
+        replayDecision: { decisions.append($0); return false }, soundFeedback: FakeSoundFeedback(),
+        recorderFactory: { _ in FakeCoordinatorRecorder() }, statusMenuFactory: { _,_,_ in FakeCoordinatorStatusMenu() },
+        pipelineFactory: { _,_,p in script.makePipeline(policy: p) })
+    coordinator.reprocessRecoveryRecord(record)
+    #expect(decisions == [source == "outputUnknown" ? .possiblePreviousOutput : .partialAudio])
+    #expect(script.policies.isEmpty)
+    #expect(try store.loadRecent().first?.attempts?.count == 1)
+    #expect(try Data(contentsOf: url) == Data("retained audio".utf8))
+}
+
+@Test @MainActor func failedVisibleFlowSaveCannotStartRecordingOrReplay() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let blocked = root.appendingPathComponent("blocked"); try Data("not a directory".utf8).write(to: blocked)
+    let store = RecoveryStore(directoryURL: root.appendingPathComponent("Recovery"))
+    let url = try store.beginRecording(); try Data("retained audio".utf8).write(to: url)
+    try store.record(.init(timestamp: Date(), sourceAudioURL: url, durationMs: 1000, asrText: nil,
+        polishText: nil, appName: nil, appBundleIdentifier: nil, outcome: "error", errorMessage: nil,
+        snapshot: AppConfig().transcription, attemptID: UUID()))
+    let record = try #require(store.loadRecent().first)
+    let script = CoordinatorPipelineScript(outcomes: [])
+    let recorder = FakeCoordinatorRecorder()
+    let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: blocked),
+        config: AppConfig(), notifier: FakeCoordinatorNotifier(), injector: FakeCoordinatorInjector(),
+        overlay: FakeCoordinatorOverlay(), authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
+        historyRecorder: FakeCoordinatorHistoryRecorder(), recoveryRecorder: store, soundFeedback: FakeSoundFeedback(),
+        recorderFactory: { _ in recorder }, statusMenuFactory: { _,_,_ in FakeCoordinatorStatusMenu() },
+        pipelineFactory: { _,_,p in script.makePipeline(policy: p) })
+    let draft = PreferencesDraft(config: AppConfig()); draft.config.transcription.provider = .chatGPTManagedAuth
+    coordinator.preferencesDraft = draft
+    coordinator.handleHotkeyPress()
+    coordinator.reprocessRecoveryRecord(record)
+    #expect(coordinator.state == .idle)
+    #expect(script.policies.isEmpty)
+    #expect(coordinator.config.transcription.provider == .doubaoIME)
+    #expect(draft.hasChanges && draft.isError)
+    #expect(try store.loadRecent().first?.attempts?.count == 1)
+}
+
+
+@Test @MainActor func F5StartAppliesTheVisibleDraftWithoutASeparateSave() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recorder = FakeCoordinatorRecorder(), overlay = FakeCoordinatorOverlay(), menu = FakeCoordinatorStatusMenu()
+    let script = CoordinatorPipelineScript(outcomes: [.success("selected route")])
+    let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
+        config: AppConfig(), notifier: FakeCoordinatorNotifier(), injector: FakeCoordinatorInjector(), overlay: overlay,
+        authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(), historyRecorder: FakeCoordinatorHistoryRecorder(),
+        recoveryRecorder: RecoveryStore(directoryURL: root.appendingPathComponent("Recovery")), soundFeedback: FakeSoundFeedback(),
+        recorderFactory: { _ in recorder }, statusMenuFactory: { _,_,_ in menu },
+        pipelineFactory: { c,_,p in script.makePipeline(policy: p, config: c) })
+    let draft = PreferencesDraft(config: AppConfig()); draft.config.transcription.provider = .chatGPTManagedAuth
+    draft.config.transcription.textPolish.provider = .chatGPTAuth; draft.config.transcription.textPolish.chatGPTAuthEnabled = true
+    coordinator.preferencesDraft = draft; coordinator.statusMenu = menu
+    coordinator.handleHotkeyPress(); await waitForCoordinatorState(coordinator, toBecome: .recording)
+    coordinator.handleHotkeyPress(); await waitForCondition { script.configs.count == 1 }
+    #expect(script.configs.first?.provider == .chatGPTManagedAuth)
+    #expect(script.configs.first?.textPolish.provider == .chatGPTAuth)
+    #expect(!draft.hasChanges)
+    await waitForCoordinatorState(coordinator, toBecome: .idle)
+}
+
+
+@Test(arguments: [TextPolishProviderID.qwenFlash, .glmFlash]) @MainActor
+func missingPolishCredentialPreventsBothAutomaticApplyEntryPoints(provider: TextPolishProviderID) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = RecoveryStore(directoryURL: root.appendingPathComponent("Recovery"))
+    let url = try store.beginRecording(); try Data("original".utf8).write(to: url)
+    try store.record(.init(timestamp: Date(), sourceAudioURL: url, durationMs: 100, asrText: nil, polishText: nil,
+        appName: nil, appBundleIdentifier: nil, outcome: "error", errorMessage: nil, snapshot: AppConfig().transcription, attemptID: UUID()))
+    let record = try #require(store.loadRecent().first)
+    let configStore = ConfigStore(homeDirectoryURL: root); let original = AppConfig(); try configStore.save(original)
+    let script = CoordinatorPipelineScript(outcomes: [])
+    let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: configStore, config: original,
+        notifier: FakeCoordinatorNotifier(), injector: FakeCoordinatorInjector(), overlay: FakeCoordinatorOverlay(),
+        authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(), historyRecorder: FakeCoordinatorHistoryRecorder(),
+        recoveryRecorder: store, soundFeedback: FakeSoundFeedback(), recorderFactory: { _ in FakeCoordinatorRecorder() },
+        statusMenuFactory: { _,_,_ in FakeCoordinatorStatusMenu() }, pipelineFactory: { _,_,p in script.makePipeline(policy:p) })
+    let draft = PreferencesDraft(config: original, hasPolishCredential: { _ in false })
+    draft.config.transcription.textPolish.selectProvider(provider); coordinator.preferencesDraft = draft
+    coordinator.handleHotkeyPress(); coordinator.reprocessRecoveryRecord(record)
+    #expect(coordinator.state == .idle && script.policies.isEmpty)
+    #expect(try configStore.load() == original)
+    #expect(try store.loadRecent().first?.attempts?.count == 1)
+    #expect(draft.hasChanges && draft.isError)
 }

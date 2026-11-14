@@ -51,12 +51,14 @@ struct ProcessingStage: Identifiable, Equatable {
     }
 }
 
-struct ProcessingFlowView: View {
+struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View>: View {
     @Binding var config: TranscriptionConfig
     @Binding var injection: InjectionConfig
     let chatGPTReady: Bool
     let glmReady: Bool
     let qwenReady: Bool
+    let recognitionOptions: RecognitionOptions
+    let polishOptions: PolishOptions
     @State private var selected = 1
 
     private var stages: [ProcessingStage] {
@@ -83,7 +85,7 @@ struct ProcessingFlowView: View {
                     }
                 }
             }.accessibilityIdentifier("processing-flow")
-            Text("Route for the settings shown here · save changes to use it for the next recording.")
+            Text("唯一处理流程 · F5 新录音或“按当前流程重跑”会应用当前选择；已开始的任务保持原路线。")
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
             let stage = stages[selected]
@@ -106,31 +108,23 @@ struct ProcessingFlowView: View {
         case 0:
             Toggle("边录边识别 / 实时预览", isOn: $config.livePreviewEnabled)
                 .accessibilityIdentifier("stage-live-preview")
+            Toggle("录音开始/结束提示音", isOn: $config.feedbackSoundsEnabled)
             Text("关闭后仍保存完整录音，停录后才识别。原始语音始终在本机保留。")
                 .font(.caption).foregroundStyle(.secondary)
         case 1:
-            Picker("识别服务", selection: $config.provider) {
-                ForEach(TranscriptionProvider.allCases) { Text($0.title).tag($0) }
-            }.accessibilityIdentifier("stage-asr-provider")
+            recognitionOptions
         case 2:
             Toggle("使用本地 Terms 对齐标准写法", isOn: $config.terminologyAlignmentEnabled)
                 .accessibilityIdentifier("stage-terminology")
         case 3:
-            Toggle("启用全文润色", isOn: Binding(get: { config.textPolish.isEnabled },
-                set: { config.textPolish.setEnabled($0) }))
-                .accessibilityIdentifier("stage-polish-enabled")
-            Picker("润色服务", selection: Binding(get: { config.textPolish.provider }, set: { config.textPolish.selectProvider($0) })) {
-                ForEach(TextPolishProviderID.allCases) { Text($0.title).tag($0) }
-            }.accessibilityIdentifier("stage-polish-provider")
-            if config.textPolish.provider == .chatGPTAuth {
-                TextField("ChatGPT 文字模型", text: $config.textPolish.chatGPTResponseModel)
-            }
+            polishOptions
         case 4:
             Toggle("应用本地 Replacement 纠错规则", isOn: $config.correctionRulesEnabled)
                 .accessibilityIdentifier("stage-corrections")
         default:
             Toggle("仅复制到剪贴板，不自动粘贴", isOn: $injection.clipboardOnly)
                 .accessibilityIdentifier("stage-clipboard-only")
+            Toggle("粘贴后恢复剪贴板", isOn: $injection.preserveClipboard)
         }
     }
 

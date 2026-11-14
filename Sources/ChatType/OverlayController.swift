@@ -7,6 +7,7 @@ import Foundation
 protocol OverlayControlling: AnyObject {
     var onCancel: (@MainActor () -> Void)? { get set }
     var onRetry: (@MainActor () -> Void)? { get set }
+    var onReprocess: (@MainActor () -> Void)? { get set }
 
     func showRecording(elapsedText: String)
     func updateRecording(level: CGFloat, elapsedText: String)
@@ -67,6 +68,7 @@ final class OverlayController: OverlayControlling {
     private var placementSession = OverlayPlacementSession()
     var onCancel: (@MainActor () -> Void)?
     var onRetry: (@MainActor () -> Void)?
+    var onReprocess: (@MainActor () -> Void)?
 
     init(
         onCancel: (@MainActor () -> Void)? = nil,
@@ -442,7 +444,7 @@ final class OverlayController: OverlayControlling {
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.isBordered = false
         retryButton.bezelStyle = .regularSquare
-        retryButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Retry transcription")
+        retryButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "选择重跑方式")
         retryButton.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
         retryButton.imagePosition = .imageOnly
         retryButton.contentTintColor = ChatTypePalette.mistMuted.withAlphaComponent(0.84)
@@ -718,8 +720,16 @@ final class OverlayController: OverlayControlling {
 
     @objc
     private func handleRetryControlPressed() {
-        onRetry?()
+        let menu = NSMenu()
+        let current = menu.addItem(withTitle: "按当前流程重跑", action: #selector(handleCurrentFlowReprocess), keyEquivalent: "")
+        current.target = self
+        let original = menu.addItem(withTitle: "重试原路线", action: #selector(handleOriginalRouteRetry), keyEquivalent: "")
+        original.target = self
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: retryButton.bounds.maxY), in: retryButton)
     }
+
+    @objc private func handleCurrentFlowReprocess() { onReprocess?() }
+    @objc private func handleOriginalRouteRetry() { onRetry?() }
 
     @discardableResult
     func debugSimulateCancelControlClick() -> Bool {
@@ -749,11 +759,11 @@ final class OverlayController: OverlayControlling {
             NSPoint(x: retryButton.bounds.midX, y: retryButton.bounds.midY),
             from: retryButton
         )
-        guard let hitView = panelRootView.hitTest(centerInRoot) as? NSControl else {
+        guard panelRootView.hitTest(centerInRoot) is NSControl else {
             return false
         }
 
-        _ = hitView.sendAction(hitView.action, to: hitView.target)
+        onRetry?()
         return true
     }
 

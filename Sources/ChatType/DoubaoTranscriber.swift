@@ -42,12 +42,23 @@ final class DoubaoURLSocket: DoubaoSocket, @unchecked Sendable {
 
 actor DoubaoLiveState {
     private(set) var finished: RecordedAudio?
+    private(set) var finishedAtNs: UInt64?
     private(set) var preview = ""
+    private(set) var firstTextAtNs: UInt64?
     private(set) var finishRequested = false
-    func finish(_ audio: RecordedAudio) { finished = audio }
-    func update(_ text: String) { preview = text }
+    private var receiverFailure: (any Error)?
+    func finish(_ audio: RecordedAudio) {
+        finishedAtNs = DispatchTime.now().uptimeNanoseconds
+        finished = audio
+    }
+    func update(_ text: String) {
+        if firstTextAtNs == nil, !text.isEmpty { firstTextAtNs = DispatchTime.now().uptimeNanoseconds }
+        preview = text
+    }
     func failed() { preview += "\n豆包连接中断；原声继续保存，停录后可重试。" }
     func requestFinish() { finishRequested = true }
+    func receiverFailed(_ error: any Error) { receiverFailure = error }
+    func checkReceiver() throws { if let receiverFailure { throw receiverFailure } }
 }
 
 @MainActor
@@ -118,7 +129,8 @@ struct DoubaoTranscriber: Transcriber {
                     audioDurationMs: m.audioDurationMs, audioBytes: m.audioBytes, authMs: m.authMs,
                     transcribeMs: elapsed(started) - m.authMs, promptIncluded: m.promptIncluded,
                     uploadedBytes: m.uploadedBytes, uploadFormat: m.uploadFormat,
-                    protocolRequestID: id, protocolSessions: sessions))
+                    protocolRequestID: id, protocolSessions: sessions,
+                    liveFinishToLastSendMs: m.liveFinishToLastSendMs, sessionFinishWaitMs: m.sessionFinishWaitMs))
             } catch {
                 let failure = error as? DoubaoTranscriptionFailure
                 let underlying = failure?.underlyingError ?? error
@@ -196,7 +208,10 @@ struct DoubaoTranscriber: Transcriber {
                             return transcript.finalText
                         }
                     }
-                } catch { socket.close(); throw error }
+                } catch {
+                    await progress.receiverFailed(error)
+                    socket.close(); throw error
+                }
             }
             defer { receiveTask.cancel() }
             do {
@@ -206,10 +221,9 @@ struct DoubaoTranscriber: Transcriber {
             var sentFrames = 0
             var uploaded = 0
             var pending: Data?
-            let clock = ContinuousClock()
-            var nextFrame = clock.now
             while true {
                 try Task.checkCancellation()
+                try await progress.checkReceiver()
                 let final = live == nil ? true : await live?.finished != nil
                 if live != nil, growingReader == nil {
                     do { growingReader = try DoubaoGrowingPCM(url: url) }
@@ -222,10 +236,9 @@ struct DoubaoTranscriber: Transcriber {
                     if let pending {
                         let opus = try encoder.encode(pending)
                         let metadata = try JSONSerialization.data(withJSONObject: ["extra": [:], "timestamp_ms": sentFrames * 20] as [String: Any])
-                        // Keep the existing 20 ms wire pace, including time spent
-                        // in send(). Reset after an idle wait to avoid bursts.
-                        try await clock.sleep(until: nextFrame)
-                        nextFrame = clock.now.advanced(by: .milliseconds(20))
+                        // Capture already supplies the media clock. Await the
+                        // socket's backpressure, but drain available frames so
+                        // handshake/recording-journal latency can be caught up.
                         try await send("TaskRequest", payload: metadata, audio: opus, frame: sentFrames == 0 ? 1 : 3)
                         uploaded += opus.count; sentFrames += 1
                     }
@@ -236,8 +249,9 @@ struct DoubaoTranscriber: Transcriber {
             guard let pending else { throw TranscriptionError.invalidAudio }
             let opus = try encoder.encode(pending)
             let metadata = try JSONSerialization.data(withJSONObject: ["extra": [:], "timestamp_ms": sentFrames * 20] as [String: Any])
-            try await clock.sleep(until: nextFrame)
             try await send("TaskRequest", payload: metadata, audio: opus, frame: sentFrames == 0 ? 1 : 9)
+            let lastSendCompleted = DispatchTime.now().uptimeNanoseconds
+            let liveFinished = await live?.finishedAtNs
             uploaded += opus.count
             if live != nil {
                 switch PCMRecordingIntegrityAnalyzer().analyze(wavData: try Data(contentsOf: url)) {
@@ -248,15 +262,19 @@ struct DoubaoTranscriber: Transcriber {
                 }
             }
             await progress.requestFinish()
+            let finishStarted = DispatchTime.now().uptimeNanoseconds
             try await send("FinishSession")
             let text = try await receiveTask.value
+            let finishWaitMs = elapsed(finishStarted)
             try Task.checkCancellation()
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TranscriptionError.invalidResponse }
             let duration = await live?.finished?.durationMs ?? durationMs
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             return TranscriptionResult(text: text, metrics: TranscriptionMetrics(provider: .doubaoIME,
                 audioDurationMs: duration, audioBytes: size, authMs: authMs, transcribeMs: elapsed(start) - authMs,
-                promptIncluded: false, uploadedBytes: uploaded, uploadFormat: "opus/16000/mono", protocolRequestID: id))
+                promptIncluded: false, uploadedBytes: uploaded, uploadFormat: "opus/16000/mono", protocolRequestID: id,
+                liveFinishToLastSendMs: liveFinished.map { Int(max(0, Double(lastSendCompleted) - Double($0)) / 1_000_000) },
+                sessionFinishWaitMs: finishWaitMs))
             } catch {
                 let sendingError = error
                 socket.close()
