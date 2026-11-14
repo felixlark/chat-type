@@ -165,9 +165,9 @@ enum OverlayVisualState: Sendable, Equatable {
 
     var showsCancelControl: Bool {
         switch self {
-        case .recording, .processing:
+        case .recording, .processing, .error, .retryableError:
             return true
-        case .success, .error, .retryableError:
+        case .success:
             return false
         }
     }
