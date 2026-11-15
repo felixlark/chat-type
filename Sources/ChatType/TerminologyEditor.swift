@@ -87,7 +87,7 @@ struct TerminologyEditor: View {
                     Button("From WeChat") { startImport(weChat: true) }
                 }
                 .disabled(importing)
-                .accessibilityIdentifier("import-names") }
+                .accessibilityIdentifier("import-names").fixedSize() }
             }
             Text(type == .term
                 ? "Standard spellings for names and technical words. English keeps your casing; Chinese terms guide recognition and relevant text alignment."
