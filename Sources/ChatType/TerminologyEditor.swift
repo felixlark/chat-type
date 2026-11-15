@@ -53,6 +53,25 @@ struct VocabularyBrowser: Sendable {
     }
 }
 
+/// An array position is only valid while the captured entry still occupies it.
+/// Async filtering, imports and deletion can all invalidate an old visible row.
+struct VocabularyEdit {
+    let index: Int
+    let original: TerminologyEntry
+
+    init?(row: VocabularyRow, entries: [TerminologyEntry]) {
+        guard entries.indices.contains(row.id), entries[row.id] == row.entry else { return nil }
+        index = row.id
+        original = row.entry
+    }
+
+    func replace(with entry: TerminologyEntry, in entries: inout [TerminologyEntry]) -> Bool {
+        guard entries.indices.contains(index), entries[index] == original else { return false }
+        entries[index] = entry
+        return true
+    }
+}
+
 /// Editor input lives here so typing never rebuilds account, history or the full settings tree.
 struct TerminologyEditor: View {
     @Binding var terminology: TerminologyConfig
@@ -65,7 +84,8 @@ struct TerminologyEditor: View {
     @State private var source = ""
     @State private var original = ""
     @State private var replacement = ""
-    @State private var editingID: Int?
+    @State private var editing: VocabularyEdit?
+    private var editingID: Int? { editing?.index }
     @State private var browser = VocabularyBrowser(entries: [])
     @State private var rows: [VocabularyRow] = []
     @Binding var importing: Bool
@@ -181,8 +201,15 @@ struct TerminologyEditor: View {
         .onChange(of: terminology.entries) { _ in clearEditor() }
     }
 
-    private func clearEditor() { editingID = nil; original = ""; replacement = "" }
-    private func edit(_ row: VocabularyRow) { editingID = row.id; original = row.entry.original; replacement = row.entry.replacement ?? "" }
+    private func clearEditor() { editing = nil; original = ""; replacement = "" }
+    private func edit(_ row: VocabularyRow) {
+        guard let current = VocabularyEdit(row: row, entries: terminology.entries) else {
+            message = "The library changed. Choose the entry again."; error = true; return
+        }
+        editing = current
+        original = current.original.original
+        replacement = current.original.replacement ?? ""
+    }
     private func delete(_ row: VocabularyRow) {
         guard terminology.entries.indices.contains(row.id), terminology.entries[row.id] == row.entry else { return }
         terminology.entries.remove(at: row.id)
@@ -199,10 +226,14 @@ struct TerminologyEditor: View {
         guard duplicate == nil else { message = "This entry already exists. Search for it to edit."; error = true; return }
         var entry = TerminologyEntry(type: type, original: from, replacement: to, aliases: [], source: "user",
             usageCount: 0, createdAt: ISO8601DateFormatter().string(from: Date()))
-        if let id = editingID, terminology.entries.indices.contains(id) {
-            entry.aliases = terminology.entries[id].aliases
-            entry.createdAt = terminology.entries[id].createdAt
-            terminology.entries[id] = entry
+        if let editing {
+            entry.aliases = editing.original.aliases
+            entry.createdAt = editing.original.createdAt
+            var entries = terminology.entries
+            guard editing.replace(with: entry, in: &entries) else {
+                clearEditor(); message = "The library changed. Choose the entry again."; error = true; return
+            }
+            terminology.entries = entries
         } else { terminology.entries.insert(entry, at: 0) }
         clearEditor(); message = wasEditing ? "Entry updated." : "Entry added."; error = false
     }
