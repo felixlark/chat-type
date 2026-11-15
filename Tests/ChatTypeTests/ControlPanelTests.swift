@@ -131,7 +131,7 @@ private func rule(_ from: String, _ to: String) -> TerminologyEntry {
 }
 
 @Test func processingFlowReportsDoubaoTextInputAndMissingKeyWithoutPretendingToSkip() {
-    var config = TranscriptionConfig()
+    var config = AppConfig().transcription
     var stages = ProcessingStage.stages(config: config, localPreviewSupported: true, chatGPTReady: false, glmReady: false, qwenReady: false)
     #expect(stages[3].input == "Aligned full transcript · text only")
     config.textPolish.selectProvider(.qwenFlash)
