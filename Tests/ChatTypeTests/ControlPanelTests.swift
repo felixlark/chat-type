@@ -52,7 +52,7 @@ import Testing
     var stages = ProcessingStage.stages(config: config, localPreviewSupported: true, chatGPTReady: true, glmReady: false, qwenReady: false)
     #expect(stages[1].service == "test-audio-model · recovery.example")
     #expect(stages[0].service == "This Mac · audio recorder")
-    #expect(stages[3].service.hasPrefix("Skipped"))
+    #expect(stages[3].service.hasPrefix("Needs account or key"))
     #expect(stages[3].input.contains("text only"))
     config.textPolish.mode = .disabled
     stages = ProcessingStage.stages(config: config, localPreviewSupported: true, chatGPTReady: true, glmReady: true, qwenReady: true)

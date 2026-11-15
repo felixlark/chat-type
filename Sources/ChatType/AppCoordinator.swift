@@ -745,17 +745,11 @@ final class AppCoordinator {
                         return .success(imported)
                     } catch { return .failure(error) }
                 },
-                onLoadRecentHistory: { [weak self] in
-                    guard let self else {
-                        return []
-                    }
-                    return (try? self.historyRecorder.loadRecent(limit: 200)) ?? []
+                onLoadRecentHistory: { [reader = TranscriptionHistoryRecorder()] in
+                    try reader.loadRecent(limit: 200)
                 },
-                onLoadRecoveryHistory: { [weak self] in
-                    guard let self else {
-                        return []
-                    }
-                    return (try? self.recoveryRecorder.loadRecent(limit: 10)) ?? []
+                onLoadRecoveryHistory: { [reader = RecoveryStore(directoryURL: recoveryRecorder.directoryURL)] in
+                    try reader.loadRecent(limit: 10)
                 },
                 recoveryDirectoryURL: recoveryRecorder.directoryURL,
                 onRetryRecoveryRecord: { [weak self] record in self?.retryRecoveryRecord(record) },

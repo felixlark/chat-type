@@ -47,5 +47,5 @@ final class PreferencesDraft: ObservableObject {
 
 private struct PolishCredentialRequired: LocalizedError {
     let provider: TextPolishProviderID
-    var errorDescription: String? { "请先在 Dictation 的 Polish 阶段保存 \(provider.title) API Key，或关闭润色；当前选择尚未应用。" }
+    var errorDescription: String? { "请先在 Account 保存 \(provider.title) API Key，或关闭润色；当前选择尚未应用。" }
 }

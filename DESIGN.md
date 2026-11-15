@@ -82,7 +82,7 @@ components:
 
 ChatType’s control panel is a useful, candid personal studio: readable service facts, restrained navigation and native macOS controls. Its AppKit window hosts SwiftUI content. System typography, dynamic system colors and SF Symbols (Apple’s system icon library) support everyday operation while the existing product name and brand assets remain owner-controlled.
 
-This document records the implemented settings surface of 0.5.1 (122), using `PreferencesWindowController.swift`, `TerminologyEditor.swift` and `ProcessingFlowView.swift`. It covers the reusable control-panel language, not the recording overlay or a new visual direction. Page strategy remains in `docs/control-panel-surface.md`; product commitments remain in `PRODUCT.md`.
+This document records the implemented settings surface of 0.6.0 (134), using `PreferencesWindowController.swift`, `TerminologyEditor.swift` and `ProcessingFlowView.swift`. It covers the reusable control-panel language, not the recording overlay or a new visual direction. Page strategy remains in `docs/control-panel-surface.md`; product commitments remain in `PRODUCT.md`.
 
 **Key Characteristics:**
 - Dynamic macOS semantic surfaces and one system accent.
@@ -128,7 +128,7 @@ The macOS system font supplies titles, controls and body text. Semibold and medi
 
 The resizable native window opens at (980 × 720pt) with window minimum (940 × 680pt); the hosted root has its own lower minimum (920 × 640pt). A fixed-width sidebar sits beside a divider and flexible content column. There are no web breakpoints or mobile layouts.
 
-The content column has a scrollable page above a persistent divider and save bar. Page padding, card spacing and compact row spacing use the frontmatter roles. The page header stacks a native caption breadcrumb, page title and secondary subtitle. Sidebar destinations are Account, Dictation, Terminology, History and Settings. Changing destination recreates the ScrollView via `.id(selectedSection)` so the next page starts at the top.
+The content column has a scrollable page above a persistent divider and save bar. Page padding, card spacing and compact row spacing use the frontmatter roles. The page header stacks a native caption breadcrumb, page title and secondary subtitle. Sidebar destinations are Account, Workflow, History and Settings. Account uses matching provider rows with a status dot and explicit state labels. Green Doubao means installed, not a successful cloud probe. Apple preview support does not imply a prepared model or a local final transcription provider. Changing destination recreates the ScrollView via `.id(selectedSection)` so the next page starts at the top.
 
 Information rows align labels and values horizontally with flexible trailing space. Service facts use a fixed label column (90pt); processing details use (64pt). Related text stacks remain close together; actions stay beside the facts they affect. The bottom bar keeps Open Config Folder at the leading edge and save status plus Save Settings at the trailing edge.
 
@@ -158,7 +158,7 @@ Native TextField, SecureField, Picker and Toggle remain the form vocabulary. Sea
 
 ### Navigation
 
-The narrow sidebar has an app heading, five icon-and-label destinations and an F5 reminder at its foot. Each row uses horizontal padding (12pt), vertical padding (9pt) and a small rounded selected background. Symbols use a fixed icon column (18pt). Text retains its native foreground; selection is a restrained accent tint.
+The narrow sidebar has an app heading, four icon-and-label destinations and an F5 reminder at its foot. Each row uses horizontal padding (12pt), vertical padding (9pt) and a small rounded selected background. Symbols use a fixed icon column (18pt). Text retains its native foreground; selection is a restrained accent tint.
 
 ### Processing trail and inspector
 
@@ -166,7 +166,7 @@ Six equally flexible stage buttons—Voice, Recognize, Align, Polish, Correct an
 
 ### Vocabulary editor
 
-A segmented Terms / Replacement selector separates canonical spelling from explicit corrections. Add/update fields precede a divider, search and source filtering. The source picker is fixed (180pt); the segmented selector has a maximum (390pt). A native inset list pages at (50 entries); its height ranges (280–420pt), ideal (360pt). Entry text and provenance sit beside borderless Edit/Delete actions. Empty state, import progress and bounded local feedback occupy their own slots. “Read X names” reports the read operation; the bottom bar owns configuration save state.
+The Align stage contains Custom phrases; Correct contains Replacement. Each editor has a fixed entry type, keeping canonical spelling and explicit corrections in their workflow positions. Search indexing runs off the UI thread. Add/update fields precede a divider, search and source filtering. The source picker is fixed (180pt); the segmented selector has a maximum (390pt). A native inset list pages at (50 entries); its height ranges (280–420pt), ideal (360pt). Entry text and provenance sit beside borderless Edit/Delete actions. Empty state, import progress and bounded local feedback occupy their own slots. “Read X names” reports the read operation; the bottom bar owns configuration save state.
 
 ### History rows and feedback
 

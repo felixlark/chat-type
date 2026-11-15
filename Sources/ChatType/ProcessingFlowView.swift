@@ -22,7 +22,7 @@ struct ProcessingStage: Identifiable, Equatable {
         case .qwenFlash: polishService = "Qwen Flash · dashscope.aliyuncs.com"
         }
         let polishState = !config.textPolish.isEnabled ? "Off — aligned text passes through"
-            : selected == nil ? "Skipped — selected account or key unavailable" : polishService
+            : selected == nil ? "Needs account or key — processing cannot complete" : polishService
         let doubao = config.provider == .doubaoIME
         let preview = config.livePreviewEnabled && (doubao || (localPreviewSupported && managed))
         return [
@@ -51,7 +51,7 @@ struct ProcessingStage: Identifiable, Equatable {
     }
 }
 
-struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View>: View {
+struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOptions: View, CorrectionOptions: View>: View {
     @Binding var config: TranscriptionConfig
     @Binding var injection: InjectionConfig
     let chatGPTReady: Bool
@@ -59,6 +59,8 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View>: View {
     let qwenReady: Bool
     let recognitionOptions: RecognitionOptions
     let polishOptions: PolishOptions
+    let termsOptions: TermsOptions
+    let correctionOptions: CorrectionOptions
     @State private var selected = 1
 
     private var stages: [ProcessingStage] {
@@ -98,9 +100,7 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View>: View {
                 Text(stage.detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }.textSelection(.enabled)
         }
-        .padding(18)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder private var stageOptions: some View {
@@ -116,11 +116,13 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View>: View {
         case 2:
             Toggle("使用本地 Terms 对齐标准写法", isOn: $config.terminologyAlignmentEnabled)
                 .accessibilityIdentifier("stage-terminology")
+            termsOptions
         case 3:
             polishOptions
         case 4:
             Toggle("应用本地 Replacement 纠错规则", isOn: $config.correctionRulesEnabled)
                 .accessibilityIdentifier("stage-corrections")
+            correctionOptions
         default:
             Toggle("仅复制到剪贴板，不自动粘贴", isOn: $injection.clipboardOnly)
                 .accessibilityIdentifier("stage-clipboard-only")

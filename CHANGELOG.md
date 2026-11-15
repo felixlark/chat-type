@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0 (134)
+
+- Combine Dictation and Terminology into Workflow, with custom phrases in Align and Replacement in Correct. Recognition, polish and output remain independently configurable.
+- Show ChatGPT, Doubao IME installation, Apple local preview, GLM, Qwen and compatible recovery in Account, with status labels distinguishing installation, saved credentials and request availability.
+- Keep Settings responsive by loading metadata/history off the UI thread, reading history only on demand and restoring only the displayed recordings’ snapshots. History refreshes preserve live updates and previous data on errors.
+
 ## Next
 
 - Add isolated real-time preview/polish research and an explicit process-local, one-request timeout harness for real Retry acceptance; keep normal startup and production routing unchanged

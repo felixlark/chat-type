@@ -58,7 +58,9 @@ struct TerminologyEditor: View {
     @Binding var terminology: TerminologyConfig
     let importContacts: () async -> Result<TerminologyImportResult, any Error>
     let importWeChat: () async -> Result<TerminologyImportResult, any Error>
-    @State private var type: TerminologyEntryType = .term
+    let entryType: TerminologyEntryType
+    private var type: TerminologyEntryType { entryType }
+    @State private var indexing = false
     @State private var query = ""
     @State private var source = ""
     @State private var original = ""
@@ -77,20 +79,15 @@ struct TerminologyEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Picker("Library", selection: $type) {
-                    Text("Terms · \(browser.termCount)").tag(TerminologyEntryType.term)
-                    Text("Replacement · \(browser.correctionCount)").tag(TerminologyEntryType.correction)
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 390)
-                .accessibilityIdentifier("terminology-entry-type")
+                Text(type == .term ? "Custom phrases · \(browser.termCount)" : "Replacement · \(browser.correctionCount)")
+                    .font(.headline)
                 Spacer()
-                Menu(importing ? "Reading names…" : "Import names") {
+                if type == .term { Menu(importing ? "Reading names…" : "Import names") {
                     Button("From Contacts") { startImport(weChat: false) }
                     Button("From WeChat") { startImport(weChat: true) }
                 }
                 .disabled(importing)
-                .accessibilityIdentifier("import-names")
+                .accessibilityIdentifier("import-names") }
             }
             Text(type == .term
                 ? "Standard spellings for names and technical words. English keeps your casing; Chinese terms guide recognition and relevant text alignment."
@@ -138,7 +135,7 @@ struct TerminologyEditor: View {
                     Button { page += 1 } label: { Image(systemName: "chevron.right") }
                         .disabled((page + 1) * rowsPerPage >= rows.count).accessibilityLabel("Next entries")
                 }
-                if importing { ProgressView().controlSize(.small) }
+                if importing || indexing { ProgressView().controlSize(.small) }
                 if let message { Text(message).font(.caption).foregroundStyle(error ? .red : .secondary).lineLimit(2) }
             }
             if rows.isEmpty {
@@ -167,19 +164,23 @@ struct TerminologyEditor: View {
             Text("The library is stored on this Mac; relevant terms, including names, may be sent as recognition hints or text-polish context to the services you select.")
                 .font(.caption).foregroundStyle(.secondary)
         }
-        .onAppear { rebuild() }
-        .onChange(of: terminology.entries) { _ in clearEditor(); rebuild() }
-        .onChange(of: type) { _ in clearEditor(); filter() }
-        .onChange(of: query) { _ in filter() }
-        .onChange(of: source) { _ in filter() }
+        .task(id: VocabularyQuery(entries: terminology.entries, type: type, query: query, source: source)) {
+            indexing = true
+            let entries = terminology.entries, selectedType = type, search = query, selectedSource = source
+            let result = await Task.detached(priority: .userInitiated) {
+                let browser = VocabularyBrowser(entries: entries)
+                return (browser, browser.filtered(type: selectedType, query: search, source: selectedSource))
+            }.value
+            guard !Task.isCancelled else { return }
+            browser = result.0
+            rows = result.1
+            if !browser.sources.contains(source) { source = "" }
+            page = 0
+            indexing = false
+        }
+        .onChange(of: terminology.entries) { _ in clearEditor() }
     }
 
-    private func rebuild() {
-        browser = VocabularyBrowser(entries: terminology.entries)
-        if !browser.sources.contains(source) { source = "" }
-        filter()
-    }
-    private func filter() { page = 0; rows = browser.filtered(type: type, query: query, source: source) }
     private func clearEditor() { editingID = nil; original = ""; replacement = "" }
     private func edit(_ row: VocabularyRow) { editingID = row.id; original = row.entry.original; replacement = row.entry.replacement ?? "" }
     private func delete(_ row: VocabularyRow) {
@@ -220,10 +221,17 @@ struct TerminologyEditor: View {
                     incoming: imported.entries, replacingSources: sources)
                 terminology.lastImportedSource = imported.source
                 terminology.lastImportedAt = imported.importedAt
-                type = .term; query = ""; source = VocabularyBrowser.sourceGroup(imported.source)
+                query = ""; source = VocabularyBrowser.sourceGroup(imported.source)
                 message = "Read \(imported.entries.count) names."; error = false
             case .failure(let failure): message = failure.localizedDescription; error = true
             }
         }
     }
+}
+
+private struct VocabularyQuery: Equatable {
+    let entries: [TerminologyEntry]
+    let type: TerminologyEntryType
+    let query: String
+    let source: String
 }

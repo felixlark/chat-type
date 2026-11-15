@@ -341,7 +341,17 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
     func loadRecent(limit: Int = 10) throws -> [RecoveryRecord] {
         lock.lock()
         defer { lock.unlock() }
-        return Array(try loadAllUnlocked().sorted { $0.timestamp < $1.timestamp }.suffix(max(0, limit)))
+        guard limit > 0 else { return [] }
+        // Select by journal metadata first. Restoring every historic vocabulary
+        // snapshot merely to display ten rows caused multi-second Settings hangs.
+        let candidates = try loadAllUnlocked(hydrateSnapshots: false).sorted { $0.timestamp > $1.timestamp }
+        var recent: [RecoveryRecord] = []
+        for record in candidates {
+            if let restored = try? hydrate(record) { recent.append(restored) }
+            else { unreadableJournals += 1 }
+            if recent.count == limit { break }
+        }
+        return recent.reversed()
     }
 
     /// Called once on normal launch, never while a recorder owns an open WAV.
@@ -389,7 +399,7 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
         }
     }
 
-    private func loadAllUnlocked() throws -> [RecoveryRecord] {
+    private func loadAllUnlocked(hydrateSnapshots: Bool = true) throws -> [RecoveryRecord] {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         var records: [UUID: RecoveryRecord] = [:]
@@ -410,7 +420,7 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
                 // Suppress even a same-ID legacy index entry when the newer
                 // authoritative journal cannot be decoded or hydrated.
                 records.removeValue(forKey: id)
-                if let record = try? readJournal(url, expectedID: id) {
+                if let record = try? readJournal(url, expectedID: id, hydrateSnapshots: hydrateSnapshots) {
                     records[record.id] = record
                 } else { unreadable += 1 }
             }
@@ -422,10 +432,15 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
         return Array(records.values)
     }
 
-    private func readJournal(_ url: URL, expectedID: UUID?) throws -> RecoveryRecord {
+    private func readJournal(_ url: URL, expectedID: UUID?, hydrateSnapshots: Bool = true) throws -> RecoveryRecord {
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-        var record = try decoder.decode(RecoveryRecord.self, from: Data(contentsOf: url))
+        let record = try decoder.decode(RecoveryRecord.self, from: Data(contentsOf: url))
         guard record.id == expectedID else { throw RecoverySnapshotError.invalidReference }
+        return hydrateSnapshots ? try hydrate(record) : record
+    }
+
+    private func hydrate(_ input: RecoveryRecord) throws -> RecoveryRecord {
+        var record = input
         let storedAttempts = record.attempts ?? []
         if let top = record.snapshot, RecoverySnapshots.hasReference(top) {
             guard let owner = storedAttempts.last(where: { $0.snapshot.terminology.lastImportedSource == top.terminology.lastImportedSource }) else {

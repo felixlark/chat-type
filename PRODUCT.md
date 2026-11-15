@@ -10,7 +10,7 @@ ChatType is a personal studio dictation app for writing into the currently focus
 
 ## Capabilities and constraints
 
-On macOS 26+, Apple SpeechAnalyzer supplies live preview. Complete audio goes to the original ChatGPT account for final transcription, then terminology alignment and optional whole-transcript text polish. The existing user-selected compatible recovery route remains available. Account credentials live in Keychain. Terms are canonical spellings; Replacement is explicit text correction. macOS keyboard shortcuts belong to macOS.
+On macOS 26+, Apple SpeechAnalyzer supplies live preview. Complete audio goes to the original ChatGPT account for final transcription, then terminology alignment and optional whole-transcript text polish. The existing user-selected compatible recovery route remains available. Account credentials live in Keychain. Workflow combines stage controls with custom phrases in Align and explicit Replacement rules in Correct. Account lists provider installation, credentials and local preview support separately from request success. macOS keyboard shortcuts belong to macOS.
 
 ## Brand commitments
 
@@ -18,4 +18,4 @@ Preserve the product name, app icon, dynamic menu-bar icon and existing system c
 
 ## Success
 
-Five focused pages, visible processing flow, responsive large vocabulary editing, working WeChat name import and an honest login-item control. Verify the signed app at /Applications/ChatType.app and leave it running with Settings visible.
+Four focused pages, visible processing flow, responsive large vocabulary editing, working WeChat name import and an honest login-item control. Verify the signed app at /Applications/ChatType.app and leave it running with Settings visible.
