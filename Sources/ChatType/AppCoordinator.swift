@@ -728,6 +728,12 @@ final class AppCoordinator {
                 authManager = ChatGPTAuthManager()
             }
             if preferencesDraft == nil { preferencesDraft = PreferencesDraft(config: config) }
+            // Separate production readers from the live recorder lock. Preserve
+            // injected implementations and their data sources in tests/embedders.
+            let historyReader: any TranscriptionHistoryRecording = (historyRecorder as? TranscriptionHistoryRecorder)
+                .map { TranscriptionHistoryRecorder(directoryURL: $0.directoryURL) } ?? historyRecorder
+            let recoveryReader: any RecoveryRecording = (recoveryRecorder as? RecoveryStore)
+                .map { RecoveryStore(directoryURL: $0.directoryURL) } ?? recoveryRecorder
             preferencesWindowController = PreferencesWindowController(
                 config: config,
                 draft: preferencesDraft,
@@ -745,17 +751,11 @@ final class AppCoordinator {
                         return .success(imported)
                     } catch { return .failure(error) }
                 },
-                onLoadRecentHistory: { [weak self] in
-                    guard let self else {
-                        return []
-                    }
-                    return (try? self.historyRecorder.loadRecent(limit: 200)) ?? []
+                onLoadRecentHistory: { [historyReader] in
+                    try historyReader.loadRecent(limit: 200)
                 },
-                onLoadRecoveryHistory: { [weak self] in
-                    guard let self else {
-                        return []
-                    }
-                    return (try? self.recoveryRecorder.loadRecent(limit: 10)) ?? []
+                onLoadRecoveryHistory: { [recoveryReader] in
+                    try recoveryReader.loadRecent(limit: 10)
                 },
                 recoveryDirectoryURL: recoveryRecorder.directoryURL,
                 onRetryRecoveryRecord: { [weak self] record in self?.retryRecoveryRecord(record) },

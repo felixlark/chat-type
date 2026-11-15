@@ -53,17 +53,39 @@ struct VocabularyBrowser: Sendable {
     }
 }
 
+/// An array position is only valid while the captured entry still occupies it.
+/// Async filtering, imports and deletion can all invalidate an old visible row.
+struct VocabularyEdit {
+    let index: Int
+    let original: TerminologyEntry
+
+    init?(row: VocabularyRow, entries: [TerminologyEntry]) {
+        guard entries.indices.contains(row.id), entries[row.id] == row.entry else { return nil }
+        index = row.id
+        original = row.entry
+    }
+
+    func replace(with entry: TerminologyEntry, in entries: inout [TerminologyEntry]) -> Bool {
+        guard entries.indices.contains(index), entries[index] == original else { return false }
+        entries[index] = entry
+        return true
+    }
+}
+
 /// Editor input lives here so typing never rebuilds account, history or the full settings tree.
 struct TerminologyEditor: View {
     @Binding var terminology: TerminologyConfig
     let importContacts: () async -> Result<TerminologyImportResult, any Error>
     let importWeChat: () async -> Result<TerminologyImportResult, any Error>
-    @State private var type: TerminologyEntryType = .term
+    let entryType: TerminologyEntryType
+    private var type: TerminologyEntryType { entryType }
+    @State private var indexing = false
     @State private var query = ""
     @State private var source = ""
     @State private var original = ""
     @State private var replacement = ""
-    @State private var editingID: Int?
+    @State private var editing: VocabularyEdit?
+    private var editingID: Int? { editing?.index }
     @State private var browser = VocabularyBrowser(entries: [])
     @State private var rows: [VocabularyRow] = []
     @Binding var importing: Bool
@@ -77,20 +99,15 @@ struct TerminologyEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Picker("Library", selection: $type) {
-                    Text("Terms · \(browser.termCount)").tag(TerminologyEntryType.term)
-                    Text("Replacement · \(browser.correctionCount)").tag(TerminologyEntryType.correction)
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 390)
-                .accessibilityIdentifier("terminology-entry-type")
+                Text(type == .term ? "Custom phrases · \(browser.termCount)" : "Replacement · \(browser.correctionCount)")
+                    .font(.headline)
                 Spacer()
-                Menu(importing ? "Reading names…" : "Import names") {
+                if type == .term { Menu(importing ? "Reading names…" : "Import names") {
                     Button("From Contacts") { startImport(weChat: false) }
                     Button("From WeChat") { startImport(weChat: true) }
                 }
                 .disabled(importing)
-                .accessibilityIdentifier("import-names")
+                .accessibilityIdentifier("import-names").fixedSize() }
             }
             Text(type == .term
                 ? "Standard spellings for names and technical words. English keeps your casing; Chinese terms guide recognition and relevant text alignment."
@@ -138,7 +155,7 @@ struct TerminologyEditor: View {
                     Button { page += 1 } label: { Image(systemName: "chevron.right") }
                         .disabled((page + 1) * rowsPerPage >= rows.count).accessibilityLabel("Next entries")
                 }
-                if importing { ProgressView().controlSize(.small) }
+                if importing || indexing { ProgressView().controlSize(.small) }
                 if let message { Text(message).font(.caption).foregroundStyle(error ? .red : .secondary).lineLimit(2) }
             }
             if rows.isEmpty {
@@ -167,21 +184,32 @@ struct TerminologyEditor: View {
             Text("The library is stored on this Mac; relevant terms, including names, may be sent as recognition hints or text-polish context to the services you select.")
                 .font(.caption).foregroundStyle(.secondary)
         }
-        .onAppear { rebuild() }
-        .onChange(of: terminology.entries) { _ in clearEditor(); rebuild() }
-        .onChange(of: type) { _ in clearEditor(); filter() }
-        .onChange(of: query) { _ in filter() }
-        .onChange(of: source) { _ in filter() }
+        .task(id: VocabularyQuery(entries: terminology.entries, type: type, query: query, source: source)) {
+            indexing = true
+            let entries = terminology.entries, selectedType = type, search = query, selectedSource = source
+            let result = await Task.detached(priority: .userInitiated) {
+                let browser = VocabularyBrowser(entries: entries)
+                return (browser, browser.filtered(type: selectedType, query: search, source: selectedSource))
+            }.value
+            guard !Task.isCancelled else { return }
+            browser = result.0
+            rows = result.1
+            if !browser.sources.contains(source) { source = "" }
+            page = 0
+            indexing = false
+        }
+        .onChange(of: terminology.entries) { _ in clearEditor() }
     }
 
-    private func rebuild() {
-        browser = VocabularyBrowser(entries: terminology.entries)
-        if !browser.sources.contains(source) { source = "" }
-        filter()
+    private func clearEditor() { editing = nil; original = ""; replacement = "" }
+    private func edit(_ row: VocabularyRow) {
+        guard let current = VocabularyEdit(row: row, entries: terminology.entries) else {
+            message = "The library changed. Choose the entry again."; error = true; return
+        }
+        editing = current
+        original = current.original.original
+        replacement = current.original.replacement ?? ""
     }
-    private func filter() { page = 0; rows = browser.filtered(type: type, query: query, source: source) }
-    private func clearEditor() { editingID = nil; original = ""; replacement = "" }
-    private func edit(_ row: VocabularyRow) { editingID = row.id; original = row.entry.original; replacement = row.entry.replacement ?? "" }
     private func delete(_ row: VocabularyRow) {
         guard terminology.entries.indices.contains(row.id), terminology.entries[row.id] == row.entry else { return }
         terminology.entries.remove(at: row.id)
@@ -198,10 +226,14 @@ struct TerminologyEditor: View {
         guard duplicate == nil else { message = "This entry already exists. Search for it to edit."; error = true; return }
         var entry = TerminologyEntry(type: type, original: from, replacement: to, aliases: [], source: "user",
             usageCount: 0, createdAt: ISO8601DateFormatter().string(from: Date()))
-        if let id = editingID, terminology.entries.indices.contains(id) {
-            entry.aliases = terminology.entries[id].aliases
-            entry.createdAt = terminology.entries[id].createdAt
-            terminology.entries[id] = entry
+        if let editing {
+            entry.aliases = editing.original.aliases
+            entry.createdAt = editing.original.createdAt
+            var entries = terminology.entries
+            guard editing.replace(with: entry, in: &entries) else {
+                clearEditor(); message = "The library changed. Choose the entry again."; error = true; return
+            }
+            terminology.entries = entries
         } else { terminology.entries.insert(entry, at: 0) }
         clearEditor(); message = wasEditing ? "Entry updated." : "Entry added."; error = false
     }
@@ -220,10 +252,17 @@ struct TerminologyEditor: View {
                     incoming: imported.entries, replacingSources: sources)
                 terminology.lastImportedSource = imported.source
                 terminology.lastImportedAt = imported.importedAt
-                type = .term; query = ""; source = VocabularyBrowser.sourceGroup(imported.source)
+                query = ""; source = VocabularyBrowser.sourceGroup(imported.source)
                 message = "Read \(imported.entries.count) names."; error = false
             case .failure(let failure): message = failure.localizedDescription; error = true
             }
         }
     }
+}
+
+private struct VocabularyQuery: Equatable {
+    let entries: [TerminologyEntry]
+    let type: TerminologyEntryType
+    let query: String
+    let source: String
 }

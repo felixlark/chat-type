@@ -276,3 +276,32 @@ private final class TerminalJournalFailureFileManager: FileManager, @unchecked S
     #expect(restored.attempts?.first?.snapshot == snapshot)
     #expect(restored.attempts?.first?.injectionSnapshot == injection)
 }
+
+@Test func recentHistoryHydratesOnlyDisplayedSnapshotsAndSkipsDamagedNewest() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let writer = ChatType.RecoveryStore(directoryURL: root)
+    var attempts: [UUID] = []
+    for index in 0..<12 {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        try Data("retained audio".utf8).write(to: url)
+        let attempt = UUID()
+        attempts.append(attempt)
+        try writer.record(.init(timestamp: Date(timeIntervalSince1970: Double(index)), sourceAudioURL: url, durationMs: 100,
+            asrText: "original", polishText: nil, appName: nil, appBundleIdentifier: nil, outcome: "clipboard", errorMessage: nil,
+            snapshot: snapshotWithTerms(), attemptID: attempt))
+        try FileManager.default.removeItem(at: url)
+    }
+    let reader = ChatType.RecoveryStore(directoryURL: root)
+    let records = try reader.loadRecent(limit: 2)
+    #expect(records.count == 2)
+    #expect(reader.persistenceStats().snapshotLoads == 2)
+    #expect(records.compactMap { $0.attempts?.last?.id } == Array(attempts.suffix(2)))
+    #expect(records.allSatisfy { $0.snapshot == snapshotWithTerms() })
+    try FileManager.default.removeItem(at: root.appendingPathComponent("Snapshots/\(attempts.last!.uuidString).json"))
+    let nextReader = ChatType.RecoveryStore(directoryURL: root)
+    let valid = try nextReader.loadRecent(limit: 1)
+    #expect(valid.first?.attempts?.last?.id == attempts[attempts.count - 2])
+    #expect(nextReader.unreadableJournalCount == 1)
+    #expect(try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("Audio"), includingPropertiesForKeys: nil).count == 12)
+}

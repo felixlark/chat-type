@@ -52,7 +52,7 @@ import Testing
     var stages = ProcessingStage.stages(config: config, localPreviewSupported: true, chatGPTReady: true, glmReady: false, qwenReady: false)
     #expect(stages[1].service == "test-audio-model · recovery.example")
     #expect(stages[0].service == "This Mac · audio recorder")
-    #expect(stages[3].service.hasPrefix("Skipped"))
+    #expect(stages[3].service.hasPrefix("Needs account or key"))
     #expect(stages[3].input.contains("text only"))
     config.textPolish.mode = .disabled
     stages = ProcessingStage.stages(config: config, localPreviewSupported: true, chatGPTReady: true, glmReady: true, qwenReady: true)
@@ -108,4 +108,36 @@ private func rule(_ from: String, _ to: String) -> TerminologyEntry {
     let reloaded = TerminologyPolicy.sanitizedEntries(saved)
     #expect(saved == reloaded)
     #expect(saved.map(\.original) == ["张明", "厦大", "实验室", "Alice Smith", "李四", "研发部"])
+}
+
+@Test func vocabularyEditingCannotTargetShiftedOrReplacedEntries() throws {
+    let a = TerminologyEntry(type: .term, original: "A", replacement: nil, aliases: [], source: "user", usageCount: 0, createdAt: "test")
+    var b = a; b.original = "B"
+    var c = a; c.original = "C"
+    var entries = [a, b, c]
+    let oldB = VocabularyBrowser(entries: entries).rows[1]
+    let editing = try #require(VocabularyEdit(row: oldB, entries: entries))
+    entries.removeFirst()
+    #expect(VocabularyEdit(row: oldB, entries: entries) == nil)
+    var renamed = b; renamed.original = "renamed B"
+    #expect(!editing.replace(with: renamed, in: &entries))
+    #expect(entries == [b, c])
+    let current = try #require(VocabularyEdit(row: VocabularyBrowser(entries: entries).rows[0], entries: entries))
+    #expect(current.replace(with: renamed, in: &entries))
+    #expect(entries == [renamed, c])
+    // Same index but a refreshed/imported entry is also a different identity.
+    #expect(!current.replace(with: b, in: &entries))
+    #expect(entries == [renamed, c])
+}
+
+@Test func processingFlowReportsDoubaoTextInputAndMissingKeyWithoutPretendingToSkip() {
+    var config = AppConfig().transcription
+    var stages = ProcessingStage.stages(config: config, localPreviewSupported: true, chatGPTReady: false, glmReady: false, qwenReady: false)
+    #expect(stages[3].input == "Aligned full transcript · text only")
+    config.textPolish.selectProvider(.qwenFlash)
+    stages = ProcessingStage.stages(config: config, localPreviewSupported: true, chatGPTReady: false, glmReady: false, qwenReady: false)
+    #expect(stages[3].output.hasPrefix("No output until"))
+    config.textPolish.setEnabled(false)
+    stages = ProcessingStage.stages(config: config, localPreviewSupported: true, chatGPTReady: false, glmReady: false, qwenReady: false)
+    #expect(stages[3].output == "Aligned transcript")
 }

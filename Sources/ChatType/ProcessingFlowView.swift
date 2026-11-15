@@ -22,7 +22,7 @@ struct ProcessingStage: Identifiable, Equatable {
         case .qwenFlash: polishService = "Qwen Flash · dashscope.aliyuncs.com"
         }
         let polishState = !config.textPolish.isEnabled ? "Off — aligned text passes through"
-            : selected == nil ? "Skipped — selected account or key unavailable" : polishService
+            : selected == nil ? "Needs account or key — processing cannot complete" : polishService
         let doubao = config.provider == .doubaoIME
         let preview = config.livePreviewEnabled && (doubao || (localPreviewSupported && managed))
         return [
@@ -38,8 +38,8 @@ struct ProcessingStage: Identifiable, Equatable {
             Self(id: 2, title: "Align", icon: "text.book.closed", input: "Recognized text + local Terms",
                  service: config.terminologyAlignmentEnabled ? "This Mac · terminology alignment" : "Off · recognized text passes through", output: "Aligned full transcript",
                  detail: "Standard spellings preserve names and English casing. Relevant Chinese terms and personal-name hints help matching. Keyboard input codes are excluded."),
-            Self(id: 3, title: "Polish", icon: "wand.and.stars", input: "Aligned full transcript + relevant glossary · text only",
-                 service: polishState, output: selected == nil ? "Aligned transcript" : "Rewritten full transcript",
+            Self(id: 3, title: "Polish", icon: "wand.and.stars", input: config.textPolish.provider == .doubaoIME ? "Aligned full transcript · text only" : "Aligned full transcript + relevant glossary · text only",
+                 service: polishState, output: !config.textPolish.isEnabled ? "Aligned transcript" : selected == nil ? "No output until the selected account or key is ready" : "Rewritten full transcript",
                  detail: "The polish model receives text only. Changing it affects rewriting quality, wording and wait time, independently of audio recognition. On failure or truncation, processing remains incomplete and no text is pasted; audio and available stage text are saved for an explicit retry. No automatic switch to another provider."),
             Self(id: 4, title: "Correct", icon: "text.badge.checkmark", input: "Polished text, or aligned text when polish is off",
                  service: config.correctionRulesEnabled ? "This Mac · Replacement rules" : "Off · explicit corrections skipped", output: "Final text with your explicit corrections",
@@ -51,7 +51,7 @@ struct ProcessingStage: Identifiable, Equatable {
     }
 }
 
-struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View>: View {
+struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOptions: View, CorrectionOptions: View>: View {
     @Binding var config: TranscriptionConfig
     @Binding var injection: InjectionConfig
     let chatGPTReady: Bool
@@ -59,6 +59,8 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View>: View {
     let qwenReady: Bool
     let recognitionOptions: RecognitionOptions
     let polishOptions: PolishOptions
+    let termsOptions: TermsOptions
+    let correctionOptions: CorrectionOptions
     @State private var selected = 1
 
     private var stages: [ProcessingStage] {
@@ -98,9 +100,7 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View>: View {
                 Text(stage.detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }.textSelection(.enabled)
         }
-        .padding(18)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder private var stageOptions: some View {
@@ -116,11 +116,13 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View>: View {
         case 2:
             Toggle("使用本地 Terms 对齐标准写法", isOn: $config.terminologyAlignmentEnabled)
                 .accessibilityIdentifier("stage-terminology")
+            termsOptions
         case 3:
             polishOptions
         case 4:
             Toggle("应用本地 Replacement 纠错规则", isOn: $config.correctionRulesEnabled)
                 .accessibilityIdentifier("stage-corrections")
+            correctionOptions
         default:
             Toggle("仅复制到剪贴板，不自动粘贴", isOn: $injection.clipboardOnly)
                 .accessibilityIdentifier("stage-clipboard-only")

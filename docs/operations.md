@@ -1,3 +1,9 @@
+## 134 设置与 Workflow（2026-11-15）
+
+设置导航为 Account、Workflow、History、Settings。Account 显示所有已支持服务：ChatGPT 会话、豆包 IME 安装、Apple SpeechAnalyzer 本地预览支持、GLM/Qwen 密钥和兼容恢复入口；豆包安装绿点不是云端可用性或费用保证。GLM/Qwen 密钥在 Account 管理。Workflow 的 Recognize 与 Polish 保持独立服务选择，Align 内维护自定义短语，Correct 内维护 Replacement；其余阶段保留预览、提示音和输出控制。未添加本地终稿服务或新的数据去向。
+
+卡顿采样显示应用重新激活时，界面线程在恢复库 JSON 解码路径约占 2.7 秒。修复将使用统计、Keychain 元数据、历史读取移到后台；Account/Workflow 打开不扫描恢复库。History 使用独立只读 store，不持有录音 writer 的锁；先排序压缩 journal，再恢复最近有效记录的完整快照。记录损坏仍压住同 ID 旧索引，不回退覆盖。异步刷新合并读取期间到达的录音/凭据更新，失败保留已有数据并显示错误。关闭窗口取消结果应用，重新打开刷新。
+
 # ChatType 运维规约与 2026-08-24 故障复盘
 
 ## 133 采集就绪边界与同源对照

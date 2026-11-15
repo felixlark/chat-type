@@ -15,8 +15,8 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         onSave: @escaping (AppConfig) -> Result<Void, any Error>,
         onImportAppleContactRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
         onImportWeixinRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
-        onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
-        onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
+        onLoadRecentHistory: @escaping @Sendable () throws -> [TranscriptionHistoryRecord],
+        onLoadRecoveryHistory: @escaping @Sendable () throws -> [RecoveryRecord],
         recoveryDirectoryURL: URL,
         onRetryRecoveryRecord: @escaping (RecoveryRecord) -> Void,
         onReprocessRecoveryRecord: @escaping (RecoveryRecord) -> Void,
@@ -121,26 +121,10 @@ final class CommandClosingWindow: NSWindow {
     }
 }
 
-private struct TextPolishUsage: Equatable {
-    var attempts = 0
-    var succeeded = 0
-    var failed = 0
-    var inputTokens = 0
-    var outputTokens = 0
-
-    var summary: String {
-        guard attempts > 0 else {
-            return "0 attempts / 0 tokens"
-        }
-        return "\(attempts) attempts / \(succeeded) succeeded / \(failed) failed / \(inputTokens + outputTokens) tokens"
-    }
-}
-
 private struct PreferencesView: View {
     private enum SettingsSection: String, CaseIterable, Identifiable {
         case account = "Account"
-        case dictation = "Dictation"
-        case terminology = "Terminology"
+        case workflow = "Workflow"
         case recovery = "History"
         case settings = "Settings"
 
@@ -150,12 +134,10 @@ private struct PreferencesView: View {
             switch self {
             case .account:
                 return "person.crop.circle"
-            case .dictation:
+            case .workflow:
                 return "mic"
             case .recovery:
                 return "clock.arrow.circlepath"
-            case .terminology:
-                return "text.book.closed"
             case .settings:
                 return "gearshape"
             }
@@ -171,25 +153,41 @@ private struct PreferencesView: View {
     @State private var permissionRefreshNonce: Int = 0
     @State private var terminologyImportMessage: String?
     @State private var terminologyImportIsError = false
-    @State private var authSnapshot: ChatGPTAuthSnapshot
-    @State private var browserBridgeSnapshot: BrowserBridgeSnapshot
+    @StateObject private var providers: SettingsResource<SettingsProviderEnvironment>
+    @StateObject private var usage: SettingsResource<SettingsPolishUsage>
+    @StateObject private var history: SettingsResource<[TranscriptionHistoryRecord]>
+    @StateObject private var recovery: SettingsResource<[RecoveryRecord]>
+    private var authSnapshot: ChatGPTAuthSnapshot {
+        get { providers.value.auth }
+        nonmutating set { let value = newValue; providers.update { var copy = $0; copy.auth = value; return copy } }
+    }
+    private var browserBridgeSnapshot: BrowserBridgeSnapshot {
+        get { providers.value.browser }
+        nonmutating set { let value = newValue; providers.update { var copy = $0; copy.browser = value; return copy } }
+    }
     @State private var isConnectingBrowserLogin = false
     @State private var copiedDeviceCode: String?
     @State private var selectedSection: SettingsSection = .account
-    @State private var textPolishUsage: [TextPolishProviderID: TextPolishUsage] = [:]
-    @State private var unattributedPolishAttempts = 0
+    private var textPolishUsage: [TextPolishProviderID: TextPolishUsage] { usage.value.usage }
+    private var unattributedPolishAttempts: Int { usage.value.unattributed }
     @State private var qwenKeyInput = ""
-    @State private var qwenKeySaved = false
+    private var qwenKeySaved: Bool {
+        get { providers.value.qwenKeySaved }
+        nonmutating set { let value = newValue; providers.update { var copy = $0; copy.qwenKeySaved = value; return copy } }
+    }
     @State private var polishTestGeneration = UUID()
     @State private var glmKeyInput = ""
-    @State private var glmKeySaved = false
+    private var glmKeySaved: Bool {
+        get { providers.value.glmKeySaved }
+        nonmutating set { let value = newValue; providers.update { var copy = $0; copy.glmKeySaved = value; return copy } }
+    }
     @State private var testingTextPolish = false
     private let qwenKeyStore: any QwenKeyStoring
     private let glmKeyStore: any GLMKeyStoring
     @State private var textPolishMessage: String?
     @State private var textPolishMessageIsError = false
-    @State private var recentHistoryRecords: [TranscriptionHistoryRecord] = []
-    @State private var recentRecoveryRecords: [RecoveryRecord] = []
+    private var recentHistoryRecords: [TranscriptionHistoryRecord] { history.value }
+    private var recentRecoveryRecords: [RecoveryRecord] { recovery.value }
     @State private var selectedRecoveryKind: RecoveryHistoryKind = .audio
     @State private var copiedHistoryItemID: String?
 
@@ -197,8 +195,8 @@ private struct PreferencesView: View {
     let onSave: (AppConfig) -> Result<Void, any Error>
     let onImportAppleContactRemarks: () async -> Result<TerminologyImportResult, any Error>
     let onImportWeixinRemarks: () async -> Result<TerminologyImportResult, any Error>
-    let onLoadRecentHistory: () -> [TranscriptionHistoryRecord]
-    let onLoadRecoveryHistory: () -> [RecoveryRecord]
+    let onLoadRecentHistory: @Sendable () throws -> [TranscriptionHistoryRecord]
+    let onLoadRecoveryHistory: @Sendable () throws -> [RecoveryRecord]
     let recoveryDirectoryURL: URL
     let onRetryRecoveryRecord: (RecoveryRecord) -> Void
     let onReprocessRecoveryRecord: (RecoveryRecord) -> Void
@@ -211,8 +209,8 @@ private struct PreferencesView: View {
         onSave: @escaping (AppConfig) -> Result<Void, any Error>,
         onImportAppleContactRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
         onImportWeixinRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
-        onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
-        onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
+        onLoadRecentHistory: @escaping @Sendable () throws -> [TranscriptionHistoryRecord],
+        onLoadRecoveryHistory: @escaping @Sendable () throws -> [RecoveryRecord],
         recoveryDirectoryURL: URL,
         onRetryRecoveryRecord: @escaping (RecoveryRecord) -> Void,
         onReprocessRecoveryRecord: @escaping (RecoveryRecord) -> Void,
@@ -222,16 +220,17 @@ private struct PreferencesView: View {
         qwenKeyStore: any QwenKeyStoring = KeychainQwenKeyStore()
     ) {
         self.qwenKeyStore = qwenKeyStore
-        _qwenKeySaved = State(initialValue: qwenKeyStore.contains())
         self.glmKeyStore = glmKeyStore
-        _glmKeySaved = State(initialValue: glmKeyStore.contains())
         _draft = ObservedObject(wrappedValue: draft ?? PreferencesDraft(config: initialConfig))
-        _authSnapshot = State(initialValue: authManager.authSnapshot())
-        _browserBridgeSnapshot = State(initialValue: authManager.browserBridgeSnapshot())
+        _providers = StateObject(wrappedValue: SettingsResource(SettingsProviderEnvironment()) {
+            SettingsProviderEnvironment(auth: authManager.authSnapshot(), browser: authManager.browserBridgeSnapshot(),
+                qwenKeySaved: qwenKeyStore.contains(), glmKeySaved: glmKeyStore.contains(),
+                doubaoInstalled: SettingsProviderEnvironment.doubaoIsInstalled(), checked: true)
+        })
+        _usage = StateObject(wrappedValue: SettingsResource(SettingsPolishUsage()) { try SettingsPolishUsage.read() })
+        _history = StateObject(wrappedValue: SettingsResource([]) { try onLoadRecentHistory() })
+        _recovery = StateObject(wrappedValue: SettingsResource([]) { try onLoadRecoveryHistory() })
         _copiedDeviceCode = State(initialValue: nil)
-        let polishUsage = Self.loadTextPolishUsage()
-        _textPolishUsage = State(initialValue: polishUsage.usage)
-        _unattributedPolishAttempts = State(initialValue: polishUsage.unattributed)
         _selectedSection = State(initialValue: focusRecoveryHistory ? .recovery : .account)
         self.authManager = authManager
         self.onSave = onSave
@@ -254,11 +253,9 @@ private struct PreferencesView: View {
     }
 
     private var chatGPTAccountStatus: SetupStatus {
-        if !config.transcription.needsChatGPT {
-            return SetupStatus(
-                title: "ChatGPT is optional for this route",
-                subtitle: "Only a selected ChatGPT recognition or polish stage requires its account."
-            )
+        guard providers.value.checked else { return SetupStatus(title: "Checking…", subtitle: "Reading saved account status.", isReady: false) }
+        guard authSnapshot.state == .ready else {
+            return SetupStatus(title: authSnapshot.state == .signedOut ? "Not connected" : "Needs attention", subtitle: authSnapshot.detail, isReady: false)
         }
 
         if let issue = runtimeIssues.first(where: {
@@ -363,34 +360,30 @@ private struct PreferencesView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             permissionRefreshNonce += 1
             loginItem.refresh()
-            authSnapshot = authManager.authSnapshot()
-            browserBridgeSnapshot = authManager.browserBridgeSnapshot()
-            refreshTextPolishStatus()
-            refreshRecentHistory()
-            refreshRecoveryHistory()
+            providers.refresh()
+            if selectedSection == .recovery { refreshRecentHistory(); refreshRecoveryHistory() }
+
         }
         .onReceive(NotificationCenter.default.publisher(for: .recoveryRecordDidChange).receive(on: RunLoop.main)) { update in
             guard update.userInfo?["directory"] as? String == recoveryDirectoryURL.path,
                   let record = update.object as? RecoveryRecord else { return }
             // Update the touched row directly: no synchronous scan/decode of
             // the entire original-audio archive on the UI or processing path.
-            recentRecoveryRecords.removeAll { $0.id == record.id }
-            recentRecoveryRecords.append(record)
-            recentRecoveryRecords = Array(recentRecoveryRecords.sorted { $0.timestamp < $1.timestamp }.suffix(10))
+            recovery.update { records in
+                var updated = records.filter { $0.id != record.id }
+                updated.append(record)
+                return Array(updated.sorted { $0.timestamp < $1.timestamp }.suffix(10))
+            }
         }
         .onReceive(
             NotificationCenter.default.publisher(for: .chatGPTAuthStateDidChange)
                 .receive(on: RunLoop.main)
         ) { _ in
-            authSnapshot = authManager.authSnapshot()
-            browserBridgeSnapshot = authManager.browserBridgeSnapshot()
-            refreshTextPolishStatus()
+            providers.refresh()
         }
-        .onAppear {
-            refreshTextPolishStatus()
-            refreshRecentHistory()
-            refreshRecoveryHistory()
-        }
+        .onAppear { providers.refresh(); refreshVisibleSection() }
+        .onChange(of: selectedSection) { _ in refreshVisibleSection() }
+        .onDisappear { providers.cancel(); usage.cancel(); history.cancel(); recovery.cancel() }
     }
 
     private var sidebar: some View {
@@ -453,9 +446,8 @@ private struct PreferencesView: View {
 
     private var sectionSubtitle: String {
         switch selectedSection {
-        case .account: return "ChatGPT 登录状态；所有语音处理服务和模型统一在 Dictation 中选择。"
-        case .dictation: return "From your voice to finished text. See what each step receives and sends."
-        case .terminology: return "The words you use, spelled the way you intend."
+        case .account: return "查看各个服务的账户、安装与密钥状态；在 Workflow 中组合处理流程。"
+        case .workflow: return "From your voice to finished text. See what each step receives and sends."
         case .recovery: return "Review original recognition, finished text and saved audio."
         case .settings: return "Local preferences, login items and paste behavior."
         }
@@ -466,13 +458,11 @@ private struct PreferencesView: View {
         switch selectedSection {
         case .account:
             accountOverviewCard
-        case .dictation:
+        case .workflow:
             ProcessingFlowView(config: $draft.config.transcription, injection: $draft.config.injection, chatGPTReady: authSnapshot.state == .ready,
                 glmReady: glmKeySaved, qwenReady: qwenKeySaved,
-                recognitionOptions: transcriptionAccountCard, polishOptions: aiPolishCard)
-        case .terminology:
-            TerminologyEditor(terminology: $draft.config.transcription.terminology,
-                importContacts: onImportAppleContactRemarks, importWeChat: onImportWeixinRemarks, importing: $importingNames)
+                recognitionOptions: transcriptionAccountCard, polishOptions: aiPolishCard,
+                termsOptions: terminologyEditor(.term), correctionOptions: terminologyEditor(.correction))
         case .recovery: recoveryHistoryCard
         case .settings: localSettingsCard
         }
@@ -535,64 +525,17 @@ private struct PreferencesView: View {
         }
     }
 
-    private static func loadTextPolishUsage(
-        directoryURL: URL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/ChatType", isDirectory: true)
-    ) -> (usage: [TextPolishProviderID: TextPolishUsage], unattributed: Int) {
-        let dataURL = directoryURL.appendingPathComponent("latency.jsonl")
-        guard let contents = try? String(contentsOf: dataURL, encoding: .utf8) else {
-            return ([:], 0)
-        }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        var usage: [TextPolishProviderID: TextPolishUsage] = [:]
-        var unattributed = 0
-
-        for line in contents.split(separator: "\n") {
-            guard
-                let data = String(line).data(using: .utf8),
-                let sample = try? decoder.decode(LatencySample.self, from: data)
-            else {
-                continue
-            }
-
-            let attempted = sample.textPolishAttempted ?? (sample.polishMs > 0 || sample.textPolishProvider != nil)
-            guard attempted else {
-                continue
-            }
-
-            guard let provider = sample.textPolishProvider.flatMap(TextPolishProviderID.init(rawValue:)) else {
-                unattributed += 1
-                continue
-            }
-            var current = usage[provider] ?? TextPolishUsage()
-            current.attempts += 1
-            if sample.textPolishProvider != nil {
-                current.succeeded += 1
-                current.inputTokens += sample.estimatedPolishInputTokens
-                current.outputTokens += sample.estimatedPolishOutputTokens
-            } else {
-                current.failed += 1
-            }
-            usage[provider] = current
-        }
-
-        return (usage, unattributed)
+    private func terminologyEditor(_ type: TerminologyEntryType) -> some View {
+        TerminologyEditor(terminology: $draft.config.transcription.terminology,
+            importContacts: onImportAppleContactRemarks, importWeChat: onImportWeixinRemarks,
+            entryType: type, importing: $importingNames)
     }
 
-    private func refreshTextPolishStatus() {
-        let loaded = Self.loadTextPolishUsage()
-        textPolishUsage = loaded.usage
-        unattributedPolishAttempts = loaded.unattributed
-    }
-
-    private func refreshRecentHistory() {
-        recentHistoryRecords = onLoadRecentHistory()
-    }
-
-    private func refreshRecoveryHistory() {
-        recentRecoveryRecords = onLoadRecoveryHistory()
+    private func refreshTextPolishStatus() { usage.refresh() }
+    private func refreshRecentHistory() { history.refresh() }
+    private func refreshRecoveryHistory() { recovery.refresh() }
+    private func refreshVisibleSection() {
+        if selectedSection == .recovery { refreshRecentHistory(); refreshRecoveryHistory() }
     }
 
     private var recentRecoveryItems: [RecoveryHistoryPreview] {
@@ -620,41 +563,73 @@ private struct PreferencesView: View {
     }
 
     private var accountOverviewCard: some View {
-        settingsCard(title: "ChatGPT account") {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    compactSetupTile(title: "ChatGPT", status: chatGPTAccountStatus)
-                    compactSetupTile(title: "Microphone", status: microphoneStatus)
-                    compactSetupTile(title: "Accessibility", status: accessibilityStatus)
+        VStack(alignment: .leading, spacing: 20) {
+            settingsCard(title: "Providers") {
+                providerRow("ChatGPT", status: chatGPTAccountStatus.title,
+                    ready: providers.value.checked ? authSnapshot.state == .ready : nil,
+                    detail: authSnapshot.userEmail ?? authSnapshot.detail)
+                chatGPTSetupActions
+                Divider()
+                providerRow("Doubao IME", status: !providers.value.checked ? "Checking…" : providers.value.doubaoInstalled ? "Installed" : "Not installed",
+                    ready: providers.value.checked ? providers.value.doubaoInstalled : nil,
+                    detail: "豆包输入法安装检测 · 可用于识别与文字整理。安装状态不代表云端请求已验证；ChatType 使用自身配置。")
+                Divider()
+                providerRow("Apple SpeechAnalyzer", status: ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 ? "Available on this macOS" : "Requires macOS 26",
+                    ready: nil,
+                    detail: "本机实时预览 · 选择 ChatGPT 识别路线时使用；模型在录音准备时检测。终稿仍由所选识别服务生成。")
+                Divider()
+                providerRow("GLM", status: providers.value.checked ? (glmKeySaved ? "Key saved" : "Key not saved") : "Checking…",
+                    ready: providers.value.checked ? glmKeySaved : nil,
+                    detail: "文字润色 · GLM-4.7-Flash · 密钥保存状态，尚未验证请求。")
+                HStack {
+                    SecureField("GLM API Key", text: $glmKeyInput).accessibilityIdentifier("glm-api-key")
+                    Button("Save GLM Key") { saveGLMKey() }.disabled(glmKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-
-                HStack(alignment: .center, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(authSnapshot.userEmail ?? "豆包无需 ChatGPT 登录；选择 ChatGPT 阶段时再连接。")
-                            .font(.system(size: 12, weight: .medium))
-                        Text("F5 starts and stops recording. Output pastes when an editable target is focused; otherwise it stays in the clipboard.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-
-                    chatGPTSetupActions
+                Divider()
+                providerRow("Qwen", status: providers.value.checked ? (qwenKeySaved ? "Key saved" : "Key not saved") : "Checking…",
+                    ready: providers.value.checked ? qwenKeySaved : nil,
+                    detail: "文字润色 · Qwen Flash · 密钥保存状态，尚未验证请求。")
+                HStack {
+                    SecureField("Qwen API Key", text: $qwenKeyInput).accessibilityIdentifier("qwen-api-key")
+                    Button("Save Qwen Key") { saveQwenKey() }.disabled(qwenKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-
+                Divider()
+                providerRow("OpenAI-Compatible", status: "Advanced recovery", ready: nil,
+                    detail: "使用独立端点与 API Key，可能按量收费；在 Workflow 的 Recognize 阶段配置，未验证可用性。")
                 if let terminologyImportMessage {
                     Text(terminologyImportMessage).font(.caption).foregroundStyle(terminologyImportIsError ? .red : .secondary)
                 }
-                if microphoneStatus.isReady == false || accessibilityStatus.isReady == false {
-                    Divider()
-                    HStack(spacing: 10) {
-                        ForEach(microphoneRepairActions + accessibilityRepairActions) { action in
-                            repairActionButton(action)
-                        }
-                    }
+                if let textPolishMessage {
+                    Text(textPolishMessage).font(.caption).foregroundStyle(textPolishMessageIsError ? .red : .secondary)
                 }
+                Button("Refresh Provider Status") { providers.refresh() }.disabled(providers.isLoading)
+            }
+            settingsCard(title: "Permissions") {
+                HStack(spacing: 10) {
+                    compactSetupTile(title: "Microphone", status: microphoneStatus)
+                    compactSetupTile(title: "Accessibility", status: accessibilityStatus)
+                }
+                ForEach(microphoneRepairActions + accessibilityRepairActions) { repairActionButton($0) }
             }
         }
+    }
+
+    private func providerRow(_ title: String, status: String, ready: Bool?, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Circle().fill(ready == true ? Color.green : ready == false ? Color.orange : Color.secondary)
+                .frame(width: 8, height: 8).padding(.top, 5)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(title).fontWeight(.semibold)
+                    Spacer()
+                    Text(status).foregroundStyle(.secondary)
+                }
+                Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("provider-" + title)
     }
 
     private func routeRow(title: String, value: String, detail: String) -> some View {
@@ -705,25 +680,15 @@ private struct PreferencesView: View {
                     textPolishMessageIsError = false
                 }
                 if config.transcription.textPolish.provider == .qwenFlash {
-                    HStack {
-                        SecureField("Qwen API Key", text: $qwenKeyInput)
-                            .accessibilityIdentifier("qwen-api-key")
-                        Button("Save Key") { saveQwenKey() }
-                        Text(qwenKeySaved ? "Key saved" : "Key not saved")
-                            .font(.system(size: 11))
-                    }
+                    Text("凭据在 Account 中管理。密钥已保存不代表请求已经验证。")
+                        .font(.caption).foregroundStyle(.secondary)
                     Text("Qwen Flash, Beijing: eligible free quota is used first, then usage billing. Full transcript and relevant glossary go to dashscope.aliyuncs.com; ASR follows the selected dictation route. F5 新录音或按当前流程重跑时应用这些选择。")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
                 if config.transcription.textPolish.provider == .glmFlash {
-                    HStack {
-                        SecureField("GLM API Key", text: $glmKeyInput)
-                            .accessibilityIdentifier("glm-api-key")
-                        Button("Save Key") { saveGLMKey() }
-                        Text(glmKeySaved ? "Key saved" : "Key not saved")
-                            .font(.system(size: 11))
-                    }
+                    Text("凭据在 Account 中管理。密钥已保存不代表请求已经验证。")
+                        .font(.caption).foregroundStyle(.secondary)
                     Text("GLM-4.7-Flash uses your vendor account quota and current pricing. Full transcript and relevant glossary go to open.bigmodel.cn; ASR follows the selected dictation route. F5 新录音或按当前流程重跑时应用这些选择。")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
@@ -742,6 +707,8 @@ private struct PreferencesView: View {
                     : "Input: aligned full transcript + relevant glossary. Output: rewritten text. Selected service: \(polishRouteDetail). Credentials stay in Keychain. A saved key has not been verified by a request.")
                     .font(.caption).foregroundStyle(.secondary)
                 polishStatusSection
+                    .onAppear { refreshTextPolishStatus() }
+                if let error = usage.error { Text(error).font(.caption).foregroundStyle(.red) }
             }
         }
     }
@@ -767,7 +734,9 @@ private struct PreferencesView: View {
                     .buttonStyle(.bordered)
                 }
 
-                if recentRecoveryItems.isEmpty {
+                if recovery.isLoading { ProgressView("Loading saved recordings…").controlSize(.small) }
+                if let error = recovery.error { Text("History could not refresh: \(error)").foregroundStyle(.red) }
+                if recentRecoveryItems.isEmpty && !recovery.isLoading && recovery.error == nil {
                     Text("No recoverable records yet.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
@@ -841,7 +810,7 @@ private struct PreferencesView: View {
                 } label: {
                     Text("按当前流程重跑")
                 }
-                .help("应用 Dictation 当前选择，以新尝试重新处理；原声和旧尝试保留。")
+                .help("应用 Workflow 当前选择，以新尝试重新处理；原声和旧尝试保留。")
                 .accessibilityLabel("按当前流程重跑")
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -1043,7 +1012,8 @@ private struct PreferencesView: View {
         do {
             try qwenKeyStore.save(qwenKeyInput)
             qwenKeyInput = ""
-            qwenKeySaved = qwenKeyStore.contains()
+            qwenKeySaved = true
+            providers.refresh()
             textPolishMessage = "Qwen Key 已保存；F5 新录音或按当前流程重跑时应用所选服务。"
             textPolishMessageIsError = false
         } catch {
@@ -1056,7 +1026,8 @@ private struct PreferencesView: View {
         do {
             try glmKeyStore.save(glmKeyInput)
             glmKeyInput = ""
-            glmKeySaved = glmKeyStore.contains()
+            glmKeySaved = true
+            providers.refresh()
             textPolishMessage = "GLM Key 已保存；F5 新录音或按当前流程重跑时应用所选服务。"
             textPolishMessageIsError = false
         } catch {
@@ -1069,8 +1040,8 @@ private struct PreferencesView: View {
         let selected = TextPolishProviderSelector().selectProvider(
             config: config.transcription.textPolish,
             chatGPTAuthAvailable: authSnapshot.state == .ready,
-            glmKeyAvailable: glmKeyStore.contains(),
-            qwenKeyAvailable: qwenKeyStore.contains()
+            glmKeyAvailable: glmKeySaved,
+            qwenKeyAvailable: qwenKeySaved
         )
         guard let selected else {
             textPolishMessage = config.transcription.textPolish.provider == .qwenFlash ? "先保存 Qwen API Key，或检查 Mode。" : config.transcription.textPolish.provider == .glmFlash ? "先保存 GLM API Key，或检查 Mode。" : "ChatGPT Auth is not ready. Connect ChatGPT first."
