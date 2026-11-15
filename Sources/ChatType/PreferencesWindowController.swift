@@ -810,7 +810,7 @@ private struct PreferencesView: View {
                 } label: {
                     Text("按当前流程重跑")
                 }
-                .help("应用 Dictation 当前选择，以新尝试重新处理；原声和旧尝试保留。")
+                .help("应用 Workflow 当前选择，以新尝试重新处理；原声和旧尝试保留。")
                 .accessibilityLabel("按当前流程重跑")
                 .buttonStyle(.bordered)
                 .controlSize(.small)
