@@ -183,7 +183,9 @@ private final class TestDoubaoSocket: DoubaoSocket, @unchecked Sendable {
     var startDelayMs = 0
     private var receiveFailure: (any Error)?
     private var startPayload: Data?
-    init() {
+    private let onSend: (@Sendable (String) -> Void)?
+    init(onSend: (@Sendable (String) -> Void)? = nil) {
+        self.onSend = onSend
         queue = [Self.reply("TaskStarted"), Self.reply("SessionStarted")]
     }
     static func reply(_ kind: String, result: Data? = nil) -> Data {
@@ -210,6 +212,7 @@ private final class TestDoubaoSocket: DoubaoSocket, @unchecked Sendable {
             if closed { throw URLError(.cancelled) }
             sent.append(name)
         }
+        onSend?(name)
         if name == "StartSession", discoveryFailure {
             if partialBeforeDiscovery {
                 enqueue(Self.reply("", result: try doubaoJSON(["results": [["index": 0, "text": "已有部分识别", "is_interim": true, "is_vad_finished": false]]])))
@@ -494,31 +497,27 @@ private final class RecoverySocketSequence: @unchecked Sendable {
     #expect(r.protectionReason != nil)
 }
 
-private final class TestWorkerCompletion: @unchecked Sendable {
-    private let lock = NSLock()
-    private var done = false
-    func finish() { lock.withLock { done = true } }
-    var completed: Bool { lock.withLock { done } }
-}
-
-@Test func liveDiscoveryRecoveryKeepsRecordingAndResetsSessionState() async throws {
+@Test(.timeLimit(.minutes(1))) func liveDiscoveryRecoveryKeepsRecordingAndResetsSessionState() async throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
     defer { try? FileManager.default.removeItem(at: url) }
     try doubaoTestWAV().write(to: url)
     let state = DoubaoLiveState()
     let bad = TestDoubaoSocket(); bad.discoveryFailure = true
-    let next = TestDoubaoSocket(); let sequence = RecoverySocketSequence([bad, next])
-    let completion = TestWorkerCompletion()
+    let (events, progress) = AsyncStream<Bool>.makeStream()
+    let next = TestDoubaoSocket(onSend: { if $0 == "TaskRequest" { progress.yield(true) } })
+    let sequence = RecoverySocketSequence([bad, next])
     let task = Task {
-        defer { completion.finish() }
+        defer { progress.yield(false); progress.finish() }
         return try await DoubaoTranscriber(keyProvider: { "test-only" }, socketFactory: { _ in sequence.make() })
             .run(url: url, durationMs: 0, live: state)
     }
-    let deadline = ContinuousClock().now.advanced(by: .seconds(2))
-    while !next.methods.contains("TaskRequest"), !completion.completed {
-        try #require(ContinuousClock().now < deadline, "Receiver failure must wake a sender waiting for audio")
-        try await Task.sleep(for: .milliseconds(1))
-    }
+    defer { task.cancel(); progress.finish() }
+    // Observe the required protocol transition directly. A busy shared CI runner
+    // can delay scheduling past the old two-second polling deadline; the test
+    // watchdog still detects a sender that never wakes.
+    var iterator = events.makeAsyncIterator()
+    let resumedSending = await iterator.next()
+    try #require(resumedSending == true, "Receiver failure must wake a sender waiting for audio")
     await state.finish(RecordedAudio(fileURL: url, durationMs: 80))
     let r = try await task.value
     #expect(r.text == "完整识别。")
