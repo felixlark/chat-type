@@ -82,8 +82,9 @@ private final class FakeCoordinatorStatusMenu: StatusMenuUpdating {
 
 @MainActor
 private final class FakeCoordinatorNotifier: NotificationDispatching {
+    private(set) var notifications: [(String, String)] = []
     func ensureAuthorization() {}
-    func notify(title: String, body: String) {}
+    func notify(title: String, body: String) { notifications.append((title, body)) }
 }
 
 @MainActor
@@ -152,6 +153,12 @@ private actor CoordinatorGate {
         continuation?.resume()
         continuation = nil
     }
+}
+
+@MainActor
+private final class StartupProbe {
+    var entered = false
+    var resumed = false
 }
 
 private struct BlockingCoordinatorPipeline: DictationPreparing {
@@ -287,6 +294,47 @@ private func waitForCondition(
 
 @MainActor
 struct AppCoordinatorCancellationTests {
+    @Test(arguments: [false, true])
+    func lateStartupFailureCannotCancelNewSession(storageFailure: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gate = CoordinatorGate()
+        let old = FakeCoordinatorRecorder(), new = FakeCoordinatorRecorder()
+        defer { try? FileManager.default.removeItem(at: old.nextAudio.fileURL); try? FileManager.default.removeItem(at: new.nextAudio.fileURL) }
+        let probe = StartupProbe()
+        old.onStartRecording = {
+            await MainActor.run { probe.entered = true }
+            await gate.wait()
+            await MainActor.run { probe.resumed = true }
+        }
+        old.startRecordingError = storageFailure
+            ? RecorderError.recordingStorageFailed("archive failure") : CancellationError()
+        let overlay = FakeCoordinatorOverlay(), notifier = FakeCoordinatorNotifier()
+        var first = true
+        let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
+            config: legacyAccountConfig(), notifier: notifier, injector: FakeCoordinatorInjector(), overlay: overlay,
+            authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
+            historyRecorder: FakeCoordinatorHistoryRecorder(), soundFeedback: FakeSoundFeedback(),
+            recorderFactory: { _ in defer { first = false }; return first ? old : new },
+            statusMenuFactory: { _,_,_ in FakeCoordinatorStatusMenu() },
+            pipelineFactory: { _,_,_ in FakeCoordinatorPipeline() })
+        coordinator.handleHotkeyPress()
+        let oldStartup = try #require(coordinator.startRecordingTask)
+        await waitForCondition { probe.entered }
+        coordinator.cancelCurrentSession()
+        coordinator.handleHotkeyPress()
+        await waitForCoordinatorState(coordinator, toBecome: .recording)
+        let hides = overlay.hideCallCount
+        await gate.resume()
+        await oldStartup.value
+        #expect(probe.resumed)
+        #expect(coordinator.state == .recording)
+        #expect(new.cancelRecordingCallCount == 0)
+        #expect(overlay.hideCallCount == hides)
+        #expect(notifier.notifications.filter { $0.0 == "录音保存异常" }.count == (storageFailure ? 1 : 0))
+        coordinator.cancelCurrentSession()
+    }
+
     @Test
     func cancelCurrentSessionDiscardsActiveRecordingAndResetsState() throws {
         let recorder = FakeCoordinatorRecorder()

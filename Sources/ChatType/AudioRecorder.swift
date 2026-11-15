@@ -20,6 +20,7 @@ protocol RecordingSessionControlling: AnyObject, Sendable {
     func updateMeters()
     func averagePower(forChannel channelNumber: Int) -> Float
     var currentTime: TimeInterval { get }
+    var isRecording: Bool { get }
 }
 
 @MainActor
@@ -237,8 +238,37 @@ final class AudioRecorder: RecordingControlling {
         ]
 
         let recorder = try sessionFactory(tempURL, settings)
-        guard recorder.prepareToRecord(), recorder.record() else {
-            throw RecorderError.recorderStartFailed
+        do {
+            guard recorder.prepareToRecord(), recorder.record() else {
+                throw RecorderError.recorderStartFailed
+            }
+            // record() accepts a start request; do not publish the recording
+            // HUD/cue until the recording clock actually advances. A hardware
+            // prepare pulse is not evidence that frames are being captured.
+            // https://developer.apple.com/documentation/avfaudio/avaudiorecorder/currenttime
+            while true {
+                try Task.checkCancellation()
+                let capturedTime = recorder.currentTime
+                guard recorder.isRecording, capturedTime.isFinite, capturedTime >= 0 else {
+                    throw RecorderError.recorderStartFailed
+                }
+                if capturedTime > 0 { break }
+                // Observe at the existing 20ms audio-frame cadence; no startup
+                // deadline or background microphone prewarm is introduced.
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        } catch {
+            let startupError = error
+            recorder.stop()
+            do {
+                // No ready recording clock was established. Preserve the raw
+                // reservation without converting an invalid time to Int.
+                try recoveryStore?.finishRecording(RecordedAudio(fileURL: tempURL, durationMs: 0),
+                    outcome: startupError is CancellationError ? "cancelled" : "error")
+            } catch {
+                throw RecorderError.recordingStorageFailed(error.localizedDescription)
+            }
+            throw startupError
         }
 
         inputHealthMonitor = RecordingInputHealthMonitor()
@@ -358,4 +388,6 @@ private final class AVAudioRecorderSession: RecordingSessionControlling, @unchec
     var currentTime: TimeInterval {
         recorder.currentTime
     }
+
+    var isRecording: Bool { recorder.isRecording }
 }

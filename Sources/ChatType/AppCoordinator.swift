@@ -59,7 +59,7 @@ final class AppCoordinator {
     private var overlayDemoFrameIndex = 0
     var launchAppContext: LaunchAppContext?
     var processingTask: Task<Void, Never>?
-    private var startRecordingTask: Task<Void, Never>?
+    private(set) var startRecordingTask: Task<Void, Never>?
     private var activeSessionID: UUID?
     private var recordingStartedAt: DispatchTime?
     private var recordingConfig: AppConfig?
@@ -380,8 +380,18 @@ final class AppCoordinator {
                 self.soundFeedback.play(.recordingStarted, enabled: self.config.transcription.feedbackSoundsEnabled)
                 self.startRecordingLevelUpdates()
             } catch is CancellationError {
-                self.cancelCurrentSession()
+                // A canceled startup may finish after a subsequent F5 has
+                // opened a new session. Its recorder already cleaned itself.
+                if self.shouldContinue(sessionID: sessionID) { self.cancelCurrentSession() }
             } catch {
+                if case RecorderError.recordingStorageFailed = error,
+                   !self.shouldContinue(sessionID: sessionID) {
+                    // Report an old recorder's archival failure without
+                    // replacing the new session's HUD or stopping its input.
+                    self.logger.error("Canceled startup could not seal raw recording: \(error.localizedDescription, privacy: .public)")
+                    self.notifier.notify(title: "录音保存异常", body: error.localizedDescription)
+                    return
+                }
                 guard self.shouldContinue(sessionID: sessionID) else { return }
                 logger.error("Start recording failed: \(error.localizedDescription, privacy: .public)")
                 self.stopRecordingLevelUpdates()

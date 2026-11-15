@@ -7,6 +7,8 @@ private final class FakeRecordingSession: RecordingSessionControlling, @unchecke
     var recordResult = true
     private(set) var stopCallCount = 0
     var currentTime: TimeInterval = 1.25
+    var isRecording = true
+    private(set) var recordCallCount = 0
     var averagePowerValue: Float = -30
 
     func prepareToRecord() -> Bool {
@@ -14,12 +16,14 @@ private final class FakeRecordingSession: RecordingSessionControlling, @unchecke
     }
 
     func record() -> Bool {
-        recordResult
+        recordCallCount += 1
+        return recordResult
     }
 
     func stop() {
         stopCallCount += 1
         currentTime = 0
+        isRecording = false
     }
 
     func updateMeters() {}
@@ -41,7 +45,99 @@ private actor AccessRequestProbe {
     }
 }
 
+private final class FailingArchiveAttributes: FileManager, @unchecked Sendable {
+    var fail = false
+    override func setAttributes(_ attributes: [FileAttributeKey: Any], ofItemAtPath path: String) throws {
+        if fail { throw CocoaError(.fileWriteNoPermission) }
+        try super.setAttributes(attributes, ofItemAtPath: path)
+    }
+}
+
 struct AudioRecorderTests {
+    @Test @MainActor
+    func recordingIsNotReadyUntilCaptureClockAdvances() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let session = FakeRecordingSession(); session.currentTime = 0
+        let recorder = AudioRecorder(sampleRateHz: 16000, permissionProvider: { .granted },
+            sessionFactory: { _, _ in session }, temporaryFileURLFactory: { url })
+        var ready = false
+        let startup = Task { try await recorder.startRecording(); ready = true }
+        while session.recordCallCount == 0 { await Task.yield() }
+        #expect(!ready)
+        session.currentTime = 0.02
+        try await startup.value
+        #expect(ready)
+        try recorder.cancelRecording()
+    }
+
+    @Test @MainActor
+    func cancellingBeforeReadyStopsInputAndSealsOriginalAudio() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = RecoveryStore(directoryURL: root)
+        let session = FakeRecordingSession(); session.currentTime = 0
+        let original = Data("reserved PCM samples".utf8)
+        let recorder = AudioRecorder(sampleRateHz: 16000, permissionProvider: { .granted },
+            sessionFactory: { url, _ in try original.write(to: url); return session }, recoveryStore: store)
+        let startup = Task { try await recorder.startRecording() }
+        while session.recordCallCount == 0 { await Task.yield() }
+        startup.cancel()
+        await #expect(throws: CancellationError.self) { try await startup.value }
+        #expect(session.stopCallCount == 1)
+        let record = try #require(store.loadRecent().first)
+        #expect(record.outcome == "cancelled")
+        #expect(try Data(contentsOf: record.audioURL(baseDirectory: root)) == original)
+    }
+
+    @Test(arguments: [Double.nan, Double.infinity, -1]) @MainActor
+    func invalidCaptureClockFailsWithoutConvertingItToDuration(clock: Double) async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let session = FakeRecordingSession(); session.currentTime = clock
+        let recorder = AudioRecorder(sampleRateHz: 16000, permissionProvider: { .granted },
+            sessionFactory: { _, _ in session }, temporaryFileURLFactory: { url })
+        await #expect(throws: RecorderError.recorderStartFailed) { try await recorder.startRecording() }
+        #expect(session.stopCallCount == 1)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test @MainActor
+    func stoppedSessionDoesNotWaitForeverForItsZeroClock() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let session = FakeRecordingSession(); session.currentTime = 0; session.isRecording = false
+        let recorder = AudioRecorder(sampleRateHz: 16000, permissionProvider: { .granted },
+            sessionFactory: { _, _ in session }, temporaryFileURLFactory: { url })
+        await #expect(throws: RecorderError.recorderStartFailed) { try await recorder.startRecording() }
+        #expect(session.stopCallCount == 1)
+    }
+
+    @Test @MainActor
+    func cancellationArchiveFailureIsExplicitAndDoesNotDeleteRawAudio() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FailingArchiveAttributes()
+        let store = RecoveryStore(fileManager: files, directoryURL: root)
+        let session = FakeRecordingSession(); session.currentTime = 0
+        let original = Data("original PCM".utf8)
+        var audioURL: URL?
+        let recorder = AudioRecorder(sampleRateHz: 16000, permissionProvider: { .granted },
+            sessionFactory: { url, _ in try original.write(to: url); return session }, recoveryStore: store)
+        let startup = Task { try await recorder.startRecording() }
+        while session.recordCallCount == 0 { await Task.yield() }
+        let reserved = try #require(store.loadRecent().first)
+        audioURL = reserved.audioURL(baseDirectory: root)
+        files.fail = true; startup.cancel()
+        do { try await startup.value; Issue.record("Storage failure must be surfaced") }
+        catch let error as RecorderError {
+            guard case .recordingStorageFailed = error else { Issue.record("Wrong recorder error"); return }
+        }
+        #expect(session.stopCallCount == 1)
+        let savedURL = try #require(audioURL)
+        #expect(try Data(contentsOf: savedURL) == original)
+    }
+
     @Test
     func microphoneRepairActionsAppearOnlyWhenPermissionWasDenied() {
         #expect(AudioRecorder.repairActions(for: .granted).isEmpty)
