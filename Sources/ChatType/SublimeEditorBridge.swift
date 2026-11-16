@@ -62,6 +62,16 @@ final class EditorSocketTransaction: @unchecked Sendable {
         }
     }
 
+    func exchangeAsync(path: String, request: EditorBridgeRequest) async throws -> EditorBridgeResponse {
+        // Unix socket calls block until the editor replies or cancellation shuts
+        // down the descriptor. Keep them off Swift's cooperative task executor.
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(with: Result { try self.exchange(path: path, request: request) })
+            }
+        }
+    }
+
     private func performExchange(path: String, request: EditorBridgeRequest) throws -> EditorBridgeResponse {
         let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw EditorDeliveryError.unavailable }
@@ -136,7 +146,7 @@ final class SublimeEditorBridge {
             _ = try? await previous?.value
             try Task.checkCancellation()
             return try await withTaskCancellationHandler {
-                try await Task.detached { try transaction.exchange(path: path, request: request) }.value
+                try await transaction.exchangeAsync(path: path, request: request)
             } onCancel: { transaction.cancel() }
         }
         tasks[id] = (session, task)

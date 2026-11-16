@@ -27,35 +27,40 @@ func cancellingStalledEditorSocketAllowsNextTransaction(throughSession: Bool) as
     try #require(bound == 0)
     try #require(Darwin.listen(listener, SOMAXCONN) == 0)
     let probe = SocketProbe()
-    let server = Task.detached {
-        let first = Darwin.accept(listener, nil, nil)
-        guard first >= 0 else { return }
-        defer { Darwin.close(first) }
-        var buffer = [UInt8](repeating: 0, count: 1024)
-        _ = Darwin.recv(first, &buffer, buffer.count, 0)
-        probe.mark() // Deliberately keep the first connection open without a reply.
-        let second = Darwin.accept(listener, nil, nil)
-        guard second >= 0 else { return }
-        defer { Darwin.close(second) }
-        _ = Darwin.recv(second, &buffer, buffer.count, 0)
-        let reply = Data("{\"protocol\":1,\"build\":136,\"status\":\"ready\"}\n".utf8)
-        reply.withUnsafeBytes { _ = Darwin.send(second, $0.baseAddress, $0.count, 0) }
-        _ = Darwin.shutdown(second, SHUT_WR)
+    let server = Task {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global().async {
+                defer { continuation.resume() }
+                let first = Darwin.accept(listener, nil, nil)
+                guard first >= 0 else { return }
+                defer { Darwin.close(first) }
+                var buffer = [UInt8](repeating: 0, count: 1024)
+                _ = Darwin.recv(first, &buffer, buffer.count, 0)
+                probe.mark() // Deliberately keep the first connection open without a reply.
+                let second = Darwin.accept(listener, nil, nil)
+                guard second >= 0 else { return }
+                defer { Darwin.close(second) }
+                _ = Darwin.recv(second, &buffer, buffer.count, 0)
+                let reply = Data("{\"protocol\":1,\"build\":136,\"status\":\"ready\"}\n".utf8)
+                reply.withUnsafeBytes { _ = Darwin.send(second, $0.baseAddress, $0.count, 0) }
+                _ = Darwin.shutdown(second, SHUT_WR)
+            }
+        }
     }
     let stalled = EditorSocketTransaction()
     let bridge = SublimeEditorBridge(path: path)
     let editor = SublimeEditorSession(bridge: bridge)
     let first: Task<EditorBridgeResponse, Error>
     if throughSession { first = Task { try await editor.geometry() } }
-    else { first = Task.detached { try stalled.exchange(path: path, request: EditorBridgeRequest(session: UUID().uuidString, operation: "health")) } }
+    else { first = Task { try await stalled.exchangeAsync(path: path, request: EditorBridgeRequest(session: UUID().uuidString, operation: "health")) } }
     while !probe.ready { await Task.yield() }
     if throughSession { first.cancel() } else { stalled.cancel() }
     do { _ = try await first.value; Issue.record("Cancelled socket must not return a successful response") }
     catch { #expect(error is CancellationError) }
     let second: EditorBridgeResponse
     if throughSession { second = try await bridge.enqueue(session: UUID().uuidString, operation: "health").value }
-    else { second = try await Task.detached { try EditorSocketTransaction().exchange(path: path,
-        request: EditorBridgeRequest(session: UUID().uuidString, operation: "health")) }.value }
+    else { second = try await EditorSocketTransaction().exchangeAsync(path: path,
+        request: EditorBridgeRequest(session: UUID().uuidString, operation: "health")) }
     #expect(second.status == "ready")
     await server.value
 }
