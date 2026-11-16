@@ -164,7 +164,7 @@ struct PreferencesView: View {
         case .granted:
             return SetupStatus(title: "Granted", subtitle: "Microphone access is ready.")
         case .undetermined:
-            return SetupStatus(title: "Not requested yet", subtitle: "Press F5 once and macOS will ask for microphone access.", isReady: false)
+            return SetupStatus(title: "Not requested yet", subtitle: "Press \(draft.activeShortcut.title) once and macOS will ask for microphone access.", isReady: false)
         case .denied:
             return SetupStatus(
                 title: "Needs permission",
@@ -230,6 +230,7 @@ struct PreferencesView: View {
                         _ = draft.apply(using: onSave)
                     }
                     .keyboardShortcut(.defaultAction)
+                    .disabled(draft.isRecordingShortcut)
                 }
                 .padding(16)
                 .background(Color(nsColor: .windowBackgroundColor))
@@ -237,7 +238,7 @@ struct PreferencesView: View {
         }
         .frame(minWidth: 920, minHeight: 640)
         .onChange(of: config) { _ in
-            saveMessage = "尚未应用 · F5 新录音或按当前流程重跑时会应用；正在处理的录音保持原路线。"
+            saveMessage = "尚未应用 · 保存设置后使用新快捷键；新录音或按当前流程重跑时应用流程选择。"
             saveIsError = false
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -265,8 +266,8 @@ struct PreferencesView: View {
             providers.refresh()
         }
         .onAppear { providers.refresh(); refreshVisibleSection() }
-        .onChange(of: selectedSection) { _ in refreshVisibleSection() }
-        .onDisappear { providers.cancel(); usage.cancel(); history.cancel(); recovery.cancel() }
+        .onChange(of: selectedSection) { _ in draft.endShortcutCapture(); refreshVisibleSection() }
+        .onDisappear { draft.endShortcutCapture(); providers.cancel(); usage.cancel(); history.cancel(); recovery.cancel() }
     }
 
     var sidebar: some View {
@@ -305,7 +306,7 @@ struct PreferencesView: View {
             }
 
             Spacer()
-            Label("F5  start / stop", systemImage: "mic")
+            Label("\(draft.activeShortcut.title)  start / stop", systemImage: "mic")
                 .font(.caption).foregroundStyle(.secondary).padding(16)
         }
         .frame(width: 180)

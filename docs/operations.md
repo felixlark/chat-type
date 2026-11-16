@@ -221,6 +221,10 @@ History对cancelled/interrupted、已有partial标记及PCM中断检测统一请
 
 ### 本机 F5／Fn 固定配置（2026-11-14）
 
+2026-11-16 更新：Settings →「激活快捷键」支持录入普通按键及 Command / Option / Control / Shift 组合。点击录入暂停 ChatType 激活，Esc、失焦、切页或关窗恢复原绑定；候选仅在 Save Settings 成功后生效。新录音／按当前流程重跑只应用流程编辑，不保存待选快捷键。注册冲突或配置保存失败时保留原绑定；录入值与当前生效值分别显示。`hotkeyIsCustomized=true` 后，安装器保留自选键码和修饰键。
+
+本人另指定实体 Fn 短按打开 ChatGPT 官方 App、长按使用豆包输入法。已登记机器可在 `keyboard-binding.json` 显式添加 `fnSplit: {"tapAction":"chatgpt-app","holdMilliseconds":300}`；安装器只维护自己命名的 Karabiner 规则，以 lazy Fn 保留组合键、短按只启动 `/Applications/ChatGPT.app`、长按透传 Fn。时长来自该本机配置；未配置不新增规则，移除配置不删除已装规则，停用时须另行删除该唯一命名规则。Fn 分流与 ChatType 的 ASR／润色路线独立。Karabiner lint 和配置读回不证明实体 Fn 行为，须分别实按短按、长按和 Fn 组合验收。
+
 用户指定：豆包输入法使用实体 Fn，ChatType 使用实体 F5。已由用户实体键盘验证两者独立唤起，以及安装版 127 的 F5 开停和可见文字输出。
 
 本机 Karabiner 的 `Default profile` 将 F5 输出为 F18，ChatType 的 `transcription.hotkeyKeyCode` 为 **79**。该独立事件通道避免 F1–F12 转换中附带的 Fn 事件误唤起豆包；不能因为界面仍写 F5，就把内部键码改回默认 96。豆包自己的免按模式保留 Fn，ChatType 安装流程不改写豆包数据。

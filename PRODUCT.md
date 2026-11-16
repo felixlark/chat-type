@@ -6,6 +6,10 @@ ChatType is a native macOS menu bar dictation app. This file owns the current be
 
 Press physical F5 to start and again to stop. ESC or the inline close cancels the active task while retaining its recording. On the enrolled development Mac, F5 maps to keycode 79; Doubao IME keeps physical Fn. Other users retain their selected bindings.
 
+Settings → 激活快捷键 records a physical key with optional Command, Option, Control and Shift modifiers. Escape, focus loss and closing Settings cancel capture and restore activation. Save Settings registers the candidate immediately; conflicts or persistence failures keep the previous binding. New recordings and reprocessing apply workflow edits without committing a pending shortcut. Explicit custom bindings survive installation.
+
+The enrolled Mac may independently opt into Fn tap/hold routing: a tap opens the installed official ChatGPT app; a hold passes Fn to the native Doubao input method. The duration is an explicit local keyboard preference. This does not select ChatType’s recognition or polish provider.
+
 New configurations select Doubao IME for recognition and text organization. Saved selections are preserved. Recognition also supports ChatType-managed ChatGPT login and explicitly configured OpenAI-compatible recovery. Text polish independently supports the approved Doubao, ChatGPT, GLM and Qwen choices. Failure never changes providers automatically.
 
 The complete recording, original route snapshot, stage outputs, final text and errors remain in private local recovery history. Retry reuses the original selection. Reprocessing with current settings is a distinct history action; partial audio requires an explicit replay decision. Processing failure preserves the attempt and does not paste partial text. Disabled polish intentionally skips that stage.

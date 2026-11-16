@@ -46,8 +46,40 @@ class LocalKeyboardTests(unittest.TestCase):
             self.assertEqual(fresh["hotkeyKeyCode"], 79)
             self.assertEqual(fresh["provider"], "doubaoIME")
 
+            fresh["hotkeyKeyCode"] = 40
+            fresh["hotkeyModifiers"] = 768
+            fresh["hotkeyIsCustomized"] = True
+            config_path.write_text(json.dumps({"transcription": fresh}))
+            keyboard.preserve(home)
+            self.assertEqual(json.loads(config_path.read_text())["transcription"], fresh)
+
     def test_unenrolled_install_does_not_change_keyboard_preferences(self):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
             self.assertFalse(keyboard.preserve(home))
             self.assertEqual(list(home.iterdir()), [])
+
+    def test_opted_in_fn_split_is_exclusive_and_idempotent(self):
+        other_rule = {"description": "keep", "manipulators": []}
+        profile = {"complex_modifications": {"rules": [other_rule]}}
+        binding = {"fnSplit": {"tapAction": "chatgpt-app", "holdMilliseconds": 300}}
+        keyboard.apply_fn_split(profile, binding)
+        first = json.dumps(profile)
+        keyboard.apply_fn_split(profile, binding)
+        self.assertEqual(json.dumps(profile), first)
+        rules = profile["complex_modifications"]["rules"]
+        self.assertEqual(rules[1], other_rule)
+        rule = rules[0]["manipulators"][0]
+        self.assertEqual(rule["to"], [{"key_code": "fn", "lazy": True}])
+        self.assertEqual(rule["to_if_held_down"], [{"key_code": "fn"}])
+        self.assertEqual(rule["to_if_alone"], [{"shell_command": "/usr/bin/open -a /Applications/ChatGPT.app"}])
+        self.assertEqual(set(rule["parameters"].values()), {300})
+        keyboard.apply_fn_split(profile, {})
+        self.assertEqual(json.dumps(profile), first)
+
+    def test_invalid_fn_option_does_not_mutate_profile(self):
+        profile = {"complex_modifications": {"rules": []}}
+        for split in [{"tapAction": "unknown"}, {"tapAction": "chatgpt-app", "holdMilliseconds": 0}]:
+            with self.assertRaises(ValueError):
+                keyboard.apply_fn_split(profile, {"fnSplit": split})
+            self.assertEqual(profile, {"complex_modifications": {"rules": []}})

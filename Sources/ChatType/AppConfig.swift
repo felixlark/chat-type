@@ -178,6 +178,8 @@ struct TranscriptionConfig: Codable, Sendable, Equatable {
     var terminologyAlignmentEnabled: Bool = true
     var correctionRulesEnabled: Bool = true
     var hotkeyKeyCode: UInt32 = 96
+    var hotkeyModifiers: UInt32 = 0
+    var hotkeyIsCustomized: Bool = false
     var chatGPTURL: String = "https://chatgpt.com/backend-api/transcribe"
     var openAITranscriptionURL: String = "https://api.openai.com/v1/audio/transcriptions"
     var openAIModel: String = "gpt-4o-mini-transcribe"
@@ -201,6 +203,8 @@ struct TranscriptionConfig: Codable, Sendable, Equatable {
             provider = .chatGPTManagedAuth
         }
         hotkeyKeyCode = try container.decodeIfPresent(UInt32.self, forKey: .hotkeyKeyCode) ?? 96
+        hotkeyModifiers = try container.decodeIfPresent(UInt32.self, forKey: .hotkeyModifiers) ?? 0
+        hotkeyIsCustomized = try container.decodeIfPresent(Bool.self, forKey: .hotkeyIsCustomized) ?? false
         livePreviewEnabled = try container.decodeIfPresent(Bool.self, forKey: .livePreviewEnabled) ?? true
         terminologyAlignmentEnabled = try container.decodeIfPresent(Bool.self, forKey: .terminologyAlignmentEnabled) ?? true
         correctionRulesEnabled = try container.decodeIfPresent(Bool.self, forKey: .correctionRulesEnabled) ?? true
