@@ -1,5 +1,7 @@
 # 历史录音主评测与质量修复
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 沿 CT-VOXT-20261110 和既有 chat 持续实施。2026-11-11 用户确认：英文保持英文，中英混合保留各段原语言；先核准语料与参考稿，修复1.7B保真，质量通过后接正式分段及安装验收。用户随后明确以原有历史录音做主评测。
 
 ## 基线与不变量

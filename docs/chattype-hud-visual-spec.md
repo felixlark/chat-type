@@ -1,5 +1,7 @@
 # ChatType HUD Visual Spec
 
+Historical visual reference. Current status rendering is owned by the installed candidate and [DESIGN](../DESIGN.md); the separate top-caption proposal is not implemented by cleanup. Do not use this older reference to restore removed transcript HUD behavior.
+
 This spec mirrors the HUD implementation currently shipped in `dist/ChatType.app` and is intended to be copied into the Figma `HUD` board once the Starter-plan MCP limit resets.
 
 ## Core Shell

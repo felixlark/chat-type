@@ -1,21 +1,29 @@
-# Product
+# ChatType product contract
 
-## Platform
+ChatType is a native macOS menu bar dictation app. This file owns the current behavior; [architecture](docs/architecture.md) describes implementation, [operations](docs/operations.md) owns diagnosis and acceptance, and [release](docs/release.md) owns packaging and installation.
 
-Native macOS (AppKit and SwiftUI), macOS 13+.
+## Dictation
 
-## Users and purpose
+Press physical F5 to start and again to stop. ESC or the inline close cancels the active task while retaining its recording. On the enrolled development Mac, F5 maps to keycode 79; Doubao IME keeps physical Fn. Other users retain their selected bindings.
 
-ChatType is a personal studio dictation app for writing into the currently focused app. F5 starts and stops recording; results paste into an editable target or remain in the clipboard. Settings should make services, data movement and recovery understandable in one visit.
+New configurations select Doubao IME for recognition and text organization. Saved selections are preserved. Recognition also supports ChatType-managed ChatGPT login and explicitly configured OpenAI-compatible recovery. Text polish independently supports the approved Doubao, ChatGPT, GLM and Qwen choices. Failure never changes providers automatically.
 
-## Capabilities and constraints
+The complete recording, original route snapshot, stage outputs, final text and errors remain in private local recovery history. Retry reuses the original selection. Reprocessing with current settings is a distinct history action; partial audio requires an explicit replay decision. Processing failure preserves the attempt and does not paste partial text. Disabled polish intentionally skips that stage.
 
-On macOS 26+, Apple SpeechAnalyzer supplies live preview. Complete audio goes to the original ChatGPT account for final transcription, then terminology alignment and optional whole-transcript text polish. The existing user-selected compatible recovery route remains available. Account credentials live in Keychain. Workflow combines stage controls with custom phrases in Align and explicit Replacement rules in Correct. Account lists provider installation, credentials and local preview support separately from request success. macOS keyboard shortcuts belong to macOS.
+The current installed interaction is the baseline for maintenance. A proposed top HUD with separate captions belongs to a separate product decision and is not implemented by cleanup. Preserve existing product icons, menu-bar rendering and colors.
 
-## Brand commitments
+## Output and settings
 
-Preserve the product name, app icon, dynamic menu-bar icon and existing system colors. The requested reference is yetone's Magpie: readable account/model rows, clear current state and restrained navigation. The requested character is a useful, candid personal studio product. Prefer precise language over promises and disclose private backend dependencies and data destinations.
+Output targets the captured editable control and uses the existing application-specific bridge when available. Report successful output only after its receipt; preserve uncertain output for reconciliation. Without a suitable target, retain the final text in the clipboard.
 
-## Success
+Settings has four destinations: Account, Workflow, History and Settings. Account reports service installation, credential readiness and local preview support separately from request success. Workflow selects recognition, terminology alignment, text polish and correction behavior. PreferencesDraft owns unsaved edits; asynchronous imports must preserve current edits. History exposes recordings, attempts and stage evidence. Settings owns login items, permissions, sounds and clipboard behavior. Keyboard shortcuts also depend on macOS and the enrolled local keyboard policy.
 
-Four focused pages, visible processing flow, responsive large vocabulary editing, working WeChat name import and an honest login-item control. Verify the signed app at /Applications/ChatType.app and leave it running with Settings visible.
+## Data and service boundaries
+
+Audio goes to the selected recognizer; relevant text goes to the selected polish service. Credentials stay in Keychain. Doubao IME and the ChatGPT account backend are private, version-sensitive dependencies; neither is a stable public API or a billing guarantee. Optional compatible/GLM/Qwen routes require independent credentials and billing authorization. Never export browser Cookies or another application's credentials.
+
+Apple Contacts and the supported WeChat names helper can import names into the local vocabulary. Keep imported vocabulary, recordings, credentials and real user history out of source control and cleanup deletions.
+
+## Acceptance
+
+Use the signed app at `/Applications/ChatType.app`. Checks, packaging, installation, live interaction and final running state are separate evidence. The minimum changed journey and the fixed authentication/transcription matrix live in [operations](docs/operations.md); do not duplicate historical acceptance checklists here. Historical proposals and experiment results are evidence for their recorded versions, not current requirements; see [history](docs/history.md).

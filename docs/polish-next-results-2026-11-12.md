@@ -1,6 +1,8 @@
 # 润色加速续评：分阶段归因
 
-CT-VOXT-20261110；沿用安装版125、原账户Terra默认，无生产切换。用户核准六条最终意图，声学逐字稿仍未核准。本轮方案及门槛见[筛查方案](polish-next-screen-2026-11-12.md)。
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
+CT-VOXT-20261110；沿用安装版125、原账户Terra默认，无生产切换。用户核准六条最终意图，声学逐字稿仍未核准。本轮方案及门槛见[筛查方案](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/docs/polish-next-screen-2026-11-12.md)。
 
 ## 归因修正
 
@@ -94,7 +96,7 @@ LFM短/中/长描述性完整生成中位为0.318/1.050/4.839秒，包含错误�
 
 恢复原任务后，另独立完成[原账户前段/全文云转写一致性筛查](cloud-prefix-asr-consistency-results-2026-11-12.md)，与上述53次文字润色尝试分列。12次原账户ASR全部完成，但0/6原始精确前缀、仅2/6达到预设稳定性门，长句未过，因此不追加提前润色请求。WAV/无prompt与生产autoAAC路径的差异保留，未拿它冒充产品速度或相对Apple胜负；原模型/usage未知。未动阿里账本或3.7计费保护。
 
-用户已另行批准[阿里有界文字试验](polish-flash-bounded-trial-2026-11-12.md)，最多1元。该授权仅覆盖卡内数据、模型、次数及用途；未授权切默认。
+用户已另行批准[阿里有界文字试验](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/docs/polish-flash-bounded-trial-2026-11-12.md)，最多1元。该授权仅覆盖卡内数据、模型、次数及用途；未授权切默认。
 
 阿里首个实际请求为short-6 / qwen3.7-flash-2026-07-15，HTTP 403，约250ms收到响应头，没有完整输出。初次已停止整组；原响应MIME/错误码未保留，故这次拒绝的完整类别保持未知，不直接称权限不足或Cloudflare挑战。其尝试与0.02153元保守预留始终保留，未重放。不得通过换journal、重开程序、换Key或发另一个模型绕过停止条件。
 
@@ -114,7 +116,7 @@ LFM短/中/长描述性完整生成中位为0.318/1.050/4.839秒，包含错误�
 
 另准备3.8的minimal-v3无词表对照，检验通用指令/词表上下文是否能减少新错名；这只是待检验假设。源码从原冻结输入导出固定短指令与原样user，不加入参考答案，新请求单列practice。候选已编译/离线自检，后来完成下述条件恢复的独立复审，尚未发送模型请求；当前待批记录仍被停试状态拒绝，未读取Qwen凭据或访问阿里。原4次及其调用前二进制快照不变，host-blocked继续有效。
 
-后续已完成[只恢复3.8六条的窄例外候选](polish-38-isolated-trial-2026-11-12.md)及独立审查、离线验证和签名快照，实际批准仍false，阿里调用仍4次。原卡明确主机停试，诊断不能自行豁免，须本人另批该例外；已收回旧关闭3.7保护的请求，保留开关，只将此一项交协调线程集中呈请。不因协调批准而推断费用或停试例外同意。
+后续已完成[只恢复3.8六条的窄例外候选](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/docs/polish-38-isolated-trial-2026-11-12.md)及独立审查、离线验证和签名快照，实际批准仍false，阿里调用仍4次。原卡明确主机停试，诊断不能自行豁免，须本人另批该例外；已收回旧关闭3.7保护的请求，保留开关，只将此一项交协调线程集中呈请。不因协调批准而推断费用或停试例外同意。
 
 此前本机现有官方Aliyun CLI 3.3.2作为独立只读入口，STS GetCallerIdentity在初始化即报`failed to refresh token, status code: 400`，未取得账户身份；modelstudio产品插件未安装。没有读取配置中的密钥、安装插件或另建凭据；后续通过本人完成的Chrome官方登录核查，未把CLI登录失败混作模型拒绝根因。
 

@@ -1,5 +1,7 @@
 # 吸收 Voxt 技术路线：ChatType 设计与验收
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 日期：2026-11-10。文档编号 CT-VOXT-20261110，候选 v3。范围：技术调查、GSE 方案和验收标准。产品负责人：Longbiao；本 chat 维护方案。实施、模型下载、安装和默认路径切换待单独批准。
 
 ## 1. 建议与目标
@@ -39,7 +41,7 @@ GSE（生成式软件工程）在本案覆盖需求、源码调查、架构、�
 - 当前电脑：Apple M1 Max / 64GB，系统报告 macOS 27.2（26B123）。实施前再次核对硬件、系统、签名和运行环境；结果限定在实际测试设备。
 - `AppCoordinator` 在 macOS 26+ 的 managed 路径使用 `LocalSpeechRecorder` 做 Apple 实时预览，生产 `ChatGPTTranscriber` 设置 `usesLocalSpeechForFiles=false`；停录后完整 WAV 交原 ChatGPT 账户正式识别。`DictationPipeline` 继续全文术语 → 全文润色 → 术语保护/排版。
 - [110 交付记录](polish-cache-a-delivery-2026-11-10.md)记录词库缓存优化和姓名/“只”等范围词误识，以及部分原始日志当前不可读。文档统计用作选题依据；本案重新采集可读取的对照证据。当前 gpt-5.6-terra 是记录中的全文润色模型，实施前只读核对安全配置字段。
-- [Stage A](quality-restore-stage-a-2026-11-10.md)是现行质量恢复决定。现有产品两条转写路线为 `chatGPTManagedAuth` 和用户选择的 `openAICompatible`。本方案提出的本地正式 ASR 是新的产品路线，需负责人批准后更改该合同。
+- [Stage A](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/docs/quality-restore-stage-a-2026-11-10.md)是现行质量恢复决定。现有产品两条转写路线为 `chatGPTManagedAuth` 和用户选择的 `openAICompatible`。本方案提出的本地正式 ASR 是新的产品路线，需负责人批准后更改该合同。
 
 ## 3. 关键取舍
 
@@ -159,7 +161,7 @@ P1文件结果用于模型筛选。P2最终候选须通过**生产同一路径�
 
 1. **文件识别/就绪**：同 WAV 文件接口测质量及阶段成本，标为 file-replay；完整文件瞬时供给的时间保持该口径。
 2. **1× PCM 重放**：同一 WAV 按原采样率实时供给同一生产下游。记录首语音、首预览、正式分段、封口、ASR 完成、全文 ready，以及供给漂移。预览与定稿同时实际计算。stop_to_ready 包含在途分段/排队/尾段/全部润色。
-3. **真实安装版**：复用已有设计 [10.7–10.8](recognition-quality-and-latency-design-2026-11-10.md)的单调时钟和完整插入回执合同。通过官方 Computer Use 聚焦 TextEdit 纯文本测试目标，F5 开始，1× 声学回放，F5 停录；应用 `t_stop_request` 从 coordinator 收到第二次 F5 的第一刻采样，终点为同一目标完整全文被观察到。观察只用公开 AX 框架、仅显式测试目标，正文仅进程内比较，日志只存时间/长度/布尔。测量前6次短/长文本校准，观察开销进入两侧指标。
+3. **真实安装版**：复用已有设计 [10.7–10.8](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/docs/recognition-quality-and-latency-design-2026-11-10.md)的单调时钟和完整插入回执合同。通过官方 Computer Use 聚焦 TextEdit 纯文本测试目标，F5 开始，1× 声学回放，F5 停录；应用 `t_stop_request` 从 coordinator 收到第二次 F5 的第一刻采样，终点为同一目标完整全文被观察到。观察只用公开 AX 框架、仅显式测试目标，正文仅进程内比较，日志只存时间/长度/布尔。测量前6次短/长文本校准，观察开销进入两侧指标。
 
 真实速度集从冻结样本取每层 2 条，共6条；R110 与最终质量候选每条3轮＝每侧18次，A/B 与 B/A 交错，分别安装、单实例运行。冷启动每层至少1条×3次，独立报告；暖态集各有3组有效配对。固定设备/音量/距离/网络及词库/润色模型，保留每次实际采集 WAV；停顿条件沿原合同500–1500ms、配对差≤250ms，超窗仍计总尝试且保留原因，补齐有效配对。另做至少3条自然真人口述，分别报告实际停顿与体验。
 

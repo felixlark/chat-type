@@ -1,5 +1,7 @@
 # Voxt 路线：P1 质量对照执行记录
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 **2026-11-11更正：公开英文结果支持优先继续验证1.7B；完整质量采纳待历史真人录音与参考稿核准，P2正式分段待实施。** 用户听音确认synthetic-medium-3的“只修改”读为zhī、synthetic-short-1的pstack只读出stack。相关合成发音不能按输入稿作为识别真值，范围词和P缺失的模型硬归因撤回。其余未逐条核准的合成输入仅保留诊断身份，不据此判定模型不合格。以下117结果为2026-11-10历史记录，当前集成基线与后续评测见[历史录音主评测](voxt-history-validation-2026-11-11.md)。
 
 用户于2026-11-10批准 [CT-VOXT-20261110 v3](voxt-route-design-and-acceptance-2026-11-10.md)：下载所需模型，新增本地路线；先比较1.7B与0.6B，质量通过后接正式分段与安装版验收。本记录沿原chat `01a1c4bb-5483-78f1-a163-ec0e520dee33`。

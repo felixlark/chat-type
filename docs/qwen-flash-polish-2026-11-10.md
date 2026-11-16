@@ -1,5 +1,7 @@
 # Qwen Flash 整段润色接入与配对验收
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 状态：Qwen接入版已检查、打包、安装；独立Keychain凭据及真实API连接通过。76次合成配对已完成；Qwen速度门槛通过、保真门槛失败，默认保留ChatGPT gpt-5.6-terra。本地ASR和原整段润色流程保持。主Agent负责源码、配置、安装、GUI单writer；EGM只读审查。
 
 ## 边界与当前基线

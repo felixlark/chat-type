@@ -12,9 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
-      - name: Prepare pinned Opus codec
-        run: bash scripts/build_opus.sh
-      - name: Swift Build
-        run: swift build --package-path .
-      - name: Swift Test
-        run: swift test --package-path .
+      - name: Prepare policy-check tools
+        run: brew install ripgrep
+      - name: Source checks (same harness as local development)
+        run: bash scripts/check.sh --source

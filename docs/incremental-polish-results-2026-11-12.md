@@ -1,5 +1,7 @@
 # 提前润色试验结果与安装版 Retry 验收
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 CT-VOXT-20261110，2026-11-12，当前 Mac。结论：本轮候选未通过速度和质量门，不接入正式分段、不切默认。安装版 0.5.1 (125) 已完成受控真实网络超时后的浮层 Retry 恢复，并恢复正常运行。手机/AIR 仍由用户自行验收。
 
 ## 参考稿及试验范围
@@ -14,7 +16,7 @@ CT-VOXT-20261110，2026-11-12，当前 Mac。结论：本轮候选未通过速�
 - 提前稿复用：讲话期间润色预览；最终输入、提示上下文和配置全部相同时才复用，否则走原全文。
 - 差量修改：提供完整最终 ASR 和完整提前稿，返回严格校验的原文锚点替换清单，以覆盖尾段、全文改口及撤回决定；失败回到原全文。
 
-固定触发条件及输出合同见[试验方案](incremental-polish-experiment-2026-11-12.md)。本轮是文件 trace 与冻结 ASR 的编辑筛查，**不是安装版 F5 停录到插入的速度评测**。
+固定触发条件及输出合同见[试验方案](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/docs/incremental-polish-experiment-2026-11-12.md)。本轮是文件 trace 与冻结 ASR 的编辑筛查，**不是安装版 F5 停录到插入的速度评测**。
 
 ## 速度、命中与额外开销
 

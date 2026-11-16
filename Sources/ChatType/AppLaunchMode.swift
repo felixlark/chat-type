@@ -42,7 +42,7 @@ enum AppLaunchMode: Equatable {
             return .overlayDemo
         }
 
-        let rawValue = (environment["CHATTYPE_OVERLAY_DEMO"] ?? environment["VOICEDEX_OVERLAY_DEMO"])?
+        let rawValue = environment["CHATTYPE_OVERLAY_DEMO"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
 

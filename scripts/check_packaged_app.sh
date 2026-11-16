@@ -6,7 +6,15 @@ DIST_ROOT="${CHATTYPE_DIST_PATH:-$ROOT/dist}"
 APP="$DIST_ROOT/ChatType.app"
 PLIST="$APP/Contents/Info.plist"
 
-"$ROOT/scripts/package_app.sh" >/dev/null
+case "${1:-}" in
+  --existing) ;;
+  "") "$ROOT/scripts/package_app.sh" >/dev/null ;;
+  *) echo "Usage: $0 [--existing]" >&2; exit 64 ;;
+esac
+if [[ ! -f "$PLIST" ]]; then
+  echo "Missing packaged app at $APP" >&2
+  exit 1
+fi
 
 LSUI_ELEMENT="$(/usr/bin/plutil -extract LSUIElement raw -o - "$PLIST" 2>/dev/null || true)"
 if [[ "$LSUI_ELEMENT" != "true" ]]; then

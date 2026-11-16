@@ -1,5 +1,7 @@
 # 真实 URLSession 超时与 HUD Retry 验收
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 用户要求补齐真实错误下的Retry。共享Mac owner已释放GUI/音频窗口，但要求整机网络、透明TUN、Tunnel、Sol及共同代理/DNS保持可用。当前124已有History重试，但仅显示最近10条，先前真实TLS失败不在可达列表；不能修改历史时间或直接伪造error浮层。
 
 采用显式、仅当前进程有效的验收启动参数`--acceptance-transcription-timeout-once`。正常启动不创建该控制器、不改变既有pipelineFactory。带参数时通过现有pipelineFactory/dataLoader边界，为第一条且仅第一条发往固定`https://chatgpt.com/backend-api/transcribe`的实际POST请求设置1ms URLRequest.timeoutInterval，再调用真实URLSession.shared.data。后续请求完全沿原请求及默认超时。严格限定scheme/host/port/path/POST，其他地址不消耗标记。控制器以锁原子消耗一次；不合成错误、HTTP响应或结果，不改Keychain/持久配置/代理/网络/TCC，不打印请求头、正文、令牌或原声。

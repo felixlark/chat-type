@@ -1,5 +1,7 @@
 # 豆包输入法协议调研：实测结果与接入边界
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 后续状态：用户在本报告完成后批准产品实施与豆包默认，126 已进入安装验收，见[实施记录](doubao-implementation-2026-11-14.md)。本报告保留调研时点的质量与覆盖结论。
 
 2026-11-14；范围是分析引擎配置、协议调查、隔离工具重放与方案更新，未实施 ChatType 产品接入。
@@ -135,4 +137,4 @@ doctor 的引擎、架构、原生组件、Java 与注册检查均通过；另�
 
 真实麦克风／原客户端键盘对照本轮未执行：共享 GUI 已协调，Mac USB 树没有检测到 KVM 输入设备，已有资源最后确认在 Janus；没有用软件全局发键冒充 HID 验收，也未改输入法、快捷键、音量或原应用凭据。隔离后端重放不依赖该硬件步骤，因此已独立完成。
 
-原 [接入方案](doubao-backend-research-plan-2026-11-14.md)据这些事实更新。实验后端可行、质量采纳及安装版验收继续分开处理；当前没有修改／打包／安装 ChatType 产品。
+原 [接入方案](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/docs/doubao-backend-research-plan-2026-11-14.md)据这些事实更新。实验后端可行、质量采纳及安装版验收继续分开处理；当前没有修改／打包／安装 ChatType 产品。

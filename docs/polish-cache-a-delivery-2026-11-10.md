@@ -1,5 +1,7 @@
 # 110：同模型词表缓存加速验收
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 2026-11-10，M1 Max / 64 GiB。Longbiao批准A：保持当前模型、术语与整段润色流程，完成速度对比和安装版验收后再讨论换模型。
 
 ## 实施结果
@@ -52,15 +54,15 @@
 
 针对本次原ASR和实际pre-normalize输入，以真实词库作离线表达式回读：109与110的ASR hints及polish消息UTF-8一致。两个人名均在词库；李卓玟、戴锦钗均未进入这次近音召回和glossary，陈龙彪已有user correction优先词并进入glossary。后续Foundation音译与缩池实验进一步定位：李泽文/李卓玟的ze/zhuo编辑距离3，超过现有上限2；戴景才/戴锦钗有两处音节差异，超过最多1处的门槛。缩至3个人名仍复现两处漏召回。匿名对照见[规模审计](/Users/longbiao/Library/Application%20Support/ChatType/contacts-audit-20261110/vocabulary-size-audit.json)。
 
-最小修正候选是把这两个既有名字追加到当前重点词，保留模型、整本词库内容及来源、匹配算法和整段流程。离线已确认候选使两名进入ASR600字符提示与polish240字符glossary。该调整改变A的原提示不变合同，尚未获批且未执行；用户选择先调查词库规模和Apple Contacts重复情况。[后续只读调查与EGM设计](contacts-optimization-2026-11-10.md)。原生调查后干净110保持，词库17674、重点词3、模型gpt-5.6-terra及配置字节一致。
+最小修正候选是把这两个既有名字追加到当前重点词，保留模型、整本词库内容及来源、匹配算法和整段流程。离线已确认候选使两名进入ASR600字符提示与polish240字符glossary。该调整改变A的原提示不变合同，尚未获批且未执行；用户选择先调查词库规模和Apple Contacts重复情况。[后续只读调查与EGM设计](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/docs/contacts-optimization-2026-11-10.md)。原生调查后干净110保持，词库17674、重点词3、模型gpt-5.6-terra及配置字节一致。
 
 ## 可复核证据
 
 后续检查时原Library/Caches/chat-type/polish-cache-a及Library/Logs/ChatType目录已不可见，下面同批音频原始日志链接当前不可读。本文保留当时工具实际回执的统计；当前联系人只读审计与本机规模实验回执另存在Application Support路径，范围分别报告。
 
-- [统计JSON](/Users/longbiao/Library/Logs/ChatType/polish-cache-a-20261110/comparison-summary.json)
-- [暖态60次原始配对](/Users/longbiao/Library/Logs/ChatType/polish-cache-a-20261110/warm-paired.jsonl)，同目录cold-*.jsonl为20次冷态配对；正文全部来自上述合成素材。
-- [最终canonical检查](/Users/longbiao/Library/Logs/ChatType/polish-cache-a-20261110/check-final.log)
-- [EGM复核](reviews/polish-speed-options-2026-11-10.md)
+- 统计JSON (`/Users/longbiao/Library/Logs/ChatType/polish-cache-a-20261110/comparison-summary.json`; private historical receipt, unavailable in a repository checkout)
+- 暖态60次原始配对 (`/Users/longbiao/Library/Logs/ChatType/polish-cache-a-20261110/warm-paired.jsonl`; private historical receipt, unavailable in a repository checkout)，同目录cold-*.jsonl为20次冷态配对；正文全部来自上述合成素材。
+- 最终canonical检查 (`/Users/longbiao/Library/Logs/ChatType/polish-cache-a-20261110/check-final.log`; private historical receipt, unavailable in a repository checkout)
+- [EGM复核](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/docs/reviews/polish-speed-options-2026-11-10.md)
 
 109安装包与配置备份位于本机Caches/chat-type/polish-cache-a/R109-installed和Application Support/ChatType/polish-cache-a；回滚沿canonical install，保留后续用户数据。当前ChatGPT私有账户端点依赖保持，后端延迟仍占主要剩余耗时。

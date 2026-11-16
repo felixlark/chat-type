@@ -1,126 +1,34 @@
-# ChatType Architecture
+# ChatType architecture
 
-## Overview
+The current behavior is defined by the [product contract](../PRODUCT.md). This document owns module boundaries and data flow.
 
-`ChatType` is a native macOS menu bar app with a narrow workflow:
+## Runtime
 
-1. User presses `F5`
-2. App starts recording and shows a compact HUD
-3. User presses `F5` again
-4. App validates ChatType-managed ChatGPT session availability
-5. Audio is sent to the ChatGPT backend transcription path
-6. Result text is normalized, optionally polished, normalized again, then pasted or copied
+`AppDelegate` resolves explicit launch modes; normal launch remains a menu bar application. `AppCoordinator` owns recording, processing, cancellation and Retry. Session identity isolates obsolete asynchronous tasks; attempt identity records stages. Recording to processing retains its attempt, whereas Retry and history replay create a new attempt. These identities have distinct responsibilities.
 
-The V1 architecture deliberately optimizes for a single-app workflow where ChatType signs into ChatGPT directly and keeps its own local session.
+`AudioRecorder` persists the original WAV. The selected Doubao route uses `DoubaoLiveRecognition`; the supported ChatGPT preview route can use `LocalSpeechRecorder` on macOS 26+. Preview is not a substitute for the selected final transcription route.
 
-## Runtime Components
+`DictationServiceFactory` constructs the selected transcriber and optional polisher with the configured terminology/correction switches. The normal coordinator and explicit timeout acceptance use this same factory. `AcceptanceTranscriptionDeadline` only injects a one-shot deadline into the audited ChatGPT HTTP transport; it cannot claim to fault-inject Doubao's WebSocket.
 
-- `AppCoordinator`
-  - owns hotkey, recording, transcription, setup-state refresh, and insertion
-- `HotkeyMonitor`
-  - registers the global `F5` shortcut
-- `AudioRecorder`
-  - records mono WAV clips for short dictation
-- `ChatGPTAuthManager`
-  - owns ChatType-managed ChatGPT session state, refresh, sign-out, and local token access
-- `ChatGPTSessionStore`
-  - persists ChatType-owned session material in macOS Keychain
-- `ChatGPTTranscriber`
-  - calls the private ChatGPT backend transcription route with the OAuth bearer token and JWT-derived `ChatGPT-Account-ID` context required by the official Codex request contract
-  - classifies Cloudflare HTML challenges separately from session expiry and preserves retryable audio
-  - measures `auth_ms` and `transcribe_ms`
-  - applies a fixed prompt where supported
-- `RuntimePreflight`
-  - checks ChatType-managed ChatGPT login state, token availability, and any advanced recovery misconfiguration
-- `TranscriptionPromptBuilder`
-  - builds the fixed “directly usable text” prompt and optional hidden hint terms
-- `TerminologyNormalizer`
-  - indexes the current dictionary once, selects only exact/fuzzy candidates present in each transcript, and applies deterministic terminology alignment before and after optional text polish
-- `AppleContactRemarkImporter`
-  - imports Apple Contacts names through the system Contacts framework
-- `WeixinNameImporter`
-  - invokes the installed wechat-decrypt `get_contacts` read tool through a bundled names-only helper
-  - imports remarks and nicknames, excludes system accounts, groups and official accounts, and normalizes contact-derived terms
-  - uses the existing isolated runtime; ChatType does not open WeChat databases or request keys, messages, phone numbers or new permissions
-- `TerminologyEditor`
-  - keeps typing state separate from the settings shell, searches an indexed bilingual library and pages through every result
-  - merges asynchronous name imports into the current draft and reports save state through the shared settings footer
-- `LoginItemController`
-  - reads and changes `SMAppService.mainApp` registration, including system approval and failure states
-- `ProcessingFlowView`
-  - explains each step's input, output, selected service/model and destination from the configuration shown in the panel
-- `OpenAICompatibleTextPolisher`
-  - runs the optional post-ASR rewrite pass through ChatType-managed ChatGPT Auth
-  - calls the configured ChatGPT backend Responses endpoint with a ChatGPT access token
-  - defaults to the latency-balanced `gpt-5.6-terra` model with reasoning disabled, a lean outcome-first prompt, and only transcript-relevant glossary entries
-- `LatencyRecorder`
-  - appends per-dictation JSONL metrics under `~/Library/Application Support/ChatType/latency.jsonl`
-- `TextInjector`
-  - pastes only when an editable target exists; otherwise leaves text in the clipboard
-- `DictationPipeline`
-  - orchestrates transcription, terminology alignment, optional text polish, final terminology alignment, one non-recursive explicit text-correction pass and formatting through testable seams
-- `OverlayController`
-  - renders the floating HUD
-- `PreferencesWindowController`
-  - shows five destinations: Account, Dictation, Terminology, History and Settings; credentials and service/model selection have one home in Account
+`DictationPipeline` performs recognition, local terminology alignment, optional whole-transcript polish, final alignment, explicit corrections and formatting. It seals stage audit data before output. Processing failure throws with evidence and never silently substitutes partial text. A deliberate provider safety decision retaining the original text is recorded separately from a transport failure.
 
-## Provider Strategy
+`LiveTextInput` and `InputCompositionController` own provisional presentation. `TextInjector`, `FocusedElementInspector` and `SublimeEditorBridge` own captured-target output and receipts. `OverlayController` owns the status HUD; `OverlayDragHandle` owns its pointer callbacks. Cleanup does not implement the separate top-caption proposal or alter brand rendering.
 
-Two transcription routes exist:
+## Services and persistence
 
-- `chatGPTManagedAuth`
-  - default V1 route
-  - recommended for launch
-  - uses a ChatType-managed ChatGPT session
-  - does not require an API key in the normal flow
-- `openAICompatible`
-  - advanced recovery route
-  - not part of default onboarding
-  - requires user-provided endpoint, model, and API key env var
+- `ChatGPTAuthManager`, `BrowserAuthBridge` and `ChatGPTSessionStore`: app-owned account login and Keychain session persistence. A browser callback, ready login and successful business request are separate facts.
+- `ChatGPTTranscriber.selectedRoute`: explicit Doubao, ChatGPT or compatible recognition selection. ChatGPT OAuth is restricted to audited official account hosts.
+- `OpenAICompatibleTextPolisher` and `DoubaoTextOrganizer`: independently selected polish service, with fixed approved destinations and credential ownership.
+- `TerminologyNormalizer`, `VocabularyIndex` and `TerminologyPolicy`: deterministic local alignment, vocabulary lookup and import policy. `TerminologyEditor` edits the shared draft.
+- `RecoveryStore`: original recordings, per-attempt snapshots, stage outputs and errors. `TranscriptionHistoryRecorder` serves displayed text history; `LatencyRecorder` serves diagnostics. These have different consumers and are retained.
+- `ConfigStore`: decodes historical configurations without changing saved provider choices. Retired browser-setting fields are ignored rather than exposing controls that never affected authentication.
 
-Text polish is separate from ASR. It can use:
+## Settings ownership
 
-- ChatType-managed ChatGPT Auth
-- the configured ChatGPT backend Responses endpoint and model
-- no separate text-polish provider API key
-- a fail-open fallback that must never block usable ASR output
+`PreferencesWindowController` manages the native window. `PreferencesView` remains the single SwiftUI root and owns the draft reference, page selection, import flags and asynchronous provider/usage/history resources. Account, Workflow, History and shared component files are extensions of that same view; splitting files does not create new resource owners or change view identity. `PreferencesDraft` remains the only unsaved configuration source. `LoginItemController` reads and updates the actual SMAppService registration.
 
-## Output Strategy
+## Tools and delivery
 
-`ChatType` treats ASR and text polish as separate stages so long dictation can be rewritten without changing the paste/injection layer.
+The retained `process`, contacts report, quality, polish and streaming evaluation commands serve explicit development/reporting use. Streaming evaluation exercises recovery snapshots and real-time audio pacing, and does not replace microphone, physical F5 or target-output acceptance. Omni tools remain isolated research tooling, with no production route or bundled model download. Failed incremental/cloud-prefix/local-editing research entry points have been retired; fixed source and results remain available through [history](history.md).
 
-Behavior:
-
-- OpenAI-compatible recovery sends a fixed prompt through the official transcriptions API
-- the ChatGPT account route tries the same prompt and retries without it if the private route rejects the field
-- a Cloudflare challenge stays on the selected provider, preserves the recording, and exposes an explicit Retry action
-- optional Contacts and Smart Shadow WeChat name imports become ChatType-owned canonical terminology entries
-- config migration rejects generic jieba segmentation dictionaries and bulk THUOCL sources so they cannot silently repopulate the active glossary
-- imported terminology is aligned by a deterministic local normalizer before and after optional text polish
-- optional text polish removes filler words, prefers later corrections, and uses plan-like structure for long agent-facing dictation
-- hidden `transcription.hintTerms` remain exact-only preservation hints
-- if text polish has no available provider or fails, ChatType falls back to the deterministic normalized transcript
-
-## Benchmarking
-
-- `scripts/benchmark_stt.sh` runs the packaged app in headless benchmark mode
-- benchmark mode prints per-file `cold` and `warm` summaries with `auth_ms`, `transcribe_ms`, and `total_ms` p50/p95 values
-- benchmark input audio files are supplied explicitly through the script arguments
-
-## Visual Acceptance
-
-- `scripts/visual_acceptance.sh --install` packages, installs, and launches `/Applications/ChatType.app` in overlay demo mode through LaunchServices
-- overlay demo mode is enabled with `CHATTYPE_OVERLAY_DEMO=1` or the `--overlay-demo` launch argument
-- the script launches one installed-app demo process per state, discovers the ChatType HUD window with CoreGraphics, and captures that window with `screencapture -l`
-- `scripts/verify_visual_acceptance.swift` verifies that each HUD-window screenshot has visible content and that adjacent states are visually distinct
-- generated evidence is stored under `dist/visual-acceptance/<run-id>`
-
-## Packaging
-
-- `version.env` is the single source of truth for version metadata
-- `scripts/package_app.sh` builds `dist/ChatType.app`
-- `scripts/install_app.sh` installs the packaged app to `/Applications/ChatType.app`
-- `scripts/package_app.sh` also creates `dist/ChatType-<version>-macos-<arch>.zip`
-- `scripts/package_app.sh` also creates `dist/ChatType-<version>-macos-<arch>.dmg`
-- `scripts/install_launch_agent.sh` installs `me.longbiaochen.chattype`
-- Homebrew Cask metadata is stored under `packaging/homebrew/Casks/chattype.rb`
+Use `scripts/check.sh --source` for the same non-GUI checks locally and in CI. The default `scripts/check.sh` additionally packages and checks the resulting app. `scripts/package_app.sh` produces the app and release archives once; `scripts/check_packaged_app.sh --existing` validates that candidate without rebuilding. Install through `scripts/install_app.sh`, launch through LaunchServices and verify `/Applications/ChatType.app`. Build products live outside Documents; user state and reusable caches are not cleanup targets. See [release](release.md) for exact commands.
