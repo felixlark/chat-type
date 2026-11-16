@@ -25,34 +25,7 @@ import Testing
     #expect(visible.contains(dragged.frame))
 }
 
-@MainActor
-@Test func multilineOverlayGrowsUpwardKeepsFooterAndFullTextThroughProcessing() {
-    let overlay = OverlayController(presentsPanel: false)
-    overlay.showRecording(elapsedText: "00:00")
-    overlay.updateTranscriptPreview("第一句实时转写。")
-    let short = overlay.debugSnapshot
-    let long = String(repeating: "请保留每个需求、数字以及这条很长的路径：https://example.org/some-very-long-unbroken-path。", count: 25)
-    overlay.updateTranscriptPreview(long)
-    let full = overlay.debugSnapshot
-    #expect(short.controlsInsidePanel)
-    #expect(short.previewInsidePanel)
-    #expect(full.controlsInsidePanel)
-    #expect(full.previewInsidePanel)
-    #expect(full.panelHeight >= short.panelHeight)
-    #expect(full.panelHeight <= 140)
-    #expect(full.footerY == short.footerY)
-    #expect(full.transcript == long)
-    overlay.showProcessing()
-    #expect(overlay.debugSnapshot.transcript == long)
-    #expect(overlay.debugSnapshot.isCancelControlVisible)
-    overlay.showRetryableError("测试重试")
-    #expect(overlay.debugSnapshot.transcript == long)
-    #expect(overlay.debugSnapshot.isRetryControlVisible)
-    overlay.hide()
-    overlay.showRecording(elapsedText: "00:00")
-    #expect(overlay.debugSnapshot.transcript.isEmpty)
-    overlay.hide()
-}
+
 
 @MainActor
 @Test func transcriptViewKeepsReviewPositionUntilReturnToLatest() {
@@ -95,18 +68,7 @@ import Testing
     #expect(view.contentView.bounds.minX == 0)
 }
 
-@MainActor
-@Test func cancellingRecordingClearsPreviewBeforeNextSessionStarts() {
-    let overlay = OverlayController(presentsPanel: false)
-    overlay.showRecording(elapsedText: "00:00")
-    overlay.updateTranscriptPreview("上一段应在取消后清空。")
-    overlay.hide()
-    overlay.showRecording(elapsedText: "00:00")
-    #expect(overlay.debugSnapshot.transcript.isEmpty)
-    overlay.updateTranscriptPreview("新的一段。")
-    #expect(overlay.debugSnapshot.transcript == "新的一段。")
-    overlay.hide()
-}
+
 
 @Test func manualOverlayChoosesNearestSafeSideAndKeepsFallbackIntent() {
     let visible = CGRect(x: -1000, y: 100, width: 1000, height: 800)
@@ -145,8 +107,8 @@ import Testing
     overlay.endDrag(at: CGPoint(x: pointer.x + 90, y: pointer.y + 200))
     let anchor = CGPoint(x: dragged.midX, y: dragged.minY)
     #expect(overlay.debugSnapshot.userAnchor == anchor)
-    #expect(overlay.debugSnapshot.transcript == long)
-    #expect(overlay.debugSnapshot.panelHeight > initial.height)
+    #expect(overlay.debugSnapshot.transcript.isEmpty)
+    #expect(overlay.debugSnapshot.panelHeight == initial.height)
     for _ in 0..<8 { overlay.refreshGeometry() }
     overlay.showProcessing()
     #expect(overlay.debugSnapshot.panelFrame.midX == anchor.x)
@@ -178,30 +140,7 @@ import Testing
     overlay.hide()
 }
 
-@MainActor
-@Test func overlayManualCompactResolvesOnceAndRestoresNormalWidthWithSameFooterCenter() {
-    let overlay = OverlayController(presentsPanel: false)
-    let visible = CGRect(x: 0, y: 0, width: 600, height: 260)
-    overlay.debugSetGeometry(visible: visible, protected: [])
-    overlay.showRecording(elapsedText: "00:00")
-    overlay.updateTranscriptPreview("短句")
-    overlay.beginDrag(at: .zero)
-    overlay.endDrag(at: CGPoint(x: 0, y: 70))
-    let anchor = overlay.debugSnapshot.userAnchor
-    let sides = [CGRect(x: 0, y: 0, width: 130, height: 260), CGRect(x: 470, y: 0, width: 130, height: 260)]
-    overlay.debugSetGeometry(visible: visible, protected: sides)
-    overlay.refreshGeometry()
-    #expect(overlay.debugSnapshot.panelWidth == 280)
-    #expect(overlay.debugSnapshot.panelFrame.midX == anchor?.x)
-    #expect(overlay.debugSnapshot.footerY == anchor?.y)
-    #expect(sides.allSatisfy { !$0.intersects(overlay.debugSnapshot.panelFrame) })
-    overlay.debugSetGeometry(visible: visible, protected: [])
-    overlay.refreshGeometry()
-    #expect(overlay.debugSnapshot.panelWidth == 480)
-    #expect(overlay.debugSnapshot.panelFrame.midX == anchor?.x)
-    #expect(overlay.debugSnapshot.footerY == anchor?.y)
-    overlay.hide()
-}
+
 
 @MainActor
 @Test func overlayCancelledDragIgnoresLateMouseUpInNextSession() {
@@ -219,25 +158,22 @@ import Testing
     overlay.hide()
 }
 
+
+
 @MainActor
-@Test func overlayDraggedFooterKeepsCenterWhenFirstPreviewWidensAndGrows() {
-    let overlay = OverlayController(presentsPanel: false)
+@Test func liveTranscriptNeverExpandsStatusHUDAndRetryIsOneClick() {
+    var retries = 0
+    let overlay = OverlayController(onRetry: { retries += 1 }, presentsPanel: false)
     overlay.showRecording(elapsedText: "00:00")
-    #expect(overlay.debugSnapshot.panelWidth < 480)
-    overlay.beginDrag(at: CGPoint(x: 400, y: 30))
-    overlay.endDrag(at: CGPoint(x: 500, y: 230))
-    let anchor = overlay.debugSnapshot.userAnchor
-    overlay.updateTranscriptPreview("第一句")
-    #expect(overlay.debugSnapshot.panelWidth == 480)
-    #expect(overlay.debugSnapshot.panelFrame.midX == anchor?.x)
-    #expect(overlay.debugSnapshot.footerY == anchor?.y)
-    overlay.updateTranscriptPreview(String(repeating: "长文字继续增长并保留用户选择的位置。", count: 70))
-    for _ in 0..<4 { overlay.refreshGeometry() }
-    #expect(overlay.debugSnapshot.panelHeight == 140)
-    #expect(overlay.debugSnapshot.panelFrame.midX == anchor?.x)
-    #expect(overlay.debugSnapshot.footerY == anchor?.y)
+    let initial = overlay.debugSnapshot
+    overlay.updateTranscriptPreview(String(repeating: "实时文字只属于输入框。", count: 100))
+    #expect(overlay.debugSnapshot.panelFrame == initial.panelFrame)
+    #expect(overlay.debugSnapshot.panelHeight == 44)
+    #expect(overlay.debugSnapshot.transcript.isEmpty)
     overlay.showProcessing()
-    #expect(overlay.debugSnapshot.panelFrame.midX == anchor?.x)
-    #expect(overlay.debugSnapshot.footerY == anchor?.y)
+    #expect(overlay.debugSnapshot.panelHeight == 44)
+    overlay.showRetryableError("test error")
+    #expect(overlay.debugSimulateRetryControlClick())
+    #expect(retries == 1)
     overlay.hide()
 }

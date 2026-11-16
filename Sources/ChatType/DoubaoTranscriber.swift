@@ -55,7 +55,8 @@ actor DoubaoLiveState {
         if firstTextAtNs == nil, !text.isEmpty { firstTextAtNs = DispatchTime.now().uptimeNanoseconds }
         preview = text
     }
-    func failed() { preview += "\n豆包连接中断；原声继续保存，停录后可重试。" }
+    private(set) var connectionFailed = false
+    func failed() { connectionFailed = true }
     func requestFinish() { finishRequested = true }
     func receiverFailed(_ error: any Error) { receiverFailure = error }
     func checkReceiver() throws { if let receiverFailure { throw receiverFailure } }

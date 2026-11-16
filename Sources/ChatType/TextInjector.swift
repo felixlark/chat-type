@@ -56,12 +56,15 @@ enum ClipboardFallbackReason: Sendable, Equatable {
     case userSelected
     case accessibilityPermissionRequired
     case noEditableTarget
+    case originalTargetUnavailable
 
     var statusDetail: String {
         switch self {
         case .userSelected: return "Copied to clipboard as selected"
         case .accessibilityPermissionRequired:
             return "Copied to clipboard. Grant Accessibility access for auto-paste."
+        case .originalTargetUnavailable:
+            return "原输入框已变化或不可写；终稿已复制，请核对框内临时文字。"
         case .noEditableTarget:
             return "Copied to clipboard"
         }
@@ -72,6 +75,8 @@ enum ClipboardFallbackReason: Sendable, Equatable {
         case .userSelected: return "已按设置复制到剪贴板。"
         case .accessibilityPermissionRequired:
             return "Accessibility permission is off, so ChatType left the text in the clipboard."
+        case .originalTargetUnavailable:
+            return "原输入框已变化或不可写；终稿已复制，请核对框内临时文字。"
         case .noEditableTarget:
             return "No editable cursor was found. Paste manually."
         }

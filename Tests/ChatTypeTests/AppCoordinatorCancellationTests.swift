@@ -45,7 +45,6 @@ private final class FakeCoordinatorRecorder: RecordingControlling {
 private final class FakeCoordinatorOverlay: OverlayControlling {
     var onCancel: (@MainActor () -> Void)?
     var onRetry: (@MainActor () -> Void)?
-    var onReprocess: (@MainActor () -> Void)?
     var onShowProcessing: (@MainActor () -> Void)?
     private(set) var hideCallCount = 0
     private(set) var recordingElapsedTexts: [String] = []
@@ -311,7 +310,7 @@ struct AppCoordinatorCancellationTests {
             ? RecorderError.recordingStorageFailed("archive failure") : CancellationError()
         let overlay = FakeCoordinatorOverlay(), notifier = FakeCoordinatorNotifier()
         var first = true
-        let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(), microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
             config: legacyAccountConfig(), notifier: notifier, injector: FakeCoordinatorInjector(), overlay: overlay,
             authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
             historyRecorder: FakeCoordinatorHistoryRecorder(), soundFeedback: FakeSoundFeedback(),
@@ -340,7 +339,7 @@ struct AppCoordinatorCancellationTests {
         let recorder = FakeCoordinatorRecorder()
         let overlay = FakeCoordinatorOverlay()
         let statusMenu = FakeCoordinatorStatusMenu()
-        let coordinator = AppCoordinator(
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(),
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: legacyAccountConfig(),
@@ -379,7 +378,7 @@ struct AppCoordinatorCancellationTests {
         let overlay = FakeCoordinatorOverlay()
         let statusMenu = FakeCoordinatorStatusMenu()
         let injector = FakeCoordinatorInjector()
-        let coordinator = AppCoordinator(
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(),
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: legacyAccountConfig(),
@@ -435,7 +434,7 @@ struct AppCoordinatorCancellationTests {
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
         var contextWhenProcessing: LaunchAppContext?
-        let coordinator = AppCoordinator(
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(),
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: legacyAccountConfig(),
@@ -475,7 +474,7 @@ struct AppCoordinatorCancellationTests {
         let overlay = FakeCoordinatorOverlay()
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
-        let coordinator = AppCoordinator(
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(),
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: legacyAccountConfig(),
@@ -515,7 +514,7 @@ struct AppCoordinatorCancellationTests {
         let overlay = FakeCoordinatorOverlay()
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
-        let coordinator = AppCoordinator(
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(),
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: legacyAccountConfig(),
@@ -548,7 +547,7 @@ struct AppCoordinatorCancellationTests {
         let overlay = FakeCoordinatorOverlay()
         let statusMenu = FakeCoordinatorStatusMenu()
         let processingGate = CoordinatorGate()
-        let coordinator = AppCoordinator(
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(),
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: legacyAccountConfig(),
@@ -587,7 +586,7 @@ struct AppCoordinatorCancellationTests {
         let overlay = FakeCoordinatorOverlay()
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
-        let coordinator = AppCoordinator(
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(),
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: legacyAccountConfig(),
@@ -620,7 +619,7 @@ struct AppCoordinatorCancellationTests {
         let soundFeedback = FakeSoundFeedback()
         var config = legacyAccountConfig()
         config.transcription.feedbackSoundsEnabled = false
-        let coordinator = AppCoordinator(
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(),
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: config,
@@ -654,7 +653,7 @@ struct AppCoordinatorCancellationTests {
         let overlay = FakeCoordinatorOverlay()
         let statusMenu = FakeCoordinatorStatusMenu()
         let soundFeedback = FakeSoundFeedback()
-        let coordinator = AppCoordinator(
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(),
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: legacyAccountConfig(),
@@ -702,7 +701,7 @@ struct AppCoordinatorCancellationTests {
             .success("retry final"),
         ])
         let configStore = ConfigStore(fileManager: .default, homeDirectoryURL: root)
-        let coordinator = AppCoordinator(
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(),
             microphoneAccessRequester: {},
             configStore: configStore,
             config: legacyAccountConfig(),
@@ -778,7 +777,7 @@ struct AppCoordinatorCancellationTests {
             .retryableCloudflare(3),
             .retryableCloudflare(1),
         ])
-        let coordinator = AppCoordinator(
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(),
             microphoneAccessRequester: {},
             configStore: ConfigStore(fileManager: .default, homeDirectoryURL: root),
             config: legacyAccountConfig(),
@@ -823,7 +822,7 @@ struct AppCoordinatorCancellationTests {
         let statusMenu = FakeCoordinatorStatusMenu()
         let script = CoordinatorPipelineScript(outcomes: [.retryableCloudflare(3)])
         let configStore = ConfigStore(fileManager: .default, homeDirectoryURL: root)
-        let coordinator = AppCoordinator(
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(),
             microphoneAccessRequester: {},
             configStore: configStore,
             config: legacyAccountConfig(),
@@ -869,7 +868,7 @@ struct AppCoordinatorCancellationTests {
         let recorder = FakeCoordinatorRecorder()
         recorder.nextAudio = RecordedAudio(fileURL: url, durationMs: 1_000)
         let injector = FakeCoordinatorInjector()
-        let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(), microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
             notifier: FakeCoordinatorNotifier(), injector: injector, overlay: FakeCoordinatorOverlay(),
             authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
             recoveryRecorder: store, recorderFactory: { _ in recorder },
@@ -900,7 +899,7 @@ struct AppCoordinatorCancellationTests {
             )
         )
         let statusMenu = FakeCoordinatorStatusMenu()
-        let coordinator = AppCoordinator(
+        let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(),
             microphoneAccessRequester: {},
             configStore: ConfigStore(homeDirectoryURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             config: legacyAccountConfig(),
@@ -936,7 +935,7 @@ struct AppCoordinatorCancellationTests {
     let previews = SnapshotConfigCapture()
     var initial = legacyAccountConfig()
     initial.transcription.hintTerms = ["pstack", "SmartShadow"]
-    let coordinator = AppCoordinator(microphoneAccessRequester: {},
+    let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(), microphoneAccessRequester: {},
         configStore: ConfigStore(homeDirectoryURL: root), config: initial,
         notifier: FakeCoordinatorNotifier(), injector: FakeCoordinatorInjector(), overlay: overlay,
         authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
@@ -996,7 +995,7 @@ private struct UnwritableRecovery: RecoveryRecording {
     let recorder = FakeCoordinatorRecorder(); recorder.nextAudio.cloudTranscript = cloud
     let overlay = FakeCoordinatorOverlay(); let menu = FakeCoordinatorStatusMenu(); let injector = FakeCoordinatorInjector()
     let script = CoordinatorPipelineScript(outcomes: [.success("must not run")])
-    let coordinator = AppCoordinator(microphoneAccessRequester: {}, config: legacyAccountConfig(),
+    let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(), microphoneAccessRequester: {}, config: legacyAccountConfig(),
         notifier: FakeCoordinatorNotifier(), injector: injector, overlay: overlay, authManager: FakeChatGPTAuthManager(),
         latencyRecorder: FakeLatencyRecorder(), historyRecorder: FakeCoordinatorHistoryRecorder(),
         recoveryRecorder: UnwritableRecovery(), soundFeedback: FakeSoundFeedback(), recorderFactory: { _ in recorder },
@@ -1021,7 +1020,7 @@ private struct UnwritableRecovery: RecoveryRecording {
     let recorder = FakeCoordinatorRecorder(); recorder.nextAudio.cloudTranscript = cloud
     let overlay = FakeCoordinatorOverlay(); let menu = FakeCoordinatorStatusMenu(); let injector = FakeCoordinatorInjector()
     let script = CoordinatorPipelineScript(outcomes: [.success("must not run")])
-    let coordinator = AppCoordinator(microphoneAccessRequester: {}, config: legacyAccountConfig(),
+    let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(), microphoneAccessRequester: {}, config: legacyAccountConfig(),
         notifier: FakeCoordinatorNotifier(), injector: injector, overlay: overlay, authManager: FakeChatGPTAuthManager(),
         latencyRecorder: FakeLatencyRecorder(), historyRecorder: FakeCoordinatorHistoryRecorder(),
         soundFeedback: FakeSoundFeedback(), recorderFactory: { _ in recorder }, statusMenuFactory: { _,_,_ in menu },
@@ -1041,7 +1040,7 @@ private struct UnwritableRecovery: RecoveryRecording {
     defer { try? FileManager.default.removeItem(at:root) }
     let recorder = FakeCoordinatorRecorder(); let overlay = FakeCoordinatorOverlay(); let menu = FakeCoordinatorStatusMenu()
     let injector = FakeCoordinatorInjector(); let script = CoordinatorPipelineScript(outcomes:[.doubaoPartial,.success("完整结果")])
-    let coordinator = AppCoordinator(microphoneAccessRequester:{}, config:AppConfig(), notifier:FakeCoordinatorNotifier(),
+    let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(), microphoneAccessRequester:{}, config:AppConfig(), notifier:FakeCoordinatorNotifier(),
         injector:injector, overlay:overlay, authManager:FakeChatGPTAuthManager(), latencyRecorder:FakeLatencyRecorder(),
         historyRecorder:FakeCoordinatorHistoryRecorder(), recoveryRecorder:store, soundFeedback:FakeSoundFeedback(),
         recorderFactory:{_ in recorder}, statusMenuFactory:{_,_,_ in menu}, pipelineFactory:{_,_,p in script.makePipeline(policy:p)})
@@ -1060,8 +1059,8 @@ private struct UnwritableRecovery: RecoveryRecording {
 }
 
 
-@Test(arguments: [false, true]) @MainActor
-func manualActionsDistinguishOriginalRouteFromCurrentVisibleFlow(useCurrent: Bool) async throws {
+@Test @MainActor
+func hudRetryPreservesOriginalRouteDespiteChangedVisibleFlow() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = RecoveryStore(directoryURL: root.appendingPathComponent("Recovery"))
@@ -1070,7 +1069,7 @@ func manualActionsDistinguishOriginalRouteFromCurrentVisibleFlow(useCurrent: Boo
     let script = CoordinatorPipelineScript(outcomes: [.doubaoPartial, .success("完整结果")])
     let original = AppConfig()
     let draft = PreferencesDraft(config: original)
-    let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
+    let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(), microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
         config: original, notifier: FakeCoordinatorNotifier(), injector: injector, overlay: overlay,
         authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
         historyRecorder: FakeCoordinatorHistoryRecorder(), recoveryRecorder: store, soundFeedback: FakeSoundFeedback(),
@@ -1085,17 +1084,16 @@ func manualActionsDistinguishOriginalRouteFromCurrentVisibleFlow(useCurrent: Boo
     draft.config.transcription.textPolish.chatGPTResponseModel = "selected-model"
     draft.config.injection.preserveClipboard = true
     coordinator.handleHotkeyPress(); await waitForCondition { overlay.retryableErrors.count == 1 }
-    if useCurrent { overlay.onReprocess?() } else { overlay.onRetry?() }
+    overlay.onRetry?()
     await waitForCondition { injector.injectCallCount == 1 }
-    let expected: TranscriptionProvider = useCurrent ? .chatGPTManagedAuth : .doubaoIME
+    let expected: TranscriptionProvider = .doubaoIME
     #expect(script.configs.map(\.provider) == [.doubaoIME, expected])
-    #expect(script.configs.last?.textPolish.provider == (useCurrent ? .chatGPTAuth : .doubaoIME))
-    if useCurrent { #expect(script.configs.last?.textPolish.chatGPTResponseModel == "selected-model") }
+    #expect(script.configs.last?.textPolish.provider == .doubaoIME)
     let record = try #require(store.loadRecent().last)
     #expect(record.attempts?.map(\.snapshot.provider) == [.doubaoIME, expected])
     #expect(record.attempts?.first?.injectionSnapshot?.preserveClipboard == false)
-    #expect(record.attempts?.last?.injectionSnapshot?.preserveClipboard == useCurrent)
-    #expect(draft.hasChanges == !useCurrent)
+    #expect(record.attempts?.last?.injectionSnapshot?.preserveClipboard == false)
+    #expect(draft.hasChanges == true)
     #expect(script.audioPaths[0] == script.audioPaths[1])
     #expect(record.attempts?.first?.stages.asrPartialText == "前半句")
 }
@@ -1113,7 +1111,7 @@ func currentFlowReplayRequiresEveryApplicableSavedAudioDecision(source: String) 
     let record = try #require(store.loadRecent().first)
     let script = CoordinatorPipelineScript(outcomes: [])
     var decisions: [RecoveryReplayDecision] = []
-    let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
+    let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(), microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
         config: AppConfig(), notifier: FakeCoordinatorNotifier(), injector: FakeCoordinatorInjector(),
         overlay: FakeCoordinatorOverlay(), authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
         historyRecorder: FakeCoordinatorHistoryRecorder(), recoveryRecorder: store,
@@ -1140,7 +1138,7 @@ func currentFlowReplayRequiresEveryApplicableSavedAudioDecision(source: String) 
     let record = try #require(store.loadRecent().first)
     let script = CoordinatorPipelineScript(outcomes: [])
     let recorder = FakeCoordinatorRecorder()
-    let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: blocked),
+    let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(), microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: blocked),
         config: AppConfig(), notifier: FakeCoordinatorNotifier(), injector: FakeCoordinatorInjector(),
         overlay: FakeCoordinatorOverlay(), authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
         historyRecorder: FakeCoordinatorHistoryRecorder(), recoveryRecorder: store, soundFeedback: FakeSoundFeedback(),
@@ -1163,7 +1161,7 @@ func currentFlowReplayRequiresEveryApplicableSavedAudioDecision(source: String) 
     defer { try? FileManager.default.removeItem(at: root) }
     let recorder = FakeCoordinatorRecorder(), overlay = FakeCoordinatorOverlay(), menu = FakeCoordinatorStatusMenu()
     let script = CoordinatorPipelineScript(outcomes: [.success("selected route")])
-    let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
+    let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(), microphoneAccessRequester: {}, configStore: ConfigStore(homeDirectoryURL: root),
         config: AppConfig(), notifier: FakeCoordinatorNotifier(), injector: FakeCoordinatorInjector(), overlay: overlay,
         authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(), historyRecorder: FakeCoordinatorHistoryRecorder(),
         recoveryRecorder: RecoveryStore(directoryURL: root.appendingPathComponent("Recovery")), soundFeedback: FakeSoundFeedback(),
@@ -1192,7 +1190,7 @@ func missingPolishCredentialPreventsBothAutomaticApplyEntryPoints(provider: Text
     let record = try #require(store.loadRecent().first)
     let configStore = ConfigStore(homeDirectoryURL: root); let original = AppConfig(); try configStore.save(original)
     let script = CoordinatorPipelineScript(outcomes: [])
-    let coordinator = AppCoordinator(microphoneAccessRequester: {}, configStore: configStore, config: original,
+    let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(), microphoneAccessRequester: {}, configStore: configStore, config: original,
         notifier: FakeCoordinatorNotifier(), injector: FakeCoordinatorInjector(), overlay: FakeCoordinatorOverlay(),
         authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(), historyRecorder: FakeCoordinatorHistoryRecorder(),
         recoveryRecorder: store, soundFeedback: FakeSoundFeedback(), recorderFactory: { _ in FakeCoordinatorRecorder() },
@@ -1204,4 +1202,54 @@ func missingPolishCredentialPreventsBothAutomaticApplyEntryPoints(provider: Text
     #expect(try configStore.load() == original)
     #expect(try store.loadRecent().first?.attempts?.count == 1)
     #expect(draft.hasChanges && draft.isError)
+}
+
+@MainActor
+private final class FakeLiveTextInput: LiveTextInputControlling {
+    func begin(context: LaunchAppContext?, enabled: Bool) {}
+    func update(_ text: String) {}
+    func finish(_ text: String, injector: any TextInjecting) throws -> InjectionOutcome? { nil }
+    func endRecording() {}
+    func suspend() {}
+    func reset() {}
+}
+
+private struct SelectivelyFailingRecovery: RecoveryRecording {
+    let directoryURL = FileManager.default.temporaryDirectory
+    let outcome: String
+    func record(_ input: RecoveryRecordInput) throws {
+        if input.outcome == outcome { throw CocoaError(.fileWriteNoPermission) }
+    }
+    func loadRecent(limit: Int) throws -> [RecoveryRecord] { [] }
+}
+
+@MainActor
+private final class LiveInputProbe: LiveTextInputControlling {
+    var events: [String] = []
+    var finalized = false
+    func begin(context: LaunchAppContext?, enabled: Bool) { events.append("begin") }
+    func update(_ text: String) { events.append("update") }
+    func finish(_ text: String, injector: any TextInjecting) throws -> InjectionOutcome? {
+        events.append("finish"); finalized = true; return .pasted
+    }
+    func endRecording() { events.append("endRecording") }
+    func suspend() { events.append("suspend"); finalized = false }
+    func reset() { events.append("reset"); finalized = false }
+}
+
+@Test(arguments: ["readyToInject", "pasted"]) @MainActor
+func pinnedFinalizationWaitsForSealAndSurvivesPostOutputAuditFailure(outcome: String) async throws {
+    let recorder = FakeCoordinatorRecorder(); let input = LiveInputProbe(); let injector = FakeCoordinatorInjector()
+    let coordinator = AppCoordinator(liveTextInput: input, microphoneAccessRequester: {}, config: AppConfig(),
+        notifier: FakeCoordinatorNotifier(), injector: injector, overlay: FakeCoordinatorOverlay(),
+        authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
+        historyRecorder: FakeCoordinatorHistoryRecorder(), recoveryRecorder: SelectivelyFailingRecovery(outcome: outcome),
+        soundFeedback: FakeSoundFeedback(), recorderFactory: { _ in recorder },
+        statusMenuFactory: { _,_,_ in FakeCoordinatorStatusMenu() }, pipelineFactory: { _,_,_ in FakeCoordinatorPipeline() })
+    coordinator.handleHotkeyPress(); await waitForCoordinatorState(coordinator, toBecome: .recording)
+    coordinator.handleHotkeyPress(); await waitForCoordinatorState(coordinator, toBecome: .idle)
+    #expect(input.finalized == (outcome == "pasted"))
+    #expect(input.events.contains("finish") == (outcome == "pasted"))
+    #expect(input.events.contains("suspend") == (outcome == "readyToInject"))
+    #expect(injector.injectCallCount == 0)
 }
