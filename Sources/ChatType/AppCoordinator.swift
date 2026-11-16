@@ -961,6 +961,7 @@ final class AppCoordinator {
     }
 
     private func runOverlayDemo() {
+        placeOverlayDemoOnRightScreen()
         let demoLevels: [CGFloat] = [0.14, 0.28, 0.46, 0.72, 0.54, 0.32, 0.18, 0.64]
 
         state = .processing
@@ -999,6 +1000,7 @@ final class AppCoordinator {
     }
 
     private func runOverlayDemoState(_ demoState: OverlayDemoState) {
+        placeOverlayDemoOnRightScreen()
         state = .processing
         statusMenu?.update(state: .demo, detail: "Overlay demo")
 
@@ -1033,6 +1035,12 @@ final class AppCoordinator {
             try? await Task.sleep(nanoseconds: 180_000_000_000)
             NSApplication.shared.terminate(nil)
         }
+    }
+
+    private func placeOverlayDemoOnRightScreen() {
+        guard let screen = NSScreen.screens.max(by: { $0.frame.maxX < $1.frame.maxX }),
+              let controller = overlay as? OverlayController else { return }
+        controller.debugSetGeometry(visible: screen.visibleFrame, protected: [])
     }
 
     private func startRecordingLevelUpdates() {
