@@ -108,7 +108,9 @@ enum PinnedPasteReceipt {
         guard let placeholder, !placeholder.isEmpty,
               span.selection == NSRange(location: 0, length: 0),
               span.original == placeholder + "\n" else { return false }
-        return observed == inserted + "\n"
+        // Chromium omits the empty paragraph separator once actual content
+        // is inserted; other web editors retain it in their AXValue.
+        return observed == inserted || observed == inserted + "\n"
     }
 }
 

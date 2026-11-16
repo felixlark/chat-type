@@ -99,19 +99,22 @@ func clipboardRestoresOnlyAfterReceiptAndOnlyWhileStillOwned(newCopy: Bool) asyn
 
 @Test func emptyChromiumPlaceholderReceiptRequiresExactWholeContent() throws {
     let span = try #require(LiveTextSpan(value: "Work with Codex\n", selection: NSRange(location: 0, length: 0)))
+    #expect(PinnedPasteReceipt.matches(observed: "终稿", span: span, inserted: "终稿", placeholder: "Work with Codex"))
     #expect(PinnedPasteReceipt.matches(observed: "终稿\n", span: span, inserted: "终稿", placeholder: "Work with Codex"))
     #expect(PinnedPasteReceipt.matches(observed: "终稿Work with Codex\n", span: span, inserted: "终稿", placeholder: "Work with Codex"))
     #expect(!PinnedPasteReceipt.matches(observed: "别的终稿\n", span: span, inserted: "终稿", placeholder: "Work with Codex"))
+    #expect(!PinnedPasteReceipt.matches(observed: "终稿\n\n", span: span, inserted: "终稿", placeholder: "Work with Codex"))
     #expect(!PinnedPasteReceipt.matches(observed: "终稿\n", span: span, inserted: "终稿", placeholder: "different"))
     #expect(!PinnedPasteReceipt.matches(observed: nil, span: span, inserted: "终稿", placeholder: "Work with Codex"))
 }
 
-@Test @MainActor func nativePasteUsesCapturedPlaceholderLabelForReceipt() throws {
+@Test(arguments: ["终稿", "终稿\n"]) @MainActor
+func nativePasteUsesCapturedPlaceholderLabelForReceipt(observed: String) throws {
     let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
     let pin = PasteProbe(); pin.value = "Work with Codex\n"; pin.placeholderLabel = "Work with Codex"
     let span = try #require(LiveTextSpan(value: pin.value!, selection: NSRange(location: 0, length: 0)))
     let injector = TextInjector(pasteboard: board, sendPaste: { _ in
-        pin.placeholderLabel = nil; pin.value = "终稿\n"
+        pin.placeholderLabel = nil; pin.value = observed
     }, settleAfterPaste: {})
     #expect(try injector.injectPinned(text: "终稿", span: span, target: pin, configuration: InjectionConfig()) == .pasted)
 }
