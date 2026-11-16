@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Testing
 @testable import ChatType
 
@@ -152,4 +153,14 @@ func appliedButUnverifiedAXFinalNeverCopiesOrRollsBack(unreadable: Bool) async {
 @Test func invalidUTF16SelectionCannotReplaceText() {
     #expect(LiveTextSpan(value: "abc", selection: NSRange(location: 4, length: 0)) == nil)
     #expect(LiveTextSpan(value: "abc", selection: NSRange(location: 1, length: 3)) == nil)
+}
+
+@Test @MainActor func sourceFontUsesAnAdjacentWholeUTF16CharacterAndAXFontDictionary() throws {
+    #expect(InputCompositionTextStyle.adjacentRange(in: "A🙂Z", caret: 1) == NSRange(location: 1, length: 2))
+    #expect(InputCompositionTextStyle.adjacentRange(in: "A🙂", caret: 3) == NSRange(location: 1, length: 2))
+    #expect(InputCompositionTextStyle.adjacentRange(in: "", caret: 0) == nil)
+    let attributes: [NSAttributedString.Key: Any] = [NSAttributedString.Key("AXFont"): [
+        "AXFontName": "Menlo-Regular", "AXFontSize": NSNumber(value: 24)]]
+    let font = InputCompositionTextStyle.font(attributes, fallbackSize: 13)
+    #expect(font.pointSize == 24 && font.fontName == "Menlo-Regular")
 }

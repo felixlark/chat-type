@@ -55,6 +55,14 @@ final class EditorSocketTransaction: @unchecked Sendable {
     }
 
     func exchange(path: String, request: EditorBridgeRequest) throws -> EditorBridgeResponse {
+        do { return try performExchange(path: path, request: request) }
+        catch {
+            if lock.withLock({ cancelled }) { throw CancellationError() }
+            throw error
+        }
+    }
+
+    private func performExchange(path: String, request: EditorBridgeRequest) throws -> EditorBridgeResponse {
         let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw EditorDeliveryError.unavailable }
         defer {
@@ -161,12 +169,14 @@ final class SublimeEditorSession: PinnedEditorSession {
         return response
     }
     func geometry() async throws -> EditorBridgeResponse {
-        try await bridge.enqueue(session: id, operation: "geometry").value
+        let request = bridge.enqueue(session: id, operation: "geometry")
+        return try await withTaskCancellationHandler { try await request.value } onCancel: { request.cancel() }
     }
     func commit(_ text: String) async throws -> Bool {
         let response: EditorBridgeResponse
         do { response = try await bridge.enqueue(session: id, operation: "commit", text: text).value }
         catch {
+            if Task.isCancelled || error is CancellationError { throw CancellationError() }
             // A missing receipt can follow a successful mutation. Reconcile the
             // same pin; never send another commit or clipboard copy here.
             guard let reconciled = try? await bridge.enqueue(session: id, operation: "status").value,

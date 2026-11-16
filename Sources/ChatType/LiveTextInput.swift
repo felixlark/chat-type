@@ -195,12 +195,18 @@ private final class AXLiveTextTarget: LiveTextTarget {
         if AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, raw, &bounds) == .success,
            let bounds, CFGetTypeID(bounds) == AXValueGetTypeID() { _ = AXValueGetValue(bounds as! AXValue, .cgRect, &caret) }
         var attributed: CFTypeRef?
-        _ = AXUIElementCopyParameterizedAttributeValue(element, kAXAttributedStringForRangeParameterizedAttribute as CFString, raw, &attributed)
+        if let styleRange = InputCompositionTextStyle.adjacentRange(in: value ?? "", caret: selected.location) {
+            var range = CFRange(location: styleRange.location, length: styleRange.length)
+            if let styleValue = AXValueCreate(.cfRange, &range) {
+                _ = AXUIElementCopyParameterizedAttributeValue(element, kAXAttributedStringForRangeParameterizedAttribute as CFString, styleValue, &attributed)
+            }
+        }
         let string = attributed as? NSAttributedString
         let attributes = (string?.length ?? 0) > 0 ? string!.attributes(at: 0, effectiveRange: nil) : [:]
-        let font = attributes[.font] as? NSFont ?? .systemFont(ofSize: max(1, caret.height * 0.75))
+        let font = InputCompositionTextStyle.font(attributes, fallbackSize: max(1, caret.height * 0.75))
         return InputCompositionAnchor(caret: appKitRect(caret), input: appKitRect(input), font: font,
-            foreground: attributes[.foregroundColor] as? NSColor ?? .labelColor, background: .textBackgroundColor)
+            foreground: InputCompositionTextStyle.color(attributes, cocoa: .foregroundColor, ax: "AXForegroundColor") ?? .labelColor,
+            background: InputCompositionTextStyle.color(attributes, cocoa: .backgroundColor, ax: "AXBackgroundColor") ?? .textBackgroundColor)
     }
     func write(_ value: String, caret: Int) -> LiveTextWriteResult {
         var settable = DarwinBoolean(false)
@@ -232,4 +238,31 @@ private final class AXLiveTextTarget: LiveTextTarget {
 }
 @MainActor private func appKitRect(_ rect: CGRect) -> CGRect {
     OverlayPlacementSession.appKitFrame(fromAccessibility: rect, primaryScreenTop: NSScreen.screens.first?.frame.maxY ?? 0)
+}
+
+@MainActor
+enum InputCompositionTextStyle {
+    static func adjacentRange(in value: String, caret: Int) -> NSRange? {
+        let string = value as NSString
+        guard string.length > 0, caret >= 0, caret <= string.length else { return nil }
+        return string.rangeOfComposedCharacterSequence(at: min(caret, string.length - 1))
+    }
+    // Public AXTextAttributedString.h keys; use their verified string values
+    // because this SDK imports the CFString globals as mutable Unmanaged vars.
+    static func font(_ attributes: [NSAttributedString.Key: Any], fallbackSize: CGFloat) -> NSFont {
+        if let font = attributes[.font] as? NSFont { return font }
+        if let info = attributes[NSAttributedString.Key("AXFont")] as? [String: Any],
+           let name = info["AXFontName"] as? String,
+           let size = info["AXFontSize"] as? NSNumber,
+           let font = NSFont(name: name, size: CGFloat(size.doubleValue)) { return font }
+        return .systemFont(ofSize: fallbackSize)
+    }
+    static func color(_ attributes: [NSAttributedString.Key: Any], cocoa: NSAttributedString.Key, ax: String) -> NSColor? {
+        if let color = attributes[cocoa] as? NSColor { return color }
+        if let raw = attributes[NSAttributedString.Key(ax)] {
+            let value = raw as CFTypeRef
+            if CFGetTypeID(value) == CGColor.typeID { return NSColor(cgColor: value as! CGColor) }
+        }
+        return nil
+    }
 }

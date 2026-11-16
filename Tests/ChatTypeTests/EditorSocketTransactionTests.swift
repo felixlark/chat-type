@@ -10,7 +10,8 @@ private final class SocketProbe: @unchecked Sendable {
     var ready: Bool { lock.withLock { received } }
 }
 
-@Test func cancellingStalledEditorSocketAllowsNextTransaction() async throws {
+@Test(arguments: [false, true]) @MainActor
+func cancellingStalledEditorSocketAllowsNextTransaction(throughSession: Bool) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let path = root.appendingPathComponent("e.sock").path
@@ -42,13 +43,19 @@ private final class SocketProbe: @unchecked Sendable {
         _ = Darwin.shutdown(second, SHUT_WR)
     }
     let stalled = EditorSocketTransaction()
-    let first = Task.detached { try stalled.exchange(path: path, request: EditorBridgeRequest(session: UUID().uuidString, operation: "health")) }
+    let bridge = SublimeEditorBridge(path: path)
+    let editor = SublimeEditorSession(bridge: bridge)
+    let first: Task<EditorBridgeResponse, Error>
+    if throughSession { first = Task { try await editor.geometry() } }
+    else { first = Task.detached { try stalled.exchange(path: path, request: EditorBridgeRequest(session: UUID().uuidString, operation: "health")) } }
     while !probe.ready { await Task.yield() }
-    stalled.cancel()
+    if throughSession { first.cancel() } else { stalled.cancel() }
     do { _ = try await first.value; Issue.record("Cancelled socket must not return a successful response") }
     catch { #expect(error is CancellationError) }
-    let second = try await Task.detached { try EditorSocketTransaction().exchange(path: path,
-        request: EditorBridgeRequest(session: UUID().uuidString, operation: "health")) }.value
+    let second: EditorBridgeResponse
+    if throughSession { second = try await bridge.enqueue(session: UUID().uuidString, operation: "health").value }
+    else { second = try await Task.detached { try EditorSocketTransaction().exchange(path: path,
+        request: EditorBridgeRequest(session: UUID().uuidString, operation: "health")) }.value }
     #expect(second.status == "ready")
     await server.value
 }

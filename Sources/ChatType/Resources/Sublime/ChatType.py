@@ -26,7 +26,7 @@ def _key(session):
 
 
 def _reply(status, **fields):
-    return dict(protocol=PROTOCOL, build=BUILD, status=status, **fields)
+    return dict(protocol=PROTOCOL, build=BUILD, revision=2, status=status, **fields)
 
 
 def _geometry(state):
@@ -146,6 +146,15 @@ def _handle(connection):
             def complete():
                 try:
                     if cancelled.is_set() or owner is not _listener:
+                        return
+                    # Check the peer directly at the mutation boundary. The
+                    # background select thread may not have processed EOF yet.
+                    try:
+                        if not connection.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT):
+                            return
+                    except BlockingIOError:
+                        pass
+                    except OSError:
                         return
                     try:
                         result = dispatch(request)

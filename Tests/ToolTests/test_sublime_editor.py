@@ -110,3 +110,22 @@ class SublimeEditorTests(unittest.TestCase):
         while not pending and time.monotonic() < deadline: time.sleep(0.005)
         self.assertTrue(pending); client.close(); worker.join(2); self.assertFalse(worker.is_alive())
         pending.pop()(); self.assertEqual(self.view.value, '前🙂选中后')
+
+    def test_closed_peer_is_checked_by_callback_before_worker_observes_eof(self):
+        self.call('begin'); plugin._listener = object()
+        client, server = socket.socketpair()
+        worker = threading.Thread(target=plugin._handle, args=(server,)); worker.start()
+        client.sendall(json.dumps(dict(protocol=1, session=self.session, operation='commit', text='CANCELLED FINAL')).encode() + b'\n')
+        deadline = time.monotonic() + 2
+        while not pending and time.monotonic() < deadline: time.sleep(0.005)
+        self.assertTrue(pending)
+        previous = sys.getswitchinterval()
+        try:
+            sys.setswitchinterval(0.5)
+            client.shutdown(socket.SHUT_RDWR); client.close()
+            pending.pop()()  # Do not join/yield to the EOF observer first.
+            self.assertEqual(self.view.value, '前🙂选中后')
+        finally:
+            sys.setswitchinterval(previous)
+            worker.join(2)
+        self.assertFalse(worker.is_alive())
