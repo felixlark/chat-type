@@ -32,7 +32,7 @@ final class OverlayController: OverlayControlling {
     private let leadingContainer = NSView()
     private let leadingBadgeView = NSView()
     private let waveformView: OverlayWaveformView
-    private let iconView = NSImageView()
+    private let iconView = OverlaySymbolImageView()
     private let closeButton = OverlayHitTargetButton()
     private let retryButton = OverlayHitTargetButton()
     private let titleLabel = NSTextField(labelWithString: "")
@@ -379,15 +379,18 @@ final class OverlayController: OverlayControlling {
 
         leadingBadgeView.translatesAutoresizingMaskIntoConstraints = false
         leadingBadgeView.wantsLayer = true
-        leadingBadgeView.layer?.cornerRadius = 14
+        leadingBadgeView.layer?.cornerRadius = 10
         leadingBadgeView.layer?.borderWidth = 1
+        leadingBadgeView.layer?.masksToBounds = true
         leadingBadgeView.isHidden = true
 
         waveformView.translatesAutoresizingMaskIntoConstraints = false
 
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.symbolConfiguration = .init(pointSize: 15, weight: .bold)
-        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.symbolConfiguration = .init(pointSize: 13, weight: .semibold)
+        iconView.imageScaling = .scaleProportionallyDown
+        iconView.wantsLayer = true
+        iconView.layer?.masksToBounds = true
         iconView.isHidden = true
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -488,13 +491,13 @@ final class OverlayController: OverlayControlling {
 
             leadingBadgeView.centerXAnchor.constraint(equalTo: leadingContainer.centerXAnchor),
             leadingBadgeView.centerYAnchor.constraint(equalTo: leadingContainer.centerYAnchor),
-            leadingBadgeView.widthAnchor.constraint(equalToConstant: 48),
-            leadingBadgeView.heightAnchor.constraint(equalToConstant: 28),
+            leadingBadgeView.widthAnchor.constraint(equalToConstant: 20),
+            leadingBadgeView.heightAnchor.constraint(equalToConstant: 20),
 
             iconView.centerXAnchor.constraint(equalTo: leadingBadgeView.centerXAnchor),
             iconView.centerYAnchor.constraint(equalTo: leadingBadgeView.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 18),
-            iconView.heightAnchor.constraint(equalToConstant: 18),
+            iconView.widthAnchor.constraint(equalToConstant: 14),
+            iconView.heightAnchor.constraint(equalToConstant: 14),
 
             textStack.leadingAnchor.constraint(equalTo: leadingContainer.trailingAnchor, constant: style.textGap),
             textStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAccessoryStack.leadingAnchor, constant: -style.textGap),
@@ -694,9 +697,17 @@ final class OverlayController: OverlayControlling {
             footerY: panel.frame.minY,
             followsLatest: true,
             controlsInsidePanel: panelRootView.bounds.contains(panelRootView.convert(closeButton.bounds, from: closeButton)),
-            previewInsidePanel: true
+            previewInsidePanel: true,
+            badgeFrame: panelRootView.convert(leadingBadgeView.bounds, from: leadingBadgeView),
+            iconFrame: panelRootView.convert(iconView.bounds, from: iconView)
         )
     }
+}
+
+private final class OverlaySymbolImageView: NSImageView {
+    // SF Symbols have optical alignment insets. Constrain the actual view's
+    // frame so a tall clipboard symbol cannot extend outside the status pill.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 }
 
 struct OverlayDebugSnapshot: Sendable, Equatable {
@@ -717,6 +728,8 @@ struct OverlayDebugSnapshot: Sendable, Equatable {
     let followsLatest: Bool
     let controlsInsidePanel: Bool
     let previewInsidePanel: Bool
+    let badgeFrame: CGRect
+    let iconFrame: CGRect
 }
 
 private final class OverlayPassthroughView: NSView {

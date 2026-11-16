@@ -23,20 +23,29 @@ protocol LiveTextTarget: AnyObject {
     var value: String? { get }
     var selection: NSRange? { get }
     var anchor: InputCompositionAnchor? { get }
+    var nativePasteTarget: (any PinnedPasteTarget)? { get }
     func write(_ value: String, caret: Int) -> LiveTextWriteResult
 }
+extension LiveTextTarget { var nativePasteTarget: (any PinnedPasteTarget)? { nil } }
 
 @MainActor
 protocol LiveTextInputControlling: AnyObject {
     func begin(context: LaunchAppContext?, enabled: Bool)
     func prepare() async
     func update(_ text: String)
-    func finish(_ text: String, injector: any TextInjecting) async throws -> InjectionOutcome?
+    func completePreview(_ text: String) async throws
+    func finish(_ text: String, injector: any TextInjecting, configuration: InjectionConfig) async throws -> InjectionOutcome?
     func endRecording()
     func suspend()
     func reset()
 }
-extension LiveTextInputControlling { func prepare() async {} }
+extension LiveTextInputControlling {
+    func prepare() async {}
+    func completePreview(_ text: String) async throws {}
+    func finish(_ text: String, injector: any TextInjecting) async throws -> InjectionOutcome? {
+        try await finish(text, injector: injector, configuration: InjectionConfig())
+    }
+}
 
 @MainActor
 final class LiveTextInput: LiveTextInputControlling {
@@ -44,6 +53,7 @@ final class LiveTextInput: LiveTextInputControlling {
     private let capture: @MainActor (LaunchAppContext?) -> (any LiveTextTarget)?
     private let composition: any InputCompositionPresenting
     private let editorFactory: EditorFactory
+    private let previewReadDelay: @Sendable () async throws -> Void
     private var target: (any LiveTextTarget)?
     private var span: LiveTextSpan?
     private var editor: (any PinnedEditorSession)?
@@ -55,10 +65,12 @@ final class LiveTextInput: LiveTextInputControlling {
 
     init(capture: @escaping @MainActor (LaunchAppContext?) -> (any LiveTextTarget)? = AXLiveTextTarget.capture,
          composition: (any InputCompositionPresenting)? = nil,
+         previewReadDelay: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .milliseconds(1200)) },
          editorFactory: @escaping EditorFactory = { context in
              context?.bundleIdentifier == "com.sublimetext.4" ? SublimeEditorSession() : nil
          }) {
         self.capture = capture; self.composition = composition ?? InputCompositionController(); self.editorFactory = editorFactory
+        self.previewReadDelay = previewReadDelay
     }
 
     func begin(context: LaunchAppContext?, enabled: Bool) {
@@ -95,7 +107,7 @@ final class LiveTextInput: LiveTextInputControlling {
         }
     }
 
-    func finish(_ text: String, injector: any TextInjecting) async throws -> InjectionOutcome? {
+    func finish(_ text: String, injector: any TextInjecting, configuration: InjectionConfig) async throws -> InjectionOutcome? {
         guard hasSession else { return nil }
         let current = generation
         composition.hide()
@@ -108,6 +120,10 @@ final class LiveTextInput: LiveTextInputControlling {
             }
         } else if let target, let span, let value = target.value,
                   let final = span.replacing(with: text, current: value) {
+            if let pinned = target.nativePasteTarget {
+                let outcome = try injector.injectPinned(text: text, span: span, target: pinned, configuration: configuration)
+                reset(); return outcome
+            }
             if final == value { reset(); return .pasted }
             switch target.write(final, caret: span.selection.location + text.utf16.count) {
             case .rejected: break
@@ -122,6 +138,18 @@ final class LiveTextInput: LiveTextInputControlling {
         reset()
         if case .copiedToClipboard = result { return .copiedToClipboard(reason: .originalTargetUnavailable) }
         return result
+    }
+
+    func completePreview(_ text: String) async throws {
+        guard hasSession else { return }
+        let current = generation
+        update(text)
+        let rendered = await composition.waitUntilRendered(text)
+        try Task.checkCancellation()
+        guard generation == current else { throw CancellationError() }
+        if rendered { try await previewReadDelay() }
+        try Task.checkCancellation()
+        guard generation == current else { throw CancellationError() }
     }
 
     func endRecording() { /* The original composition stays provisional through polish. */ }
@@ -182,12 +210,22 @@ struct EditorCompositionGeometry {
 }
 
 @MainActor
-private final class AXLiveTextTarget: LiveTextTarget {
+private final class AXLiveTextTarget: LiveTextTarget, PinnedPasteTarget {
     let element: AXUIElement
     let window: InputWindowAnchor?
     let selected: NSRange?
-    init(_ element: AXUIElement, window: InputWindowAnchor?) {
-        self.element = element; self.window = window
+    let processIdentifier: pid_t
+    private let isWebEditable: Bool
+    init(_ element: AXUIElement, window: InputWindowAnchor?, pid: pid_t) {
+        self.element = element; self.window = window; self.processIdentifier = pid
+        var ancestor: AXUIElement? = element
+        var seen: [AXUIElement] = []
+        var web = false
+        while let node = ancestor, !seen.contains(where: { CFEqual($0, node) }) {
+            if axAttribute(node, kAXRoleAttribute) as? String == "AXWebArea" { web = true; break }
+            seen.append(node); ancestor = axElement(node, kAXParentAttribute)
+        }
+        isWebEditable = web
         if let raw = axAttribute(element, kAXSelectedTextRangeAttribute), CFGetTypeID(raw) == AXValueGetTypeID() {
             var r = CFRange()
             selected = AXValueGetValue(raw as! AXValue, .cfRange, &r) ? NSRange(location: r.location, length: r.length) : nil
@@ -199,10 +237,43 @@ private final class AXLiveTextTarget: LiveTextTarget {
               [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(axAttribute(element, kAXRoleAttribute) as? String ?? ""),
               axAttribute(element, kAXSubroleAttribute) as? String != kAXSecureTextFieldSubrole as String,
               (axAttribute(element, kAXEnabledAttribute) as? Bool) != false else { return nil }
-        return AXLiveTextTarget(element, window: InputWindowAnchor.capture(context))
+        return AXLiveTextTarget(element, window: InputWindowAnchor.capture(context), pid: context.processIdentifier)
     }
     var value: String? { axAttribute(element, kAXValueAttribute) as? String }
     var selection: NSRange? { selected }
+    var nativePasteTarget: (any PinnedPasteTarget)? { isWebEditable ? self : nil }
+    var placeholderLabel: String? {
+        (axAttribute(element, kAXPlaceholderValueAttribute) as? String) ?? (axAttribute(element, kAXTitleAttribute) as? String)
+    }
+    private var currentSelection: NSRange? {
+        guard let raw = axAttribute(element, kAXSelectedTextRangeAttribute), CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(raw as! AXValue, .cfRange, &range) else { return nil }
+        return NSRange(location: range.location, length: range.length)
+    }
+    func requestPasteFocus(selection: NSRange) {
+        guard let window else { return }
+        let app = AXUIElementCreateApplication(processIdentifier)
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != processIdentifier {
+            NSRunningApplication(processIdentifier: processIdentifier)?.activate(options: [])
+        }
+        if axElement(app, kAXFocusedWindowAttribute).map({ CFEqual($0, window.window) }) != true {
+            AXUIElementPerformAction(window.window, kAXRaiseAction as CFString)
+        }
+        if axElement(app, kAXFocusedUIElementAttribute).map({ CFEqual($0, element) }) != true {
+            AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        }
+        if currentSelection != selection {
+            var range = CFRange(location: selection.location, length: selection.length)
+            if let raw = AXValueCreate(.cfRange, &range) { AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, raw) }
+        }
+    }
+    func hasPasteFocus(selection: NSRange) -> Bool {
+        guard window?.visible == true, currentSelection == selection,
+              let focused = axElement(AXUIElementCreateApplication(processIdentifier), kAXFocusedUIElementAttribute),
+              (axAttribute(element, kAXEnabledAttribute) as? Bool) != false else { return false }
+        return CFEqual(focused, element)
+    }
     var anchor: InputCompositionAnchor? {
         guard window?.visible == true, let input = axRect(element), let selected else { return nil }
         var range = CFRange(location: selected.location, length: 0)

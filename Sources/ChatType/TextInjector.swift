@@ -41,11 +41,14 @@ struct LaunchAppContext: Sendable, Equatable {
 enum InjectionError: LocalizedError {
     case keyEventFailed
     case clipboardUnavailable
+    case clipboardChanged
 
     var errorDescription: String? {
         switch self {
         case .clipboardUnavailable:
             return "无法写入剪贴板。"
+        case .clipboardChanged:
+            return "输出前剪贴板已变化，未自动粘贴；终稿仍保留在 History。"
         case .keyEventFailed:
             return "生成 Cmd+V 事件失败。"
         }
@@ -89,8 +92,31 @@ enum InjectionOutcome: Sendable, Equatable {
 }
 
 @MainActor
+protocol PinnedPasteTarget: AnyObject {
+    var value: String? { get }
+    var processIdentifier: pid_t { get }
+    var placeholderLabel: String? { get }
+    func requestPasteFocus(selection: NSRange)
+    func hasPasteFocus(selection: NSRange) -> Bool
+}
+
+enum PinnedPasteReceipt {
+    static func matches(observed: String?, span: LiveTextSpan, inserted: String, placeholder: String?) -> Bool {
+        if observed == span.replacing(with: inserted, current: span.original) { return true }
+        // Chromium exposes the empty ProseMirror placeholder as AXValue plus
+        // its paragraph separator. A real paste removes the placeholder.
+        guard let placeholder, !placeholder.isEmpty,
+              span.selection == NSRange(location: 0, length: 0),
+              span.original == placeholder + "\n" else { return false }
+        return observed == inserted + "\n"
+    }
+}
+
+@MainActor
 protocol TextInjecting: AnyObject {
     func copyToClipboard(text: String) throws -> InjectionOutcome
+    func injectPinned(text: String, span: LiveTextSpan, target: any PinnedPasteTarget,
+                      configuration: InjectionConfig) throws -> InjectionOutcome
     func inject(
         text: String,
         preserveClipboard: Bool,
@@ -101,15 +127,62 @@ protocol TextInjecting: AnyObject {
 
 extension TextInjecting {
     func copyToClipboard(text: String) throws -> InjectionOutcome { throw InjectionError.clipboardUnavailable }
+    func injectPinned(text: String, span: LiveTextSpan, target: any PinnedPasteTarget,
+                      configuration: InjectionConfig) throws -> InjectionOutcome { throw InjectionError.keyEventFailed }
 }
 
 @MainActor
 final class TextInjector: TextInjecting {
+    private let pasteboard: NSPasteboard
+    private let sendPaste: @MainActor (pid_t?) throws -> Void
+    private let settleAfterPaste: @MainActor () -> Void
+
+    init(pasteboard: NSPasteboard = .general,
+         sendPaste: @escaping @MainActor (pid_t?) throws -> Void = TextInjector.postPaste,
+         settleAfterPaste: @escaping @MainActor () -> Void = { usleep(150_000) }) {
+        self.pasteboard = pasteboard; self.sendPaste = sendPaste; self.settleAfterPaste = settleAfterPaste
+    }
+
     func copyToClipboard(text: String) throws -> InjectionOutcome {
-        let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         guard pasteboard.setString(text, forType: .string) else { throw InjectionError.clipboardUnavailable }
         return .copiedToClipboard(reason: .userSelected)
+    }
+
+    func injectPinned(text: String, span: LiveTextSpan, target: any PinnedPasteTarget,
+                      configuration: InjectionConfig) throws -> InjectionOutcome {
+        target.requestPasteFocus(selection: span.selection)
+        guard waitForPasteTarget(launchAppContext: nil, pinned: target, selection: span.selection),
+              target.value == span.original else {
+            _ = try copyToClipboard(text: text)
+            return .copiedToClipboard(reason: .originalTargetUnavailable)
+        }
+        let snapshot = configuration.preserveClipboard ? PasteboardSnapshot.capture(from: pasteboard) : nil
+        let placeholder = target.placeholderLabel
+        _ = try copyToClipboard(text: text)
+        let ownedChangeCount = pasteboard.changeCount
+        // The existing pre-paste settle also applies to the pinned path.
+        usleep(60_000)
+        let targetReady = target.hasPasteFocus(selection: span.selection) && target.value == span.original
+        guard pasteboard.changeCount == ownedChangeCount else { throw InjectionError.clipboardChanged }
+        guard targetReady else {
+            return .copiedToClipboard(reason: .originalTargetUnavailable)
+        }
+        // Keep post -> receipt synchronous on MainActor. Cancellation cannot
+        // interleave a cancelled journal between the event and its receipt.
+        try sendPaste(target.processIdentifier)
+        settleAfterPaste()
+        let matched = PinnedPasteReceipt.matches(observed: target.value, span: span, inserted: text,
+                                                placeholder: placeholder)
+        if let snapshot {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: configuration.restoreDelayMilliseconds * 1_000_000)
+                guard self.pasteboard.changeCount == ownedChangeCount else { return }
+                snapshot.restore(to: self.pasteboard)
+            }
+        }
+        guard matched else { throw EditorDeliveryError.outputUnknown }
+        return .pasted
     }
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "me.longbiaochen.chattype",
@@ -195,7 +268,6 @@ final class TextInjector: TextInjecting {
         restoreDelayMilliseconds: UInt64,
         launchAppContext: LaunchAppContext?
     ) throws -> InjectionOutcome {
-        let pasteboard = NSPasteboard.general
         let snapshot = preserveClipboard ? PasteboardSnapshot.capture(from: pasteboard) : nil
 
         restoreLaunchAppIfNeeded(launchAppContext)
@@ -212,6 +284,20 @@ final class TextInjector: TextInjecting {
             return .copiedToClipboard(reason: .noEditableTarget)
         }
 
+        try sendPaste(nil)
+        let ownedChangeCount = pasteboard.changeCount
+        if let snapshot {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: restoreDelayMilliseconds * 1_000_000)
+                guard self.pasteboard.changeCount == ownedChangeCount else { return }
+                snapshot.restore(to: self.pasteboard)
+            }
+        }
+
+        return .pasted
+    }
+
+    private static func postPaste(to processIdentifier: pid_t?) throws {
         guard
             let source = CGEventSource(stateID: .hidSystemState),
             let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
@@ -222,30 +308,29 @@ final class TextInjector: TextInjecting {
 
         keyDown.flags = .maskCommand
         keyUp.flags = .maskCommand
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
-
-        if let snapshot {
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: restoreDelayMilliseconds * 1_000_000)
-                snapshot.restore(to: pasteboard)
-            }
+        if let processIdentifier {
+            keyDown.postToPid(processIdentifier)
+            keyUp.postToPid(processIdentifier)
+        } else {
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
         }
-
-        return .pasted
     }
 
-    private func waitForPasteTarget(launchAppContext: LaunchAppContext?) -> Bool {
+    private func waitForPasteTarget(launchAppContext: LaunchAppContext?, pinned: (any PinnedPasteTarget)? = nil,
+                                    selection: NSRange = NSRange(location: 0, length: 0)) -> Bool {
+        func ready() -> Bool { pinned?.hasPasteFocus(selection: selection) ?? isPasteTargetReady(launchAppContext: launchAppContext) }
         let deadline = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
         while DispatchTime.now().uptimeNanoseconds < deadline {
-            if isPasteTargetReady(launchAppContext: launchAppContext) {
+            if ready() {
                 return true
             }
-            restoreLaunchAppIfNeeded(launchAppContext)
+            if let pinned { pinned.requestPasteFocus(selection: selection) }
+            else { restoreLaunchAppIfNeeded(launchAppContext) }
             usleep(25_000)
         }
 
-        return isPasteTargetReady(launchAppContext: launchAppContext)
+        return ready()
     }
 
     private func isPasteTargetReady(launchAppContext: LaunchAppContext?) -> Bool {
@@ -285,7 +370,6 @@ final class TextInjector: TextInjecting {
     }
 
     private func copyToPasteboard(_ text: String) {
-        let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
     }

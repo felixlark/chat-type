@@ -15,6 +15,19 @@ func minimalOverlayPresetUsesNineBarVoiceGlyph() {
     #expect(preset.timerFontSize == 10)
 }
 
+@Test(arguments: [InjectionOutcome.pasted, .copiedToClipboard(reason: .userSelected)]) @MainActor
+func outputBadgeAndSymbolRemainInsideCompactStatusHUD(outcome: InjectionOutcome) {
+    let overlay = OverlayController(presentsPanel: false)
+    overlay.showResult(text: "终稿", outcome: outcome)
+    let snapshot = overlay.debugSnapshot
+    #expect(snapshot.panelHeight == 44)
+    #expect(snapshot.badgeFrame.width == 20 && snapshot.badgeFrame.height == 20)
+    #expect(snapshot.iconFrame.width == 14 && snapshot.iconFrame.height == 14)
+    #expect(snapshot.badgeFrame.contains(snapshot.iconFrame))
+    if case .copiedToClipboard = outcome { #expect(snapshot.displayedTitle == "已复制，未粘贴") }
+    overlay.hide()
+}
+
 @Test
 func overlayStatesStillDifferentiateLeadingVisualFamilies() {
     #expect(OverlayVisualState.recording(levels: Array(repeating: 0.2, count: 9), elapsedText: "00:03").leadingVisual == .waveform)

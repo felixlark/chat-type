@@ -1211,7 +1211,7 @@ func missingPolishCredentialPreventsBothAutomaticApplyEntryPoints(provider: Text
 private final class FakeLiveTextInput: LiveTextInputControlling {
     func begin(context: LaunchAppContext?, enabled: Bool) {}
     func update(_ text: String) {}
-    func finish(_ text: String, injector: any TextInjecting) throws -> InjectionOutcome? { nil }
+    func finish(_ text: String, injector: any TextInjecting, configuration: InjectionConfig) throws -> InjectionOutcome? { nil }
     func endRecording() {}
     func suspend() {}
     func reset() {}
@@ -1232,7 +1232,7 @@ private final class LiveInputProbe: LiveTextInputControlling {
     var finalized = false
     func begin(context: LaunchAppContext?, enabled: Bool) { events.append("begin") }
     func update(_ text: String) { events.append("update") }
-    func finish(_ text: String, injector: any TextInjecting) throws -> InjectionOutcome? {
+    func finish(_ text: String, injector: any TextInjecting, configuration: InjectionConfig) throws -> InjectionOutcome? {
         events.append("finish"); finalized = true; return .pasted
     }
     func endRecording() { events.append("endRecording") }
@@ -1255,4 +1255,46 @@ func pinnedFinalizationWaitsForSealAndSurvivesPostOutputAuditFailure(outcome: St
     #expect(input.events.contains("finish") == (outcome == "pasted"))
     #expect(input.events.contains("suspend") == (outcome == "readyToInject"))
     #expect(injector.injectCallCount == 0)
+}
+
+@MainActor
+private final class ReadableTailProbe: LiveTextInputControlling {
+    let gate: CoordinatorGate
+    var entered = false
+    var finishCalls = 0
+    init(gate: CoordinatorGate) { self.gate = gate }
+    func begin(context: LaunchAppContext?, enabled: Bool) {}
+    func update(_ text: String) {}
+    func completePreview(_ text: String) async throws { entered = true; await gate.wait() }
+    func finish(_ text: String, injector: any TextInjecting, configuration: InjectionConfig) throws -> InjectionOutcome? {
+        finishCalls += 1; return .pasted
+    }
+    func endRecording() {}
+    func suspend() {}
+    func reset() {}
+}
+
+@Test @MainActor
+func cancellingReadableTailKeepsSavedAudioAndNeverReachesFinalPaste() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = RecoveryStore(directoryURL: root)
+    let gate = CoordinatorGate(), input = ReadableTailProbe(gate: gate)
+    let recorder = FakeCoordinatorRecorder(), injector = FakeCoordinatorInjector()
+    var config = legacyAccountConfig(); config.transcription.livePreviewEnabled = true
+    let coordinator = AppCoordinator(liveTextInput: input, microphoneAccessRequester: {}, config: config,
+        notifier: FakeCoordinatorNotifier(), injector: injector, overlay: FakeCoordinatorOverlay(),
+        authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
+        historyRecorder: FakeCoordinatorHistoryRecorder(), recoveryRecorder: store,
+        soundFeedback: FakeSoundFeedback(), recorderFactory: { _ in recorder },
+        statusMenuFactory: { _,_,_ in FakeCoordinatorStatusMenu() }, pipelineFactory: { _,_,_ in FakeCoordinatorPipeline() })
+    coordinator.handleHotkeyPress(); await waitForCoordinatorState(coordinator, toBecome: .recording)
+    coordinator.handleHotkeyPress(); await waitForCondition { input.entered }
+    #expect(input.entered && input.finishCalls == 0)
+    #expect(try store.loadRecent().first?.outcome == "readyToInject")
+    let processing = coordinator.processingTask
+    coordinator.cancelCurrentSession(); await gate.resume(); await processing?.value
+    #expect(coordinator.state == .idle && input.finishCalls == 0 && injector.injectCallCount == 0)
+    #expect(try store.loadRecent().first?.outcome == "cancelled")
+    #expect(FileManager.default.fileExists(atPath: recorder.nextAudio.fileURL.path))
 }
