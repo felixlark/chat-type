@@ -6,11 +6,20 @@ DIST_ROOT="${CHATTYPE_DIST_PATH:-$ROOT/dist}"
 APP="$DIST_ROOT/ChatType.app"
 PLIST="$APP/Contents/Info.plist"
 
-case "${1:-}" in
-  --existing) ;;
-  "") "$ROOT/scripts/package_app.sh" >/dev/null ;;
-  *) echo "Usage: $0 [--existing]" >&2; exit 64 ;;
-esac
+EXISTING=0
+IDENTITY_PROFILE="${CHATTYPE_IDENTITY_PROFILE:-}"
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --existing) EXISTING=1; shift ;;
+    --identity-profile) [[ "$#" -ge 2 ]] || exit 64; IDENTITY_PROFILE="$2"; shift 2 ;;
+    *) echo "Usage: $0 [--existing] [--identity-profile /absolute/profile.json]" >&2; exit 64 ;;
+  esac
+done
+IDENTITY_ARGS=()
+if [[ -n "$IDENTITY_PROFILE" ]]; then IDENTITY_ARGS=(--profile "$IDENTITY_PROFILE"); fi
+if [[ "$EXISTING" == 0 ]]; then
+  CHATTYPE_IDENTITY_PROFILE="$IDENTITY_PROFILE" "$ROOT/scripts/package_app.sh" >/dev/null
+fi
 if [[ ! -f "$PLIST" ]]; then
   echo "Missing packaged app at $APP" >&2
   exit 1
@@ -27,6 +36,7 @@ for field in CFBundleShortVersionString CFBundleVersion; do
   fi
 done
 /usr/bin/codesign --verify --deep --strict "$APP"
+python3 "$ROOT/scripts/build_identity.py" check "${IDENTITY_ARGS[@]}" --plist "$PLIST"
 if [[ -e "$APP/Contents/Resources/Omni" ]]; then
   echo "Research-only Omni model metadata must stay outside the production app bundle." >&2
   exit 1

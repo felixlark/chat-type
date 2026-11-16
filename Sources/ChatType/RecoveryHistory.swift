@@ -189,7 +189,7 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
     private let snapshots: RecoverySnapshots
     private var writeStats = RecoveryWriteStats()
     private var unreadableJournals = 0
-    private let logger = Logger(subsystem: "me.longbiaochen.chattype", category: "Recovery")
+    private let logger = Logger(subsystem: AppIdentity.loggingSubsystem, category: "Recovery")
 
     init(fileManager: FileManager = .default, directoryURL: URL? = nil, retainedLimit: Int = 10,
          snapshotSynchronizer: ((URL) throws -> Void)? = nil) {

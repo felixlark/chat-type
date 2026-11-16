@@ -18,11 +18,28 @@ ICON_FILE="$RESOURCES_DIR/AppIcon.icns"
 ENTITLEMENTS_FILE="$DIST_ROOT/ChatType.entitlements"
 SIGNING_IDENTITY="${CHATTYPE_CODESIGN_IDENTITY:-}"
 ALLOW_ADHOC_SIGNING="${CHATTYPE_ALLOW_ADHOC_SIGNING:-0}"
-
 cleanup() {
   rm -rf "$PACKAGE_WORK_DIR"
 }
 trap cleanup EXIT
+IDENTITY_PROFILE="${CHATTYPE_IDENTITY_PROFILE:-}"
+case "$#" in
+  0) ;;
+  2) [[ "$1" == "--identity-profile" ]] || { echo "Usage: $0 [--identity-profile /absolute/profile.json]" >&2; exit 64; }; IDENTITY_PROFILE="$2" ;;
+  *) echo "Usage: $0 [--identity-profile /absolute/profile.json]" >&2; exit 64 ;;
+esac
+IDENTITY_JSON="$PACKAGE_WORK_DIR/identity.json"
+IDENTITY_ARGS=()
+if [[ -n "$IDENTITY_PROFILE" ]]; then IDENTITY_ARGS=(--profile "$IDENTITY_PROFILE"); fi
+# Validate complete explicit input before building or replacing any output.
+python3 "$ROOT/scripts/build_identity.py" resolve "${IDENTITY_ARGS[@]}" --output "$IDENTITY_JSON"
+if [[ -n "$IDENTITY_PROFILE" ]]; then
+  PROFILE_SIGNING_IDENTITY="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["signingIdentity"])' "$IDENTITY_JSON")"
+  if [[ -n "$SIGNING_IDENTITY" && "$SIGNING_IDENTITY" != "$PROFILE_SIGNING_IDENTITY" ]]; then
+    echo "Signing override conflicts with the explicit identity profile." >&2; exit 1
+  fi
+  SIGNING_IDENTITY="$PROFILE_SIGNING_IDENTITY"
+fi
 
 verify_dist_bundle() {
   local attempt
@@ -106,8 +123,6 @@ swift "$ROOT/scripts/render_app_icon.swift" "$ICONSET_DIR"
   printf '%s\n' '  <string>en</string>'
   printf '%s\n' '  <key>CFBundleExecutable</key>'
   printf '%s\n' '  <string>ChatType</string>'
-  printf '%s\n' '  <key>CFBundleIdentifier</key>'
-  printf '%s\n' '  <string>me.longbiaochen.chattype</string>'
   printf '%s\n' '  <key>CFBundleIconFile</key>'
   printf '%s\n' '  <string>AppIcon</string>'
   printf '%s\n' '  <key>CFBundleInfoDictionaryVersion</key>'
@@ -135,6 +150,7 @@ swift "$ROOT/scripts/render_app_icon.swift" "$ICONSET_DIR"
   printf '%s\n' '</dict>'
   printf '%s\n' '</plist>'
 } >"$PLIST"
+python3 "$ROOT/scripts/build_identity.py" inject --identity "$IDENTITY_JSON" --plist "$PLIST"
 
 {
   printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'

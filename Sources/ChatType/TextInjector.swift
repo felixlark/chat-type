@@ -202,7 +202,7 @@ final class TextInjector: TextInjecting {
         return .pasted
     }
     private let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "me.longbiaochen.chattype",
+        subsystem: AppIdentity.loggingSubsystem,
         category: "TextInjector"
     )
 

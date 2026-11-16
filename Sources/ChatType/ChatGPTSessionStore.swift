@@ -105,7 +105,7 @@ struct KeychainChatGPTSessionStore: ChatGPTSessionPersisting {
     let decoder: JSONDecoder
 
     init(
-        service: String = "me.longbiaochen.ChatType.ChatGPTSession",
+        service: String = AppIdentity.current.chatGPTSessionService,
         account: String = "default",
         encoder: JSONEncoder = JSONEncoder(),
         decoder: JSONDecoder = JSONDecoder()
@@ -116,13 +116,16 @@ struct KeychainChatGPTSessionStore: ChatGPTSessionPersisting {
         self.decoder = decoder
     }
 
-    func load() throws -> ChatGPTSession? {
+    var credentialReadQuery: [String: Any] {
         var query = baseQuery()
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
+        return query
+    }
 
+    func load() throws -> ChatGPTSession? {
         var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        let status = SecItemCopyMatching(credentialReadQuery as CFDictionary, &item)
         switch status {
         case errSecSuccess:
             guard let data = item as? Data else {

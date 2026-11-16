@@ -5,7 +5,7 @@ import OSLog
 final class AcceptanceTranscriptionDeadline: @unchecked Sendable {
     private let lock = NSLock()
     private var armed = true
-    private let logger = Logger(subsystem: "me.longbiaochen.chattype", category: "AcceptanceTransport")
+    private let logger = Logger(subsystem: AppIdentity.loggingSubsystem, category: "AcceptanceTransport")
 
     static func requested(arguments: [String]) -> Bool {
         arguments.contains("--acceptance-transcription-timeout-once")

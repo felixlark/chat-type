@@ -57,7 +57,8 @@ else
 fi
 
 section "keychain-metadata"
-if /usr/bin/security find-generic-password -s me.longbiaochen.ChatType.ChatGPTSession >/dev/null 2>&1; then
+SESSION_SERVICE="$(/usr/bin/plutil -extract ChatTypeChatGPTSessionService raw -o - "$PLIST" 2>/dev/null || true)"
+if [[ -n "$SESSION_SERVICE" ]] && /usr/bin/security find-generic-password -s "$SESSION_SERVICE" -a default >/dev/null 2>&1; then
   echo "chatgpt_session_entry=present"
 else
   echo "chatgpt_session_entry=missing-or-inaccessible"

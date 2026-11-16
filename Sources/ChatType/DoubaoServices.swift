@@ -65,15 +65,18 @@ protocol DoubaoKeyStoring: Sendable {
 struct DoubaoKeychain: DoubaoKeyStoring {
     private var query: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "me.longbiaochen.chattype.doubao",
+         kSecAttrService as String: AppIdentity.current.doubaoService,
          kSecAttrAccount as String: "asr-configuration"]
     }
-    func load() throws -> String? {
+    var credentialReadQuery: [String: Any] {
         var query = query
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
+        return query
+    }
+    func load() throws -> String? {
         var value: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &value)
+        let status = SecItemCopyMatching(credentialReadQuery as CFDictionary, &value)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = value as? Data else { throw DoubaoError.credentials }
         return String(data: data, encoding: .utf8)
