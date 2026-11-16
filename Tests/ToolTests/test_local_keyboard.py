@@ -59,27 +59,31 @@ class LocalKeyboardTests(unittest.TestCase):
             self.assertFalse(keyboard.preserve(home))
             self.assertEqual(list(home.iterdir()), [])
 
-    def test_opted_in_fn_split_is_exclusive_and_idempotent(self):
+    def test_opted_in_fn_tap_preserves_native_fn_and_is_idempotent(self):
         other_rule = {"description": "keep", "manipulators": []}
-        profile = {"complex_modifications": {"rules": [other_rule]}}
-        binding = {"fnSplit": {"tapAction": "chatgpt-app", "holdMilliseconds": 300}}
-        keyboard.apply_fn_split(profile, binding)
+        profile = {"complex_modifications": {"rules": [other_rule, {"description": keyboard.RETIRED_FN_RULE}]}}
+        binding = {"fnTap": {"timeoutMilliseconds": 300}}
+        keyboard.apply_fn_tap(profile, binding)
         first = json.dumps(profile)
-        keyboard.apply_fn_split(profile, binding)
+        keyboard.apply_fn_tap(profile, binding)
         self.assertEqual(json.dumps(profile), first)
         rules = profile["complex_modifications"]["rules"]
         self.assertEqual(rules[1], other_rule)
         rule = rules[0]["manipulators"][0]
-        self.assertEqual(rule["to"], [{"key_code": "fn", "lazy": True}])
-        self.assertEqual(rule["to_if_held_down"], [{"key_code": "fn"}])
-        self.assertEqual(rule["to_if_alone"], [{"shell_command": "/usr/bin/open -a /Applications/ChatGPT.app"}])
+        self.assertEqual(rule["to"], [{"key_code": "fn"}])
+        self.assertNotIn("to_if_held_down", rule)
+        self.assertEqual(rule["to_if_alone"], [{"key_code": "f18"}])
         self.assertEqual(set(rule["parameters"].values()), {300})
-        keyboard.apply_fn_split(profile, {})
+        keyboard.apply_fn_tap(profile, {})
         self.assertEqual(json.dumps(profile), first)
+        binding["fnTap"]["timeoutMilliseconds"] = 200
+        keyboard.apply_fn_tap(profile, binding)
+        self.assertEqual(len(profile["complex_modifications"]["rules"]), 2)
+        self.assertEqual(profile["complex_modifications"]["rules"][0]["manipulators"][0]["parameters"], {"basic.to_if_alone_timeout_milliseconds": 200})
 
     def test_invalid_fn_option_does_not_mutate_profile(self):
         profile = {"complex_modifications": {"rules": []}}
-        for split in [{"tapAction": "unknown"}, {"tapAction": "chatgpt-app", "holdMilliseconds": 0}]:
+        for timeout in [0, -1, True, "300"]:
             with self.assertRaises(ValueError):
-                keyboard.apply_fn_split(profile, {"fnSplit": split})
+                keyboard.apply_fn_tap(profile, {"fnTap": {"timeoutMilliseconds": timeout}})
             self.assertEqual(profile, {"complex_modifications": {"rules": []}})

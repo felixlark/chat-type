@@ -7,34 +7,32 @@ from pathlib import Path
 import tempfile
 
 
-FN_SPLIT_RULE = "ChatType local keyboard: Fn tap ChatGPT, hold Doubao"
+FN_TAP_RULE = "ChatType local keyboard: Fn tap activates ChatType"
+RETIRED_FN_RULE = "ChatType local keyboard: Fn tap ChatGPT, hold Doubao"
 
 
-def apply_fn_split(profile, binding):
-    split = binding.get("fnSplit")
-    if split is None:
+def apply_fn_tap(profile, binding):
+    tap = binding.get("fnTap")
+    if tap is None:
         return
-    if split.get("tapAction") != "chatgpt-app":
-        raise ValueError("Unsupported Fn tap action")
-    hold_ms = split["holdMilliseconds"]
-    if not isinstance(hold_ms, int) or isinstance(hold_ms, bool) or hold_ms <= 0:
-        raise ValueError("Fn hold duration must be a positive number of milliseconds")
-    # Karabiner's documented lazy-modifier pattern preserves Fn chords, emits
-    # no Fn for a tap, and sends a held Fn to the existing input method.
-    # https://karabiner-elements.pqrs.org/docs/json/typical-complex-modifications-examples/#post-escape-if-left_control-is-pressed-alone
-    rule = {"description": FN_SPLIT_RULE, "manipulators": [{
+    tap_ms = tap["timeoutMilliseconds"]
+    if not isinstance(tap_ms, int) or isinstance(tap_ms, bool) or tap_ms <= 0:
+        raise ValueError("Fn tap timeout must be a positive number of milliseconds")
+    # Pass native Fn down/up through immediately. Only a short solitary tap
+    # adds F18, the enrolled physical F5/ChatType activation event. Doubao owns
+    # held-Fn behavior; do not delay Fn or add to_if_held_down.
+    # https://karabiner-elements.pqrs.org/docs/json/complex-modifications-manipulator-definition/to-if-alone/
+    rule = {"description": FN_TAP_RULE, "manipulators": [{
         "type": "basic",
         "from": {"key_code": "fn", "modifiers": {"optional": ["caps_lock"]}},
-        "to": [{"key_code": "fn", "lazy": True}],
-        "to_if_alone": [{"shell_command": "/usr/bin/open -a /Applications/ChatGPT.app"}],
-        "to_if_held_down": [{"key_code": "fn"}],
+        "to": [{"key_code": "fn"}],
+        "to_if_alone": [{"key_code": "f18"}],
         "parameters": {
-            "basic.to_if_alone_timeout_milliseconds": hold_ms,
-            "basic.to_if_held_down_threshold_milliseconds": hold_ms,
+            "basic.to_if_alone_timeout_milliseconds": tap_ms,
         },
     }]}
     rules = profile.setdefault("complex_modifications", {}).setdefault("rules", [])
-    rules[:] = [existing for existing in rules if existing.get("description") != FN_SPLIT_RULE]
+    rules[:] = [existing for existing in rules if existing.get("description") not in (FN_TAP_RULE, RETIRED_FN_RULE)]
     rules.insert(0, rule)
 
 
@@ -67,7 +65,7 @@ def preserve(home):
     karabiner_path = home / ".config/karabiner/karabiner.json"
     karabiner = json.loads(karabiner_path.read_text())
     profile = next(p for p in karabiner["profiles"] if p["name"] == binding["karabinerProfile"])
-    apply_fn_split(profile, binding)
+    apply_fn_tap(profile, binding)
     mappings = profile.setdefault("fn_function_keys", [])
     mappings[:] = [m for m in mappings if m.get("from", {}).get("key_code") != "f5"]
     mappings.append({"from": {"key_code": "f5"}, "to": [{"key_code": "f18"}]})

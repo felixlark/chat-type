@@ -8,7 +8,7 @@ Press physical F5 to start and again to stop. ESC or the inline close cancels th
 
 Settings → 激活快捷键 records a physical key with optional Command, Option, Control and Shift modifiers. Escape, focus loss and closing Settings cancel capture and restore activation. Save Settings registers the candidate immediately; conflicts or persistence failures keep the previous binding. New recordings and reprocessing apply workflow edits without committing a pending shortcut. Explicit custom bindings survive installation.
 
-The enrolled Mac may independently opt into Fn tap/hold routing: a tap opens the installed official ChatGPT app; a hold passes Fn to the native Doubao input method. The duration is an explicit local keyboard preference. This does not select ChatType’s recognition or polish provider.
+The enrolled Mac may independently add a short Fn tap as another ChatType activation event (F18). Native Fn down/up events pass through immediately; the native Doubao input method keeps its own long-press handling. The tap timeout is an explicit local keyboard preference. This does not select ChatType’s recognition or polish provider.
 
 New configurations select Doubao IME for recognition and text organization. Saved selections are preserved. Recognition also supports ChatType-managed ChatGPT login and explicitly configured OpenAI-compatible recovery. Text polish independently supports the approved Doubao, ChatGPT, GLM and Qwen choices. Failure never changes providers automatically.
 
