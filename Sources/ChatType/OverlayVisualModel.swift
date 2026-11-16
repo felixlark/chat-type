@@ -67,7 +67,7 @@ struct OverlayStylePreset: Sendable, Equatable {
         recordingPillWidth: 224,
         pillHeight: 44,
         errorPillWidth: 286,
-        topInset: 24,
+        topInset: 16,
         cornerRadius: 15,
         contentPaddingH: 10,
         contentPaddingV: 8,
@@ -94,7 +94,7 @@ struct OverlayStylePreset: Sendable, Equatable {
         switch state {
         case .recording:
             return recordingPillWidth
-        case .error, .retryableError:
+        case .error, .retryableError, .unconfirmed:
             return errorPillWidth
         default:
             return pillWidth
@@ -124,8 +124,10 @@ enum OverlaySuccessKind: Sendable, Equatable {
 enum OverlayVisualState: Sendable, Equatable {
     case recording(levels: [CGFloat], elapsedText: String)
     case processing
+    case confirming
     case success(OverlaySuccessKind)
     case error(String)
+    case unconfirmed(String)
     case retryableError(String)
 
     var label: String {
@@ -134,8 +136,12 @@ enum OverlayVisualState: Sendable, Equatable {
             return "Listening"
         case .processing:
             return "Processing"
+        case .confirming:
+            return "确认中"
         case .success(let kind):
             return kind.label
+        case .unconfirmed:
+            return "请核对输入框"
         case .error, .retryableError:
             return "Error"
         }
@@ -145,10 +151,12 @@ enum OverlayVisualState: Sendable, Equatable {
         switch self {
         case .recording:
             return .waveform
-        case .processing:
+        case .processing, .confirming:
             return .waveform
         case .success(let kind):
             return .icon(symbolName: kind == .pasted ? "checkmark.circle.fill" : "doc.on.clipboard.fill")
+        case .unconfirmed:
+            return .icon(symbolName: "questionmark.circle")
         case .error, .retryableError:
             return .icon(symbolName: "exclamationmark.triangle.fill")
         }
@@ -156,16 +164,16 @@ enum OverlayVisualState: Sendable, Equatable {
 
     var allowsSupplementaryText: Bool {
         switch self {
-        case .error, .retryableError:
+        case .error, .retryableError, .unconfirmed:
             return true
-        case .recording, .processing, .success:
+        case .recording, .processing, .confirming, .success:
             return false
         }
     }
 
     var showsCancelControl: Bool {
         switch self {
-        case .recording, .processing, .error, .retryableError:
+        case .recording, .processing, .confirming, .error, .retryableError, .unconfirmed:
             return true
         case .success:
             return false
@@ -183,7 +191,7 @@ enum OverlayVisualState: Sendable, Equatable {
         switch self {
         case .recording(_, let elapsedText):
             return elapsedText
-        case .processing, .success, .error, .retryableError:
+        case .processing, .confirming, .success, .error, .retryableError, .unconfirmed:
             return nil
         }
     }
@@ -191,9 +199,9 @@ enum OverlayVisualState: Sendable, Equatable {
     var supplementaryText: String? {
         let message: String
         switch self {
-        case .error(let value), .retryableError(let value):
+        case .error(let value), .retryableError(let value), .unconfirmed(let value):
             message = value
-        case .recording, .processing, .success:
+        case .recording, .processing, .confirming, .success:
             return nil
         }
         return Self.collapseErrorMessage(message)

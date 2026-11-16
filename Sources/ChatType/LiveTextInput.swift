@@ -22,7 +22,6 @@ enum LiveTextWriteResult { case rejected, applied(observedValue: String?) }
 protocol LiveTextTarget: AnyObject {
     var value: String? { get }
     var selection: NSRange? { get }
-    var anchor: InputCompositionAnchor? { get }
     var nativePasteTarget: (any PinnedPasteTarget)? { get }
     func write(_ value: String, caret: Int) -> LiveTextWriteResult
 }
@@ -32,16 +31,12 @@ extension LiveTextTarget { var nativePasteTarget: (any PinnedPasteTarget)? { nil
 protocol LiveTextInputControlling: AnyObject {
     func begin(context: LaunchAppContext?, enabled: Bool)
     func prepare() async
-    func update(_ text: String)
-    func completePreview(_ text: String) async throws
     func finish(_ text: String, injector: any TextInjecting, configuration: InjectionConfig) async throws -> InjectionOutcome?
-    func endRecording()
     func suspend()
     func reset()
 }
 extension LiveTextInputControlling {
     func prepare() async {}
-    func completePreview(_ text: String) async throws {}
     func finish(_ text: String, injector: any TextInjecting) async throws -> InjectionOutcome? {
         try await finish(text, injector: injector, configuration: InjectionConfig())
     }
@@ -51,26 +46,19 @@ extension LiveTextInputControlling {
 final class LiveTextInput: LiveTextInputControlling {
     typealias EditorFactory = @MainActor (LaunchAppContext?) -> (any PinnedEditorSession)?
     private let capture: @MainActor (LaunchAppContext?) -> (any LiveTextTarget)?
-    private let composition: any InputCompositionPresenting
     private let editorFactory: EditorFactory
-    private let previewReadDelay: @Sendable () async throws -> Void
     private var target: (any LiveTextTarget)?
     private var span: LiveTextSpan?
     private var editor: (any PinnedEditorSession)?
     private var editorReady = false
-    private var editorWindow: InputWindowAnchor?
-    private var text = ""
     private var generation = 0
     private(set) var hasSession = false
 
     init(capture: @escaping @MainActor (LaunchAppContext?) -> (any LiveTextTarget)? = AXLiveTextTarget.capture,
-         composition: (any InputCompositionPresenting)? = nil,
-         previewReadDelay: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .milliseconds(1200)) },
          editorFactory: @escaping EditorFactory = { context in
              context?.bundleIdentifier == "com.sublimetext.4" ? SublimeEditorSession() : nil
          }) {
-        self.capture = capture; self.composition = composition ?? InputCompositionController(); self.editorFactory = editorFactory
-        self.previewReadDelay = previewReadDelay
+        self.capture = capture; self.editorFactory = editorFactory
     }
 
     func begin(context: LaunchAppContext?, enabled: Bool) {
@@ -78,7 +66,7 @@ final class LiveTextInput: LiveTextInputControlling {
         guard enabled else { return }
         hasSession = true
         editor = editorFactory(context)
-        if editor != nil { editorWindow = InputWindowAnchor.capture(context); return }
+        if editor != nil { return }
         target = capture(context)
         if let value = target?.value, let selection = target?.selection { span = LiveTextSpan(value: value, selection: selection) }
     }
@@ -90,27 +78,9 @@ final class LiveTextInput: LiveTextInputControlling {
         if generation == current { editorReady = ready }
     }
 
-    func update(_ text: String) {
-        guard hasSession, !text.isEmpty else { return }
-        self.text = text
-        let current = generation
-        composition.show(text) { [weak self] in
-            guard let self, self.generation == current else { return nil }
-            if let editor = self.editor {
-                guard self.editorReady, let window = self.editorWindow,
-                      let response = try? await editor.geometry(), response.visible == true,
-                      self.generation == current else { return nil }
-                return window.compositionAnchor(response)
-            }
-            guard self.target?.value == self.span?.original else { return nil }
-            return self.target?.anchor
-        }
-    }
-
     func finish(_ text: String, injector: any TextInjecting, configuration: InjectionConfig) async throws -> InjectionOutcome? {
         guard hasSession else { return nil }
         let current = generation
-        composition.hide()
         if let editor {
             if editorReady {
                 let applied = try await editor.commit(text)
@@ -140,24 +110,11 @@ final class LiveTextInput: LiveTextInputControlling {
         return result
     }
 
-    func completePreview(_ text: String) async throws {
-        guard hasSession else { return }
-        let current = generation
-        update(text)
-        let rendered = await composition.waitUntilRendered(text)
-        try Task.checkCancellation()
-        guard generation == current else { throw CancellationError() }
-        if rendered { try await previewReadDelay() }
-        try Task.checkCancellation()
-        guard generation == current else { throw CancellationError() }
-    }
-
-    func endRecording() { /* The original composition stays provisional through polish. */ }
-    func suspend() { composition.hide(); editor?.cancelPending(); text = "" }
+    func suspend() { editor?.cancelPending() }
     func reset() {
         generation += 1
-        composition.hide(); editor?.close()
-        target = nil; span = nil; editor = nil; editorWindow = nil; editorReady = false; text = ""; hasSession = false
+        editor?.close()
+        target = nil; span = nil; editor = nil; editorReady = false; hasSession = false
     }
 }
 
@@ -176,36 +133,6 @@ final class InputWindowAnchor {
               (axAttribute(window, kAXMinimizedAttribute) as? Bool) != true,
               let focused = axElement(AXUIElementCreateApplication(pid), kAXFocusedWindowAttribute) else { return false }
         return CFEqual(focused, window)
-    }
-    func compositionAnchor(_ r: EditorBridgeResponse) -> InputCompositionAnchor? {
-        guard visible, let frame = axRect(window), let x = r.caretX, let y = r.caretY,
-              let vx = r.viewportX, let vy = r.viewportY, let width = r.width, let height = r.height else { return nil }
-        let scale = r.uiScale.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 1
-        // Sublime window coordinates exclude the native title bar. AppKit
-        // supplies its current system metric; full-screen windows have none.
-        let content = NSWindow.contentRect(forFrameRect: frame, styleMask: [.titled])
-        let titleBar = (axAttribute(window, "AXFullScreen") as? Bool) == true ? 0 : frame.height - content.height
-        let geometry = EditorCompositionGeometry(window: frame, scale: scale, titleBarHeight: titleBar)
-        let caret = appKitRect(geometry.rect(x: x, y: y, width: 1 / scale, height: r.lineHeight ?? 20))
-        let input = appKitRect(geometry.rect(x: vx, y: vy, width: width, height: height))
-        return InputCompositionAnchor(caret: caret, input: input,
-            font: NSFont(name: r.fontName ?? "Menlo", size: (r.fontSize ?? 13) * scale) ?? .systemFont(ofSize: (r.fontSize ?? 13) * scale),
-            foreground: color(r.foreground) ?? .labelColor, background: color(r.background) ?? .textBackgroundColor)
-    }
-    private func color(_ hex: String?) -> NSColor? {
-        guard let hex, hex.hasPrefix("#"), hex.count == 7, let value = UInt32(hex.dropFirst(), radix: 16) else { return nil }
-        return NSColor(srgbRed: CGFloat((value >> 16) & 255) / 255, green: CGFloat((value >> 8) & 255) / 255, blue: CGFloat(value & 255) / 255, alpha: 1)
-    }
-}
-
-struct EditorCompositionGeometry {
-    let window: CGRect
-    let scale: CGFloat
-    let titleBarHeight: CGFloat
-
-    func rect(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) -> CGRect {
-        CGRect(x: window.minX + x * scale, y: window.minY + titleBarHeight + y * scale,
-               width: width * scale, height: height * scale)
     }
 }
 
@@ -274,28 +201,6 @@ private final class AXLiveTextTarget: LiveTextTarget, PinnedPasteTarget {
               (axAttribute(element, kAXEnabledAttribute) as? Bool) != false else { return false }
         return CFEqual(focused, element)
     }
-    var anchor: InputCompositionAnchor? {
-        guard window?.visible == true, let input = axRect(element), let selected else { return nil }
-        var range = CFRange(location: selected.location, length: 0)
-        guard let raw = AXValueCreate(.cfRange, &range) else { return nil }
-        var bounds: CFTypeRef?
-        var caret = CGRect(x: input.minX + 6, y: input.minY + 6, width: 1, height: 20)
-        if AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, raw, &bounds) == .success,
-           let bounds, CFGetTypeID(bounds) == AXValueGetTypeID() { _ = AXValueGetValue(bounds as! AXValue, .cgRect, &caret) }
-        var attributed: CFTypeRef?
-        if let styleRange = InputCompositionTextStyle.adjacentRange(in: value ?? "", caret: selected.location) {
-            var range = CFRange(location: styleRange.location, length: styleRange.length)
-            if let styleValue = AXValueCreate(.cfRange, &range) {
-                _ = AXUIElementCopyParameterizedAttributeValue(element, kAXAttributedStringForRangeParameterizedAttribute as CFString, styleValue, &attributed)
-            }
-        }
-        let string = attributed as? NSAttributedString
-        let attributes = (string?.length ?? 0) > 0 ? string!.attributes(at: 0, effectiveRange: nil) : [:]
-        let font = InputCompositionTextStyle.font(attributes, fallbackSize: max(1, caret.height * 0.75))
-        return InputCompositionAnchor(caret: appKitRect(caret), input: appKitRect(input), font: font,
-            foreground: InputCompositionTextStyle.color(attributes, cocoa: .foregroundColor, ax: "AXForegroundColor") ?? .labelColor,
-            background: InputCompositionTextStyle.color(attributes, cocoa: .backgroundColor, ax: "AXBackgroundColor") ?? .textBackgroundColor)
-    }
     func write(_ value: String, caret: Int) -> LiveTextWriteResult {
         var settable = DarwinBoolean(false)
         guard AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success,
@@ -323,34 +228,4 @@ private final class AXLiveTextTarget: LiveTextTarget, PinnedPasteTarget {
     var point = CGPoint.zero; var size = CGSize.zero
     guard AXValueGetValue(p as! AXValue, .cgPoint, &point), AXValueGetValue(s as! AXValue, .cgSize, &size), size.width > 0, size.height > 0 else { return nil }
     return CGRect(origin: point, size: size)
-}
-@MainActor private func appKitRect(_ rect: CGRect) -> CGRect {
-    OverlayPlacementSession.appKitFrame(fromAccessibility: rect, primaryScreenTop: NSScreen.screens.first?.frame.maxY ?? 0)
-}
-
-@MainActor
-enum InputCompositionTextStyle {
-    static func adjacentRange(in value: String, caret: Int) -> NSRange? {
-        let string = value as NSString
-        guard string.length > 0, caret >= 0, caret <= string.length else { return nil }
-        return string.rangeOfComposedCharacterSequence(at: min(caret, string.length - 1))
-    }
-    // Public AXTextAttributedString.h keys; use their verified string values
-    // because this SDK imports the CFString globals as mutable Unmanaged vars.
-    static func font(_ attributes: [NSAttributedString.Key: Any], fallbackSize: CGFloat) -> NSFont {
-        if let font = attributes[.font] as? NSFont { return font }
-        if let info = attributes[NSAttributedString.Key("AXFont")] as? [String: Any],
-           let name = info["AXFontName"] as? String,
-           let size = info["AXFontSize"] as? NSNumber,
-           let font = NSFont(name: name, size: CGFloat(size.doubleValue)) { return font }
-        return .systemFont(ofSize: fallbackSize)
-    }
-    static func color(_ attributes: [NSAttributedString.Key: Any], cocoa: NSAttributedString.Key, ax: String) -> NSColor? {
-        if let color = attributes[cocoa] as? NSColor { return color }
-        if let raw = attributes[NSAttributedString.Key(ax)] {
-            let value = raw as CFTypeRef
-            if CFGetTypeID(value) == CGColor.typeID { return NSColor(cgColor: value as! CGColor) }
-        }
-        return nil
-    }
 }

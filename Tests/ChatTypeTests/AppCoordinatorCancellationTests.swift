@@ -50,6 +50,11 @@ private final class FakeCoordinatorOverlay: OverlayControlling {
     private(set) var recordingElapsedTexts: [String] = []
     private(set) var showProcessingCallCount = 0
     private(set) var retryableErrors: [String] = []
+    private(set) var captionSessions: [(LaunchAppContext?, Bool)] = []
+
+    func beginSession(context: LaunchAppContext?, captionsEnabled: Bool) {
+        captionSessions.append((context, captionsEnabled))
+    }
 
     func showRecording(elapsedText: String) {
         recordingElapsedTexts.append(elapsedText)
@@ -1257,44 +1262,30 @@ func pinnedFinalizationWaitsForSealAndSurvivesPostOutputAuditFailure(outcome: St
     #expect(injector.injectCallCount == 0)
 }
 
-@MainActor
-private final class ReadableTailProbe: LiveTextInputControlling {
-    let gate: CoordinatorGate
-    var entered = false
-    var finishCalls = 0
-    init(gate: CoordinatorGate) { self.gate = gate }
-    func begin(context: LaunchAppContext?, enabled: Bool) {}
-    func update(_ text: String) {}
-    func completePreview(_ text: String) async throws { entered = true; await gate.wait() }
-    func finish(_ text: String, injector: any TextInjecting, configuration: InjectionConfig) throws -> InjectionOutcome? {
-        finishCalls += 1; return .pasted
-    }
-    func endRecording() {}
-    func suspend() {}
-    func reset() {}
-}
-
-@Test @MainActor
-func cancellingReadableTailKeepsSavedAudioAndNeverReachesFinalPaste() async throws {
+@Test(arguments: [false, true]) @MainActor
+func historyReplayStartsItsOwnCaptionSessionAndUsesOneCapturedContext(enabled: Bool) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
-    let store = RecoveryStore(directoryURL: root)
-    let gate = CoordinatorGate(), input = ReadableTailProbe(gate: gate)
-    let recorder = FakeCoordinatorRecorder(), injector = FakeCoordinatorInjector()
-    var config = legacyAccountConfig(); config.transcription.livePreviewEnabled = true
-    let coordinator = AppCoordinator(liveTextInput: input, microphoneAccessRequester: {}, config: config,
-        notifier: FakeCoordinatorNotifier(), injector: injector, overlay: FakeCoordinatorOverlay(),
-        authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
-        historyRecorder: FakeCoordinatorHistoryRecorder(), recoveryRecorder: store,
-        soundFeedback: FakeSoundFeedback(), recorderFactory: { _ in recorder },
-        statusMenuFactory: { _,_,_ in FakeCoordinatorStatusMenu() }, pipelineFactory: { _,_,_ in FakeCoordinatorPipeline() })
-    coordinator.handleHotkeyPress(); await waitForCoordinatorState(coordinator, toBecome: .recording)
-    coordinator.handleHotkeyPress(); await waitForCondition { input.entered }
-    #expect(input.entered && input.finishCalls == 0)
-    #expect(try store.loadRecent().first?.outcome == "readyToInject")
-    let processing = coordinator.processingTask
-    coordinator.cancelCurrentSession(); await gate.resume(); await processing?.value
-    #expect(coordinator.state == .idle && input.finishCalls == 0 && injector.injectCallCount == 0)
-    #expect(try store.loadRecent().first?.outcome == "cancelled")
-    #expect(FileManager.default.fileExists(atPath: recorder.nextAudio.fileURL.path))
+    let store = RecoveryStore(directoryURL: root.appendingPathComponent("Recovery"))
+    let audio = try store.beginRecording(); try Data("retained audio".utf8).write(to: audio)
+    try store.record(.init(timestamp: Date(), sourceAudioURL: audio, durationMs: 1000,
+        asrText: nil, polishText: nil, appName: nil, appBundleIdentifier: nil, outcome: "error",
+        errorMessage: nil, snapshot: AppConfig().transcription, attemptID: UUID()))
+    let record = try #require(store.loadRecent().first)
+    let overlay = FakeCoordinatorOverlay(), injector = FakeCoordinatorInjector()
+    overlay.beginSession(context: nil, captionsEnabled: !enabled)
+    var config = AppConfig(); config.transcription.livePreviewEnabled = enabled
+    let context = LaunchAppContext(bundleIdentifier: "com.example.editor", localizedName: "Editor", processIdentifier: 123)
+    var captures = 0
+    let coordinator = AppCoordinator(liveTextInput: FakeLiveTextInput(), microphoneAccessRequester: {},
+        configStore: ConfigStore(homeDirectoryURL: root), config: config, notifier: FakeCoordinatorNotifier(),
+        injector: injector, overlay: overlay, authManager: FakeChatGPTAuthManager(), latencyRecorder: FakeLatencyRecorder(),
+        historyRecorder: FakeCoordinatorHistoryRecorder(), recoveryRecorder: store, soundFeedback: FakeSoundFeedback(),
+        recorderFactory: { _ in FakeCoordinatorRecorder() }, statusMenuFactory: { _,_,_ in FakeCoordinatorStatusMenu() },
+        pipelineFactory: { _,_,_ in FakeCoordinatorPipeline() }, launchAppContextProvider: { captures += 1; return context })
+    coordinator.reprocessRecoveryRecord(record)
+    await waitForCoordinatorState(coordinator, toBecome: .idle)
+    #expect(overlay.captionSessions.map { $0.1 } == [!enabled, enabled])
+    #expect(overlay.captionSessions.last?.0 == context && captures == 1)
+    #expect(injector.launchContexts == [context])
 }
