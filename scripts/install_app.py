@@ -68,11 +68,10 @@ def installed_pids(target, run=command):
 def stop_installed(target, run=command, sleep=time.sleep):
     for pid in installed_pids(target, run):
         run(["/bin/kill", "-TERM", pid])
-    for _ in range(100):
-        if not installed_pids(target, run):
-            return
+    # Observe actual exit without inventing a product stop deadline or forcing
+    # termination. An interrupted transaction keeps/restores the original.
+    while installed_pids(target, run):
         sleep(0.1)
-    raise RuntimeError("Installed ChatType did not stop; original installation retained")
 
 
 def launch_normal(root, target, run=command):

@@ -157,8 +157,11 @@ class InstallTests(unittest.TestCase):
 
     def test_refused_stop_never_replaces_original(self):
         self.system.refuse_stop = True
-        with self.assertRaisesRegex(RuntimeError, "did not stop"):
-            self.install()
+        def cancel_wait(_):
+            raise InterruptedError("synthetic operator interruption")
+        with self.assertRaisesRegex(InterruptedError, "operator interruption"):
+            MODULE.install(self.root, self.source, self.target, self.private / "backups", self.output,
+                           run=self.system.run, sleep=cancel_wait)
         self.assertEqual(self.marker(), "original")
         self.assertTrue(self.system.running)
         self.assertFalse(any("KILL" in arg for args in self.system.calls for arg in args))
