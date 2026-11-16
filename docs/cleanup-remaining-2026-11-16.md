@@ -1,6 +1,6 @@
 # Remaining cleanup disposition — 2026-11-16
 
-This completes the residual inventory from [the original plan](cleanup-2026-11-16.md). The top-HUD task remains the sole source/build/install/UI writer until its consumable checkpoint. No independent release, foreground input or real cloud probe is started by this cleanup patch.
+This completes the residual inventory from [the original plan](cleanup-2026-11-16.md). Product source/build/install and native acceptance were serialized through the top-HUD task. At the clean ab02fe2 checkpoint, the cleanup task resumed the sole checkout/index writer for final documentation while the original operator completed native GUI acceptance. No duplicate release or additional speech was requested.
 
 | Item | Evidence and disposition | Verification |
 | --- | --- | --- |
@@ -11,3 +11,20 @@ This completes the residual inventory from [the original plan](cleanup-2026-11-1
 | Vocabulary, state and retained evaluation tools | Two Latin-reference filters serve different consumers (cached candidate admission versus full fuzzy rules). Session and attempt identities, original recovery audio, explicit provider choices, streaming/quality/polish CLIs and Omni tooling retain real independent responsibilities. | Keep these implementations and their behavioral tests; do not invent a rewrite or speed claim to reduce line count. |
 
 Artifact, installation, native interaction and final runtime evidence will be filled from the single combined top-HUD release. They are not inferred from source checks or a demo image. The required journey is a real editable target, F5/F5 with captured audio and observed output, ESC/close cancellation and re-entry, original-route Retry/error preservation, clipboard branch and the four-page Settings flow. Use official OCU without activating human windows; background capability gaps must be resolved at a safe user-input point, never marked passed.
+
+## Final delivery — 0.6.0 (142)
+
+| Gate | Observed evidence |
+| --- | --- |
+| Implemented | Product source a48132c contains single-line captions and reviewed residual cleanup; later commits contain real screenshots and documentation only. Current HTML/README use the actual installed 142 windows, replacing the retired ChatGPT-first illustrations. |
+| Checked | 382 Swift and 40 Python checks, policy, shell and landing harness passed for the product candidate. The vocabulary timing threshold was unchanged: a concurrent-load failure was retained, then isolated and full runs passed at the same threshold. Final image/reference changes passed the Node harness, local Markdown link scan, independent code review and hidden official IAB rendering/toggle checks. |
+| Packaged | Canonical signed release package; --existing verifies version/build, signature and production resources. Installed and dist executable/Opus hashes match. Research manifest remains in scripts/fixtures and no Omni directory is bundled. |
+| Installed | /Applications/ChatType.app 0.6.0(142), valid signature and menu-bar identity. Doubao recognition/polish and enrolled F5 keycode79 remain selected. |
+| Live accepted | One physical F5 start/stop, 20.615s speech, focus change and 47-character exact original-target receipt were observed on 141 with no error and test markers preserved. This evidence is reused only for unchanged ASR/injection sources. Installed142 separately proved single-line 600×54pt captions, 224×44pt HUD, 12pt gap, precise HUD identity, five visual states, official OCU AX cancellation closing both windows, four Settings pages, and replay of that same test recording through current-flow clipboard-only output. The replay created a second attempt; clipboard exactly matched its 47-character final text. |
+| Left running | One normal installed process (PID30194 at handoff), Settings window32479 visible on the rightmost physical display, no demo process. Temporary clipboardOnly=true was saved back to false and read back; preserveClipboard=false and the original login-item state remained. |
+
+Coverage is explicit: 142 did not recapture the user's speech, and 141's multiline images do not prove the new single-line display. ESC and original-snapshot Retry were not newly exercised in this acceptance; their existing behavioral tests remain and neither branch is presented as newly live-tested. The installed changed journey, cancellation control, saved-recording replay, settings save and clipboard path are actual runtime evidence.
+
+Private receipts remain under ~/Library/Logs/chat-type/top-captions-141 and top-captions-142/delivery.json; the canonical five-state evidence is under ~/Library/Logs/ChatType/visual-acceptance/20261116T084348Z. These are local evidence locations, not public download links. Public previews contain only safe demo content. No user recording, transcript, account email or credentials were published.
+
+The old 20KB image-size assertion was replaced with PNG signature/positive-dimension checks after valid native screenshots were observed below that size. The real browser decoded both final images and showed their complete windows with the existing 16:10 reservation and contain fit. This is image validity and faithful presentation, not a lowered quality criterion or a new resource quota.
