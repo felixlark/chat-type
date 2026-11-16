@@ -53,9 +53,9 @@ import Testing
         TerminologyEntry(canonical: "cafe\u{301}", aliases: []),
         TerminologyEntry(canonical: "___", aliases: ["---"]),
         TerminologyEntry(canonical: "👨‍👩‍👧", aliases: ["family emoji"]),
-        TerminologyEntry(canonical: "林锦钗", aliases: [], source: "user"),
-        TerminologyEntry(type: .correction, original: "林龙标", replacement: "林龙彪", aliases: [], source: "user", usageCount: 0, createdAt: "test")]
-    let contexts = ["", "请用 peacteg 评审 smar shade。", "cafe 和 café", "family emoji", "林锦猜先不要发布", "___"]
+        TerminologyEntry(canonical: "陶星澜", aliases: [], source: "user"),
+        TerminologyEntry(type: .correction, original: "周远洲", replacement: "周远舟", aliases: [], source: "user", usageCount: 0, createdAt: "test")]
+    let contexts = ["", "请用 peacteg 评审 smar shade。", "cafe 和 café", "family emoji", "陶新蓝先不要发布", "___"]
     let priorities = [[], ["pstack", "SmartShadow"], ["New.Term", "NewTerm", "___"]]
     var caseCount = 0
     for hints in priorities {

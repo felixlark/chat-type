@@ -467,19 +467,19 @@ func managedAuthManualRetryPolicyAttemptsCloudflareChallengeOnlyOnce() async thr
     var config = legacyAccountConfig().transcription
     config.hintTerms = ["pstack"]
     config.terminology.entries = (0..<200).map { TerminologyEntry(canonical: "AUnrelatedTerm\($0)", aliases: []) }
-        + [TerminologyEntry(canonical: "林锦钗", aliases: [], source: "macos-contacts")]
+        + [TerminologyEntry(canonical: "陶星澜", aliases: [], source: "macos-contacts")]
     var audio = try makeAudioFixture()
     defer { try? FileManager.default.removeItem(at: audio.fileURL) }
-    audio.previewText = "请联系林锦猜处理这次验收"
+    audio.previewText = "请联系陶新蓝处理这次验收"
     let capture = RequestCapture()
     let transcriber = ChatGPTTranscriber(authManager: FakeChatGPTAuthManager(), config: config,
         bridgePromptCapability: BridgePromptCapabilityStore(), dataLoader: { request in
             capture.append(request, body: String(decoding: request.httpBody ?? Data(), as: UTF8.self))
-            return (Data(#"{"text":"请联系林锦钗处理验收。"}"#.utf8),
+            return (Data(#"{"text":"请联系陶星澜处理验收。"}"#.utf8),
                 HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
         })
     let result = try await transcriber.transcribe(audio)
     #expect(result.metrics.promptIncluded)
-    #expect(capture.bodies().first?.contains("林锦钗") == true)
+    #expect(capture.bodies().first?.contains("陶星澜") == true)
     #expect(capture.bodies().first?.contains(audio.previewText) == false)
 }

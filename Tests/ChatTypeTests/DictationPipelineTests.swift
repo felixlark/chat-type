@@ -898,12 +898,12 @@ func dictationPipelineBlocksOutputWhenTextPolishSuspiciouslyTruncatesLongInput()
 @Test
 func dictationPipelineRetriesOnceWhenFirstTextPolishResultLooksTruncated() async throws {
     let transcript = """
-    第一点先说明厦门工学院聚生智能产业学院的背景和我担任特聘教授的缘由。第二点说明傅院长希望补充省外专家推荐函。第三点请郭院长协助联系浙江大学相关专家并帮忙牵线。第四点附上五到十位专家名单和完整调研报告。
+    第一点先说明云城示例学院的背景和项目合作目标。第二点说明顾主任希望补充省外专家推荐函。第三点请陶主任协助联系海城示例大学相关专家并帮忙牵线。第四点附上五到十位专家名单和完整调研报告。
     """
     let polisher = SequencedTextPolisher(results: [
         .success(
             TextPolishResult(
-                text: "请郭院长协助联系专家。",
+                text: "请陶主任协助联系专家。",
                 provider: .chatGPTAuth,
                 applied: true,
                 estimatedInputTokens: 760,
@@ -913,11 +913,11 @@ func dictationPipelineRetriesOnceWhenFirstTextPolishResultLooksTruncated() async
         .success(
             TextPolishResult(
                 text: """
-                请以我的口吻给郭院长起草微信：
+                请以我的口吻给陶主任起草微信：
 
-                1. 说明厦门工学院聚生智能产业学院的背景；
-                2. 说明傅院长希望补充省外专家推荐函；
-                3. 请郭院长协助联系浙江大学相关专家；
+                1. 说明云城示例学院的背景；
+                2. 说明顾主任希望补充省外专家推荐函；
+                3. 请陶主任协助联系海城示例大学相关专家；
                 4. 附上专家名单和调研报告。
                 """,
                 provider: .chatGPTAuth,
@@ -943,7 +943,7 @@ func dictationPipelineRetriesOnceWhenFirstTextPolishResultLooksTruncated() async
         ),
         normalizer: TerminologyNormalizer(),
         importedEntries: [],
-        hintTerms: ["浙江大学"],
+        hintTerms: ["海城示例大学"],
         textPolisher: polisher
     )
 
@@ -1142,24 +1142,24 @@ private actor NameHintCapturingPolisher: TextPolishing {
     private(set) var receivedHints: [String] = []
     func polish(text: String, terminologyEntries: [TerminologyEntry], hintTerms: [String]) async throws -> TextPolishResult {
         receivedHints = hintTerms
-        return TextPolishResult(text: "请联系林锦钗。", provider: .chatGPTAuth, applied: true,
+        return TextPolishResult(text: "请联系陶星澜。", provider: .chatGPTAuth, applied: true,
             estimatedInputTokens: 10, estimatedOutputTokens: 10)
     }
 }
 
 @Test func fullTranscriptPolishReceivesRelatedPersonalNameCandidates() async throws {
     let polisher = NameHintCapturingPolisher()
-    let pipeline = DictationPipeline(transcriber: FakeTranscriber(result: TranscriptionResult(text: "请联系林锦猜。",
+    let pipeline = DictationPipeline(transcriber: FakeTranscriber(result: TranscriptionResult(text: "请联系陶新蓝。",
         metrics: TranscriptionMetrics(provider: .chatGPTManagedAuth, audioDurationMs: 1_000, audioBytes: 100,
                                       authMs: 0, transcribeMs: 1, promptIncluded: true))),
         normalizer: TerminologyNormalizer(),
-        importedEntries: [TerminologyEntry(canonical: "林锦钗", aliases: [], source: "macos-contacts")],
+        importedEntries: [TerminologyEntry(canonical: "陶星澜", aliases: [], source: "macos-contacts")],
         hintTerms: ["pstack"], textPolisher: polisher)
     let result = try await pipeline.prepare(audio: RecordedAudio(fileURL: URL(fileURLWithPath: "/fake.wav"), durationMs: 1_000))
     let hints = await polisher.receivedHints
-    #expect(hints == ["pstack", "林锦钗"])
-    #expect(result.rawText == "请联系林锦猜。")
-    #expect(result.finalText == "请联系林锦钗。")
+    #expect(hints == ["pstack", "陶星澜"])
+    #expect(result.rawText == "请联系陶新蓝。")
+    #expect(result.finalText == "请联系陶星澜。")
 }
 
 @Test(arguments: ["off", "failure", "truncated", "success"])

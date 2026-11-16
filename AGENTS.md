@@ -2,7 +2,7 @@
 
 ## Repo Scope
 
-- Owner/escalation: Longbiao for product behavior, installed app state, and release copy.
+- Owner/escalation: the user for product behavior, installed app state, and release copy.
 - This repo owns the native macOS dictation app `ChatType`, packaged output under `dist/`, and the installed app path `/Applications/ChatType.app`.
 - The live app path is authoritative for permission and interaction verification; `dist/ChatType.app` is packaging output only.
 
@@ -48,7 +48,7 @@
 
 - Without explicit authorization in the current request, do not call or add any metered/pay-per-use endpoint, including `api.openai.com/v1/audio/transcriptions`. A ChatGPT OAuth token is not evidence that an OpenAI Platform request is free.
 - ChatGPT OAuth tokens may go only to fixed, audited official OpenAI/ChatGPT account hosts. Never send them to a user-defined compatible endpoint.
-- Adding a provider, network domain, Cookie dependency, system permission, or data destination is a product/privacy decision. Explain billing, credentials, data movement, quality, and failure behavior and obtain Longbiao's approval before implementation.
+- Adding a provider, network domain, Cookie dependency, system permission, or data destination is a product/privacy decision. Explain billing, credentials, data movement, quality, and failure behavior and obtain the user's approval before implementation.
 - Do not add proxy settings, extract browser Cookies, or automate around Cloudflare challenges.
 
 ## Verification
@@ -73,18 +73,18 @@
 ## Guardrails
 
 - Preserve the single-trigger workflow: `F5` starts recording and `F5` stops recording.
-- Longbiao pinned the local keyboard arrangement on 2026-11-14: Doubao IME uses physical `Fn`; ChatType uses physical `F5`. On this Mac Karabiner translates F5 to F18 and ChatType's `hotkeyKeyCode` is **79**, not the portable default 96. Preserve `~/Library/Application Support/ChatType/keyboard-binding.json`, the selected Karabiner profile's F5→F18 mapping, and Doubao's Fn selection across upgrades/reinstalls. Never reset this Mac to keycode 96 or reintroduce the old Fn+F5 Codex Plus launcher alias. The installer reapplies this explicitly enrolled local policy; other users keep their choices.
-- Treat the existing app icon, menu-bar icon renderer, product name, colors, and other brand visuals as owner-controlled invariants. Lifecycle, authentication, transcription, and reliability fixes may not alter them without Longbiao's explicit approval in the current request.
+- the user pinned the local keyboard arrangement on 2026-11-14: Doubao IME uses physical `Fn`; ChatType uses physical `F5`. On this Mac Karabiner translates F5 to F18 and ChatType's `hotkeyKeyCode` is **79**, not the portable default 96. Preserve `~/Library/Application Support/ChatType/keyboard-binding.json`, the selected Karabiner profile's F5→F18 mapping, and Doubao's Fn selection across upgrades/reinstalls. Never reset this Mac to keycode 96 or reintroduce the old Fn+F5 Codex Plus launcher alias. The installer reapplies this explicitly enrolled local policy; other users keep their choices.
+- Treat the existing app icon, menu-bar icon renderer, product name, colors, and other brand visuals as owner-controlled invariants. Lifecycle, authentication, transcription, and reliability fixes may not alter them without the user's explicit approval in the current request.
 - A visual change requires a before/after installed-app comparison and explicit approval. Checking that a menu-bar item merely exists does not prove that its approved appearance was preserved.
 - Do not run `ChatType.app` directly from `dist`.
 - Do not end a ChatType closeout with `pkill -x ChatType`, quit, or close. `scripts/install_app.sh` may stop the old app before replacing `/Applications/ChatType.app`, and visual demo scripts may stop transient overlay-demo processes, but final closeout must restore the normal installed runtime.
 - Keep `.notDetermined` permission paths as their own regression surface.
 - Keep the private ChatGPT backend dependency explicit in docs and UX; do not describe it as a stable public API.
 - Keep `OpenAI-Compatible` positioned as advanced recovery, not the default public story.
-- Longbiao approved the Doubao implementation and default on 2026-11-14. Transcription has three explicit routes: `doubaoIME`, preserved `chatGPTManagedAuth`, and advanced `openAICompatible`. Fresh configurations default to Doubao ASR and Doubao text organization; existing saved selections are preserved. ASR and polish can be selected independently in Dictation. Never switch providers automatically after failure.
+- the user approved the Doubao implementation and default on 2026-11-14. Transcription has three explicit routes: `doubaoIME`, preserved `chatGPTManagedAuth`, and advanced `openAICompatible`. Fresh configurations default to Doubao ASR and Doubao text organization; existing saved selections are preserved. ASR and polish can be selected independently in Dictation. Never switch providers automatically after failure.
 - Doubao uses fixed settings, frontier-audio WebSocket and IME text-organization hosts, app-owned configuration credentials in Keychain, and bundled signed Opus. No browser Cookies or existing Doubao IME credentials are exported. These are private, version-sensitive endpoints; successful probes establish neither a billing guarantee nor public API stability.
 - Keep raw audio and each attempt's route snapshot, ASR/partial ASR, polish inputs/outputs, final text and errors in private local history. Seal successful stages before injection; processing failure must not paste partial text. Cancel closes the independent live cloud task while preserving the recording. Retry reuses the attempt's original routes; interrupted audio requires an explicit partial replay decision.
-- Longbiao approved Stage A quality restoration on 2026-11-10: on macOS 26+, Apple SpeechAnalyzer provides live preview; the complete recording is uploaded to the original ChatGPT account for final transcription, followed by the existing terminology alignment and whole-transcript ChatGPT polish. This supersedes B0 local final ASR. Earlier macOS versions and explicitly selected compatible recovery retain their existing paths. Keep `fastResults` with `volatileResults` for live text. Model capability must be checked by actual preparation; an AssetInventory status alone must not block an available engine. Further cloud polish providers require their own credentials/data destination decision.
+- the user approved Stage A quality restoration on 2026-11-10: on macOS 26+, Apple SpeechAnalyzer provides live preview; the complete recording is uploaded to the original ChatGPT account for final transcription, followed by the existing terminology alignment and whole-transcript ChatGPT polish. This supersedes B0 local final ASR. Earlier macOS versions and explicitly selected compatible recovery retain their existing paths. Keep `fastResults` with `volatileResults` for live text. Model capability must be checked by actual preparation; an AssetInventory status alone must not block an available engine. Further cloud polish providers require their own credentials/data destination decision.
 
 ## Known State
 

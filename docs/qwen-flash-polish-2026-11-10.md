@@ -12,7 +12,7 @@
 
 新增文本润色provider qwenFlash，沿现有TextPolisher私有provider分支；保持两条ASR路线。固定北京已支持域名 `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`，固定model `qwen-flash`，`enable_thinking=false, stream=true`，temperature/max_tokens沿现有值。官方文档仍支持该公共域名；本轮不引入可编辑端点/跨地域或动态Workspace host。采用现有ChatCompletion SSE完整stop结束语义，拒绝全部redirect；Qwen key只发固定北京host，不取ChatGPT OAuth/GLM key。新协议兼容分支复用现有prompt及整段输出处理；无自动跨目的地fallback，失败沿原规范化文本回退。
 
-独立QwenKeyStoring/KeychainQwenKeyStore，service `me.longbiaochen.ChatType.QwenAPIKey`, account default；仅load/save/metadata contains，存储不进入配置/日志/报告。Settings增加Qwen安全框、Save Key及元数据状态；缺Key阻止保存Qwen，其他provider正常；Save Key仅保存凭据，Save Settings从下一会话生效。Test Connection同生产polisher发一条人工合成文本，选择变更时使测试generation失效、清理消息并允许新测试；每次异步成功/失败和defer忙碌状态仅在generation仍匹配时回写，覆盖A→B→A与交错完成。状态/路由展示涵盖Qwen实际模型和host。
+独立QwenKeyStoring/KeychainQwenKeyStore，service the existing Qwen Keychain service, account default；仅load/save/metadata contains，存储不进入配置/日志/报告。Settings增加Qwen安全框、Save Key及元数据状态；缺Key阻止保存Qwen，其他provider正常；Save Key仅保存凭据，Save Settings从下一会话生效。Test Connection同生产polisher发一条人工合成文本，选择变更时使测试generation失效、清理消息并允许新测试；每次异步成功/失败和defer忙碌状态仅在generation仍匹配时回写，覆盖A→B→A与交错完成。状态/路由展示涵盖Qwen实际模型和host。
 
 写入范围：新增Sources/ChatType/QwenKeyStore.swift；修改AppConfig.swift、TextPolisher.swift、PolishResponseTransport.swift、PreferencesWindowController.swift、BenchmarkRunner.swift；新增Tests/ChatTypeTests/QwenTextPolisherTests.swift，按需扩展ConfigTests/StreamingTranscriptTests。文档本文件、README中英文/CHANGELOG/release。保留全部既有dirty和凭据。
 

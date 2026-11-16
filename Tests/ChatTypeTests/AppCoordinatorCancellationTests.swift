@@ -937,7 +937,7 @@ struct AppCoordinatorCancellationTests {
     let url = root.appendingPathComponent("snapshot.wav")
     try Data("recorded-audio".utf8).write(to: url)
     let recorder = FakeCoordinatorRecorder()
-    recorder.nextAudio = RecordedAudio(fileURL: url, durationMs: 1_000, previewText: "请联系林锦猜")
+    recorder.nextAudio = RecordedAudio(fileURL: url, durationMs: 1_000, previewText: "请联系陶新蓝")
     let overlay = FakeCoordinatorOverlay()
     let observed = SnapshotConfigCapture()
     let previews = SnapshotConfigCapture()
@@ -962,7 +962,7 @@ struct AppCoordinatorCancellationTests {
     overlay.onRetry?()
     await waitForCondition { overlay.retryableErrors.count == 2 }
     #expect(observed.values == [["pstack", "SmartShadow"], ["pstack", "SmartShadow"]])
-    #expect(previews.values == [["请联系林锦猜"], ["请联系林锦猜"]])
+    #expect(previews.values == [["请联系陶新蓝"], ["请联系陶新蓝"]])
 }
 
 private final class SnapshotConfigCapture: @unchecked Sendable {

@@ -35,11 +35,11 @@
 
 私有报告目录0700，8个文件均0600，HTML转义字段、无脚本、CSP禁止外部资源。报告和清单含真实个人数据，仅供本人本机核对，不作为云评审或评测输入。
 
-- [本机候选报告](</Users/longbiao/Library/Application Support/ChatType/ContactsReports/Report-0262413A-5E0A-4113-8734-E90CB26271C6/index.html>)
-- [匿名原生汇总](</Users/longbiao/Library/Application Support/ChatType/contacts-report-111/report.stdout>)
-- [274项检查与打包记录](</Users/longbiao/Library/Application Support/ChatType/contacts-report-111/check-final.log>)
-- [签名、安装和配置回执](</Users/longbiao/Library/Application Support/ChatType/contacts-report-111/install-receipt.json>)
-- [正式路径验收与正常运行回执](</Users/longbiao/Library/Application Support/ChatType/contacts-report-111/acceptance-receipt.json>)
+- 本机候选报告 (`~/Library/Application Support/ChatType/ContactsReports/Report-<report-id>/index.html`; private local receipt)
+- 匿名原生汇总 (`~/Library/Application Support/ChatType/contacts-report-111/report.stdout`; private local receipt)
+- 274项检查与打包记录 (`~/Library/Application Support/ChatType/contacts-report-111/check-final.log`; private local receipt)
+- 签名、安装和配置回执 (`~/Library/Application Support/ChatType/contacts-report-111/install-receipt.json`; private local receipt)
+- 正式路径验收与正常运行回执 (`~/Library/Application Support/ChatType/contacts-report-111/acceptance-receipt.json`; private local receipt)
 - [EGM审读记录](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/docs/reviews/contacts-report-111-2026-11-10.md)
 
 实现、检查、打包、安装、本机报告原生验收均完成；生成后的正常运行PID13358。联系人合并/删除0，生产清单启用0，真人姓名识别修复验收未进行。并行Voxt路线由另一个已授权项目chat负责，此回执只描述111交付现场。

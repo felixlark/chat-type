@@ -33,4 +33,4 @@ CT-VOXT-20261110；2026-11-12。六条历史原声各一次65%前段与一次全
 
 方案初审2项Major（相对Apple假设缺对照、门槛未固定）修订后fresh-context复审0 Blocker/0 Major；实现初审1项Major（显式禁止Keychain授权UI）修复后独立复审通过。编译、离线响应夹具、六条音频预检通过；Keychain只读检查报告可用后才执行12次，调用前固定源码/依赖/签名二进制。SDK对显式Security无UI标记有deprecation提示，实际编译及本次读取/请求通过；未因此修改产品凭据代码。
 
-证据目录：[cloud-prefix-asr-v1](</Users/longbiao/Library/Application Support/ChatType/PolishSpeedEvaluation/20261112/cloud-prefix-asr-v1/>)，含音频manifest、调用前build-preflight、request-journal、12条结果及固定算法计算。原阿里账本仍4次、0.08612元保守预留，3.7保护未动。
+证据目录：cloud-prefix-asr-v1 (`~/Library/Application Support/ChatType/PolishSpeedEvaluation/20261112/cloud-prefix-asr-v1/`; private local receipt)，含音频manifest、调用前build-preflight、request-journal、12条结果及固定算法计算。原阿里账本仍4次、0.08612元保守预留，3.7保护未动。

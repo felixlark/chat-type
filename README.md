@@ -58,6 +58,7 @@ The default `./scripts/check.sh` additionally packages and checks one candidate.
 
 - [Architecture](docs/architecture.md): runtime, services, persistence and settings ownership.
 - [Operations](docs/operations.md): diagnosis, provider boundaries and installed acceptance.
+- [Public examples](docs/privacy-fixtures.md): fictional fixtures and anonymized historical summaries.
 - [Cleanup plan and disposition](docs/cleanup-2026-11-16.md): evidence, retained capabilities and delivery status.
 - [Historical evidence](docs/history.md): immutable prior designs and retained experimental results.
 - [Changelog](CHANGELOG.md): version history.

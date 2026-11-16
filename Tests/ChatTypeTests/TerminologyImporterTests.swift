@@ -3,31 +3,33 @@ import Foundation
 import Testing
 @testable import ChatType
 
+// All names and organizations below are fictional test fixtures.
+
 @Test
 func appleContactRemarkImporterBuildsUniqueTermsFromNicknames() {
     let entries = AppleContactRemarkImporter.entries(
         from: [
-            "阿彪",
-            " 阿彪 ",
-            "刘鑫财 漳州龙轴组织部 部长",
-            "郑计阮-厦大车队总经理",
-            "厦门金联云投资有限合伙企业",
+            "小轩",
+            " 小轩 ",
+            "周明轩 云城示例组织部 部长",
+            "吴语桐-示例车队总经理",
+            "云城示例投资有限合伙企业",
             "Alice Smith",
-            "Longbiao",
+            "Alex Example",
             "",
         ],
         importedAt: "2026-08-01T00:00:00Z"
     )
 
     #expect(entries.map(\.original) == [
-        "阿彪",
-        "刘鑫财",
-        "漳州龙轴组织部",
-        "郑计阮",
-        "厦大车队",
-        "厦门金联云投资有限合伙企业",
+        "小轩",
+        "周明轩",
+        "云城示例组织部",
+        "吴语桐",
+        "示例车队",
+        "云城示例投资有限合伙企业",
         "Alice Smith",
-        "Longbiao",
+        "Alex Example",
     ])
     #expect(entries.allSatisfy { $0.type == .term })
     #expect(entries.allSatisfy { $0.source == "apple-contacts-nickname" })
@@ -55,22 +57,22 @@ func weixinNameImporterRejectsIncompleteAndEmptyResults() {
 func contactNameSplittingRequiresAnExplicitSeparatorAndPlausibleChineseName() {
     let entries = AppleContactRemarkImporter.entries(
         from: [
-            "曾文淇-芗城区住建局",
-            "吴成联 厦门金联云投资有限合伙企业",
-            "陈晋辉 福建龙轴集团 董事长",
-            "厦门金联云投资有限合伙企业",
+            "李景宁-示例区住建局",
+            "陈雨溪 云城示例投资有限合伙企业",
+            "苏星辰 云城示例集团 董事长",
+            "云城示例投资有限合伙企业",
             "Alice Smith",
         ],
         importedAt: "2026-08-01T00:00:00Z"
     )
 
     #expect(entries.map(\.original) == [
-        "曾文淇",
-        "芗城区住建局",
-        "吴成联",
-        "厦门金联云投资有限合伙企业",
-        "陈晋辉",
-        "福建龙轴集团",
+        "李景宁",
+        "示例区住建局",
+        "陈雨溪",
+        "云城示例投资有限合伙企业",
+        "苏星辰",
+        "云城示例集团",
         "Alice Smith",
     ])
 }
@@ -102,11 +104,11 @@ func weixinRemarkRefreshReplacesLegacySourcesAndPreservesUserTerms() {
 @Test
 @MainActor
 func appleContactNameRefreshReplacesPreviousCombinedEntries() {
-    let previousImport = terminologyTerm("刘鑫财 漳州龙轴组织部 部长", source: "apple-contacts-nickname")
+    let previousImport = terminologyTerm("周明轩 云城示例组织部 部长", source: "apple-contacts-nickname")
     let user = terminologyTerm("ChatType", source: "user")
     let incoming = [
-        terminologyTerm("刘鑫财", source: "apple-contacts-nickname"),
-        terminologyTerm("漳州龙轴组织部", source: "apple-contacts-nickname"),
+        terminologyTerm("周明轩", source: "apple-contacts-nickname"),
+        terminologyTerm("云城示例组织部", source: "apple-contacts-nickname"),
     ]
 
     let refreshed = AppCoordinator.refreshedTerminologyEntries(
@@ -115,7 +117,7 @@ func appleContactNameRefreshReplacesPreviousCombinedEntries() {
         replacingSources: ["apple-contacts-nickname"]
     )
 
-    #expect(refreshed.map(\.original) == ["ChatType", "刘鑫财", "漳州龙轴组织部"])
+    #expect(refreshed.map(\.original) == ["ChatType", "周明轩", "云城示例组织部"])
 }
 
 private func terminologyTerm(_ value: String, source: String) -> TerminologyEntry {
@@ -132,13 +134,13 @@ private func terminologyTerm(_ value: String, source: String) -> TerminologyEntr
 
 @Test func contactImportIncludesFullNameWithoutNickname() {
     let contact = CNMutableContact()
-    contact.familyName = "林"
-    contact.givenName = "卓玟"
+    contact.familyName = "顾"
+    contact.givenName = "清禾"
     let values = AppleContactRemarkImporter.nameValues(from: contact)
     let entries = AppleContactRemarkImporter.entries(from: values, importedAt: "test", source: "apple-contacts-names")
-    #expect(entries.map(\.original).contains("林卓玟"))
-    contact.nickname = "小林"
-    #expect(AppleContactRemarkImporter.nameValues(from: contact).contains("小林"))
+    #expect(entries.map(\.original).contains("顾清禾"))
+    contact.nickname = "小顾"
+    #expect(AppleContactRemarkImporter.nameValues(from: contact).contains("小顾"))
 }
 
 @Test func keyboardShortcutsMigrateToStandardSpellingsWithoutAliases() {

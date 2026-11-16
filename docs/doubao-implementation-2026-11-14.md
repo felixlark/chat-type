@@ -23,7 +23,7 @@ fresh-context 定向复查五项均 PASS，Blocker/Major/Minor 均为 0。复查
 
 ## 真实服务证据
 
-证据目录：`/Users/longbiao/Library/Logs/ChatType/doubao-implementation/20261114/`，原声及 harness 位于 Library/Caches，均非仓库数据。
+证据目录：`~/Library/Logs/ChatType/doubao-implementation/20261114/`，原声及 harness 位于 Library/Caches，均非仓库数据。
 
 `service-multivad-probe.json` 使用真实实现和新生成的三段合成语音，完整配置 → TaskStarted → SessionStarted → 多个索引终稿 → SessionFinished → SSE completed/done 成功，约 22.9 秒。凭据注入内存存储，未访问真实 Keychain。这证明文件业务链路可用，不代表安装版实时麦克风验收。
 
