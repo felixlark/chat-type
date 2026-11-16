@@ -140,7 +140,7 @@ func overlayPanelPlacementDefaultsToBottomSafeArea() {
         topInset: preset.topInset
     )
 
-    #expect(frame.minY == visibleFrame.minY + 16)
+    #expect(frame.minY == visibleFrame.minY + 24)
     #expect(abs(frame.midX - visibleFrame.midX) < 0.0001)
     #expect(visibleFrame.contains(frame))
 }

@@ -18,4 +18,11 @@ rm -rf "$TARGET_APP"
 /usr/bin/xattr -cr "$TARGET_APP"
 /usr/bin/codesign --verify --deep --strict "$TARGET_APP"
 
+# Supported Sublime package, outside the vendor-signed app bundle.
+if [[ -d "/Applications/Sublime Text.app" ]]; then
+  EDITOR_PACKAGE="$HOME/Library/Application Support/Sublime Text/Packages/ChatType"
+  mkdir -p "$EDITOR_PACKAGE"
+  cp "$TARGET_APP/Contents/Resources/Sublime/ChatType.py" "$EDITOR_PACKAGE/ChatType.py"
+fi
+
 echo "Installed $TARGET_APP"

@@ -12,7 +12,7 @@ It is intentionally opinionated:
 - native menu bar app
 - fresh configurations default to Doubao IME recognition and text organization
 - independently selectable live preview, ASR, terminology alignment, polish, corrections and paste/clipboard stages in Workflow
-- live drafts stay in the original input field across focus changes, with an input-aligned preview fallback and a compact status-only HUD; the HUD Retry button replays the original route once
+- live drafts use a font-matched transparent composition at the original caret, separate from the centered status HUD; final text enters the pinned input once, including Sublime Text through its public plugin API; HUD Retry replays the original route once
 - preserved ChatGPT route: app-owned browser OAuth, on-device preview on macOS 26+, complete-audio account transcription and optional whole-transcript polish
 - conservative paste behavior: only paste when an editable target is detected
 - clipboard fallback when paste is not safe, with the latest transcript kept available for manual `Cmd+V`

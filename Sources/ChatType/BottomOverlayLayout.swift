@@ -34,7 +34,7 @@ struct BottomOverlayLayout {
             }
             return Placement(frame: nearest ?? fallback, needsAdjustment: nearest == nil)
         }
-        let bottom = visible.minY + 16
+        let bottom = visible.minY + 24
         let center = visible.midX - fitted.width / 2
         var origins: [CGPoint] = []
         if let preferred { origins.append(preferred) }
@@ -47,7 +47,7 @@ struct BottomOverlayLayout {
                 return Placement(frame: frame, needsAdjustment: false)
             }
         }
-        return Placement(frame: clamp(CGRect(x: visible.minX + 16, y: bottom, width: fitted.width, height: fitted.height), to: visible), needsAdjustment: true)
+        return Placement(frame: clamp(CGRect(x: center, y: bottom, width: fitted.width, height: fitted.height), to: visible), needsAdjustment: true)
     }
 }
 
