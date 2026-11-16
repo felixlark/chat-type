@@ -16,6 +16,7 @@ No Fn rule is added for an unenrolled machine. Absence of `fnSplit` leaves exist
 
 - Implemented: recorder, transactional registration, pending/applied distinction and installation preservation.
 - Checked: source harness passed 387 Swift tests, 42 Python tests, shell/policy/landing-page checks. The five targeted shortcut tests cover legacy decoding, persistence, replacement failure, capture lifecycle and workflow auto-apply.
+- Reviewed: native Codex independent automatic code review of `62f300b` completed with no actionable P0–P2 findings. Its conclusions cover the final source candidate; later changes only update documentation and the installed screenshot.
 - Packaged: build 143; Developer ID signature and packaged-app metadata verified.
 - Installed: `/Applications/ChatType.app`, build 143.
 - Live Settings: official Computer Use recorded Control + Option + Shift + K, saved it, read back the applied label and persisted configuration, and cancelled a new capture with Escape. The temporary binding was restored to physical F5 / internal F18 before closeout. The tool cannot send F18 in the background, so restoration used the supported configuration and reinstall path; this is not recorded as a second recorder acceptance.

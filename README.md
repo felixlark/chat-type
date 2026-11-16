@@ -16,7 +16,9 @@ The app preserves recordings, route snapshots, stage outputs and errors in priva
 
 Settings has four destinations: **Account, Workflow, History and Settings**. Account separates installed services, credential readiness and local-preview support from actual request success. Workflow independently configures recognition, terminology alignment, polish and correction. Local vocabulary supports custom terms, replacement rules and optional Contacts/WeChat name imports. History retains recordings and per-attempt evidence.
 
-This Mac's enrolled arrangement uses physical F5 for ChatType and physical Fn for Doubao. Installation preserves that mapping; other users keep their own choices. The installed status HUD stays below the initial screen's menu/camera safe area; independent single-line captions continue after focus changes. Full text remains in recovery history and is delivered once.
+In **Settings → 激活快捷键**, click **录入快捷键**, press a key or modifier combination, then **Save Settings**. Escape cancels capture. The previous binding stays active until saving succeeds; custom shortcuts survive reinstalling. See the [installed shortcut settings](docs/activation-shortcut-143.md).
+
+This Mac’s enrolled arrangement uses physical F5 for ChatType; an optional Fn split opens the official ChatGPT app on a tap and passes a hold to native Doubao. Installation preserves enrolled choices; other users keep their own choices. The installed status HUD stays below the initial screen's menu/camera safe area; independent single-line captions continue after focus changes. Full text remains in recovery history and is delivered once.
 
 ## Install
 
