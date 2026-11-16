@@ -12,5 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Prepare policy-check tools
+        run: brew install ripgrep
       - name: Source checks (same harness as local development)
         run: bash scripts/check.sh --source
