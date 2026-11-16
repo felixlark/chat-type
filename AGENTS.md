@@ -53,6 +53,9 @@
 
 ## Verification
 
+- 自有产品窗口的打开、恢复和定位属于开发交付责任。设置窗口未枚举、最小化或不在当前 Space 时，先核安装路径、PID 和窗口身份，再通过应用自己的菜单入口恢复并读回；不能仅因首次窗口查询失败就要求用户代开。官方 OCU 缺少菜单栏或控件焦点能力时，Agent Desktop 只补该准确缺口，随后回到 OCU，保持后台定向操作、单 writer 和现有草稿；确需本人认证或确实无法安全完成的动作才请求介入。
+- 本次 ChatType 表单已复现：AXSetValue 可改变文本框显示但不触发 SwiftUI 绑定。输入验收必须核焦点、实际编辑事件和按钮启用状态；Add Term 后核列表计数/搜索，应用后核持久配置，录音后核该次词库快照。工具 `ok`、输入框文字或“已应用”提示不能单独证明词条生效。未知动作先读回，不盲目重复添加。
+
 - Verification ladder: unit tests, integration tests, then real installed-app user-flow testing. The first two are prechecks only.
 - For native GUI work, use official Computer Use whenever clicks, hotkeys, focus, timing, modal state, permissions, or multi-step interaction are touched.
 - ChatType Computer Use acceptance should cover: focus a real editable target, start with `F5`, stop with `F5`, cancel with `ESC`, cancel with inline close, retry after cancel/error, and observe paste-versus-clipboard result.

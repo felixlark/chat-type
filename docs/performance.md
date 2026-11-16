@@ -2,6 +2,12 @@
 
 These are historical measurements for the configurations recorded below, not a performance claim for the current candidate. Current defaults and failure behavior are maintained in [PRODUCT](../PRODUCT.md).
 
+## Build 144: reuse alignment vocabulary across recordings
+
+The production pipeline now retains the same filtered alignment arrays for an unchanged dictionary. Previously every recording rebuilt those arrays, invalidating the normalizer's storage-identity cache. The independent alignment cache retains its source array to preserve Swift copy-on-write semantics; changing entries, using an older recording snapshot, or selecting corrections off continues to select the corresponding data. It does not remove entries or change matching behavior.
+
+A release-mode offline probe of the original 18,796-entry dictionary and one fixed transcript alternated six measurements per side. Rebuilding the array took 94.033–105.276 ms; reusing the warmed array took 17.812–20.253 ms. All twelve outputs matched. The host was busy (10 logical CPUs, load average about 269); this demonstrates a local cache opportunity, not an installed-app end-to-end speedup. Existing production records for four different recordings showed 91–143 ms normalization and 1,248–1,559 ms total post-stop processing. The independent cloud recognition and polish stages remain separate costs.
+
 ## 2026-08-04 baseline
 
 The local latency log contained 1,418 successful paste/clipboard runs across several ChatType versions and configurations:
