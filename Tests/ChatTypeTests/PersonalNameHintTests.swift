@@ -2,49 +2,51 @@ import Foundation
 import Testing
 @testable import ChatType
 
+// All names and organizations below are fictional test fixtures.
+
 @Test func personalNamesRecallNearSoundsAndKeepHomophonesAsCandidates() {
-    let entries = ["林卓玟", "林卓闻", "林锦钗", "林龙彪", "金天"].map {
+    let entries = ["顾清禾", "顾青禾", "陶星澜", "周远舟", "金天"].map {
         TerminologyEntry(canonical: $0, aliases: [], source: "macos-contacts")
     }
-    let result = PersonalNameHints.relatedTerms(in: "请联系林卓文、林锦猜和临龙标。", entries: entries)
-    #expect(result.contains("林卓玟"))
-    #expect(result.contains("林卓闻"))
-    #expect(result.contains("林锦钗"))
-    #expect(result.contains("林龙彪"))
+    let result = PersonalNameHints.relatedTerms(in: "请联系顾清和、陶新蓝和舟远洲。", entries: entries)
+    #expect(result.contains("顾清禾"))
+    #expect(result.contains("顾青禾"))
+    #expect(result.contains("陶星澜"))
+    #expect(result.contains("周远舟"))
     #expect(PersonalNameHints.relatedTerms(in: "今天开会，下午先不要发布。", entries: entries).isEmpty)
     #expect(PersonalNameHints.relatedTerms(in: "联系金天。", entries: entries).contains("金天"))
-    #expect(!PersonalNameHints.relatedTerms(in: "林卓文玟", entries: [entries[0]]).contains("金天"))
+    #expect(!PersonalNameHints.relatedTerms(in: "顾清和禾", entries: [entries[0]]).contains("金天"))
 }
 
 @Test func personalNameCacheRefreshesWhenCanonicalEntriesChange() {
-    let old = [TerminologyEntry(canonical: "林卓闻", aliases: [], source: "user")]
-    let new = [TerminologyEntry(canonical: "林锦钗", aliases: [], source: "user")]
+    let old = [TerminologyEntry(canonical: "顾青禾", aliases: [], source: "user")]
+    let new = [TerminologyEntry(canonical: "陶星澜", aliases: [], source: "user")]
     PersonalNameHints.prewarm(entries: old)
-    #expect(PersonalNameHints.relatedTerms(in: "林卓文", entries: old) == ["林卓闻"])
-    #expect(PersonalNameHints.relatedTerms(in: "林锦猜", entries: new) == ["林锦钗"])
-    #expect(PersonalNameHints.relatedTerms(in: "林卓文", entries: new).isEmpty)
+    #expect(PersonalNameHints.relatedTerms(in: "顾清和", entries: old) == ["顾青禾"])
+    #expect(PersonalNameHints.relatedTerms(in: "陶新蓝", entries: new) == ["陶星澜"])
+    #expect(PersonalNameHints.relatedTerms(in: "顾清和", entries: new).isEmpty)
 }
 
 @Test func relatedNamesEnterPolishBudgetBeforeUnrelatedDictionary() {
-    let names = [TerminologyEntry(canonical: "林锦钗", aliases: [], source: "macos-contacts")]
+    let names = [TerminologyEntry(canonical: "陶星澜", aliases: [], source: "macos-contacts")]
     let unrelated = (0..<200).map { TerminologyEntry(canonical: "UnrelatedTerm\($0)", aliases: []) }
-    let hints = ["pstack", "SmartShadow"] + PersonalNameHints.relatedTerms(in: "请联系林锦猜", entries: names)
+    let hints = ["pstack", "SmartShadow"] + PersonalNameHints.relatedTerms(in: "请联系陶新蓝", entries: names)
     var config = TextPolishConfig()
     config.glossaryBudgetCharacters = 60
-    let messages = TextPolishPromptBuilder().buildMessages(transcript: "请联系林锦猜", terminologyEntries: unrelated + names,
+    let messages = TextPolishPromptBuilder().buildMessages(transcript: "请联系陶新蓝", terminologyEntries: unrelated + names,
         config: config, priorityTerms: hints)
-    #expect(messages[0].content.contains("- 林锦钗"))
+    #expect(messages[0].content.contains("- 陶星澜"))
     #expect(messages[0].content.contains("- pstack"))
-    #expect(messages[1].content == "请联系林锦猜")
+    #expect(messages[1].content == "请联系陶新蓝")
 }
 
 @Test func userCorrectionTargetIsPrioritizedForASRAndWholeTextPolish() {
     var config = TranscriptionConfig()
     config.hintTerms = ["pstack"]
     config.terminology.entries = [
-        TerminologyEntry(type: .correction, original: "林龙标", replacement: "林龙彪", aliases: [], source: "user", usageCount: 0, createdAt: "test"),
+        TerminologyEntry(type: .correction, original: "周远洲", replacement: "周远舟", aliases: [], source: "user", usageCount: 0, createdAt: "test"),
         TerminologyEntry(canonical: "AUnrelatedTerm", aliases: [], source: "dictionary-import")
     ]
-    #expect(config.prioritizedHintTerms == ["pstack", "林龙彪"])
-    #expect(config.promptHintTerms == ["pstack", "林龙彪", "AUnrelatedTerm"])
+    #expect(config.prioritizedHintTerms == ["pstack", "周远舟"])
+    #expect(config.promptHintTerms == ["pstack", "周远舟", "AUnrelatedTerm"])
 }

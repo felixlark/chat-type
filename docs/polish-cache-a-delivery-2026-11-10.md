@@ -2,7 +2,9 @@
 
 > Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
 
-2026-11-10，M1 Max / 64 GiB。Longbiao批准A：保持当前模型、术语与整段润色流程，完成速度对比和安装版验收后再讨论换模型。
+2026-11-10，M1 Max / 64 GiB。用户批准A：保持当前模型、术语与整段润色流程，完成速度对比和安装版验收后再讨论换模型。
+
+公开版本仅保留匿名统计和错误类型。历史姓名、原句及本机用户名已移除；下述姓名 A/B/C 是匿名标签，不是另造的现场转写记录。新的自动化用例只使用[虚构测试资料](privacy-fixtures.md)。
 
 ## 实施结果
 
@@ -33,7 +35,7 @@
 
 108组合逐条比较ASR提示和polish消息role/content的UTF-8字节，另11个600字符截断边界，覆盖NFD/重音去重。并发、同数编辑、旧新快照和动态重点词检查通过。EGM最终实现复核0 Blocker / 0 Major / 0 Nit。
 
-合成语音的pstack/SmartShadow、数字改口、会议改期、草稿确认和长句要求在两组均保留。逐条核对同时记录既有缺口：109组3/3、缓存组2/3的合成人名音频把李卓玟识为其他名字；两组OpenClaw均误识；两组位置音频均遗漏“只”；缓存组一次将“只修改”识为“支持修改”。相应原ASR文字已含误识，润色沿相同提示处理。该组覆盖合成素材，真人姓名与约束另做现场验收。
+合成语音的pstack/SmartShadow、数字改口、会议改期、草稿确认和长句要求在两组均保留。逐条核对同时记录既有缺口：109组3/3、缓存组2/3的合成人名音频把姓名 B 识为其他字形；两组OpenClaw均误识；两组位置音频均遗漏“只”；缓存组一次将“只修改”识为“支持修改”。相应原ASR文字已含误识，润色沿相同提示处理。该组覆盖合成素材，现场姓名与约束另做验收。
 
 ## 已完成的交付门槛
 
@@ -46,13 +48,13 @@
 
 ## 现场回读与未通过项
 
-14:51:15实际11791ms录音，ASR2184ms、polish3672ms、规范化324ms、注入75ms，总处理6490ms，状态pasted。原ASR出现陈龙标、李泽文、戴景才；最终陈龙彪正确，后两名仍错误。用户确认本次只读到“下午三点”，尾句遗漏项已排除。
+14:51:15实际11791ms录音，ASR2184ms、polish3672ms、规范化324ms、注入75ms，总处理6490ms，状态pasted。原ASR中的三个姓名均出现字形错误；最终姓名 A 正确，姓名 B/C 仍错误。用户确认本次只读到“下午三点”，尾句遗漏项已排除。公开版本不保留原姓名和对应转写原句。
 
 当前安装版运行记录另显示14:54:30录音取消，14:54:37开始的下一次录音最终pasted，取消后重入和注入路径已有实际执行记录；预览及浮窗收起的最终用户反馈仍待取得。
 
 新计时成功观测同一次HTTP：headers2170ms、首正文delta3162ms、末delta3499ms、completed3556ms、读完3653ms；真实usage为369输入/38输出、cached input=0。估算698/120与真实usage分开。当前主要等待落在联网请求和首正文输出前。
 
-针对本次原ASR和实际pre-normalize输入，以真实词库作离线表达式回读：109与110的ASR hints及polish消息UTF-8一致。两个人名均在词库；李卓玟、戴锦钗均未进入这次近音召回和glossary，陈龙彪已有user correction优先词并进入glossary。后续Foundation音译与缩池实验进一步定位：李泽文/李卓玟的ze/zhuo编辑距离3，超过现有上限2；戴景才/戴锦钗有两处音节差异，超过最多1处的门槛。缩至3个人名仍复现两处漏召回。匿名对照见[规模审计](/Users/longbiao/Library/Application%20Support/ChatType/contacts-audit-20261110/vocabulary-size-audit.json)。
+针对本次原ASR和实际pre-normalize输入，以当时本机词库作离线表达式回读：109与110的ASR hints及polish消息UTF-8一致。姓名 B/C 均在词库，却未进入这次近音召回和glossary；姓名 A 已有user correction优先词并进入glossary。后续Foundation音译与缩池实验定位：姓名 B 的一个音节编辑距离为3，超过当时上限2；姓名 C 有两处音节差异，超过最多1处的门槛。缩至3个人名仍复现两处漏召回。本段只保留匿名错误关系，不提供真实词库或原姓名映射。
 
 最小修正候选是把这两个既有名字追加到当前重点词，保留模型、整本词库内容及来源、匹配算法和整段流程。离线已确认候选使两名进入ASR600字符提示与polish240字符glossary。该调整改变A的原提示不变合同，尚未获批且未执行；用户选择先调查词库规模和Apple Contacts重复情况。[后续只读调查与EGM设计](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/docs/contacts-optimization-2026-11-10.md)。原生调查后干净110保持，词库17674、重点词3、模型gpt-5.6-terra及配置字节一致。
 
@@ -60,9 +62,9 @@
 
 后续检查时原Library/Caches/chat-type/polish-cache-a及Library/Logs/ChatType目录已不可见，下面同批音频原始日志链接当前不可读。本文保留当时工具实际回执的统计；当前联系人只读审计与本机规模实验回执另存在Application Support路径，范围分别报告。
 
-- 统计JSON (`/Users/longbiao/Library/Logs/ChatType/polish-cache-a-20261110/comparison-summary.json`; private historical receipt, unavailable in a repository checkout)
-- 暖态60次原始配对 (`/Users/longbiao/Library/Logs/ChatType/polish-cache-a-20261110/warm-paired.jsonl`; private historical receipt, unavailable in a repository checkout)，同目录cold-*.jsonl为20次冷态配对；正文全部来自上述合成素材。
-- 最终canonical检查 (`/Users/longbiao/Library/Logs/ChatType/polish-cache-a-20261110/check-final.log`; private historical receipt, unavailable in a repository checkout)
+- 统计JSON (`~/Library/Logs/ChatType/polish-cache-a-20261110/comparison-summary.json`; private historical receipt, unavailable in a repository checkout)
+- 暖态60次原始配对 (`~/Library/Logs/ChatType/polish-cache-a-20261110/warm-paired.jsonl`; private historical receipt, unavailable in a repository checkout)，同目录cold-*.jsonl为20次冷态配对；正文全部来自上述合成素材。
+- 最终canonical检查 (`~/Library/Logs/ChatType/polish-cache-a-20261110/check-final.log`; private historical receipt, unavailable in a repository checkout)
 - [EGM复核](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/docs/reviews/polish-speed-options-2026-11-10.md)
 
 109安装包与配置备份位于本机Caches/chat-type/polish-cache-a/R109-installed和Application Support/ChatType/polish-cache-a；回滚沿canonical install，保留后续用户数据。当前ChatGPT私有账户端点依赖保持，后端延迟仍占主要剩余耗时。

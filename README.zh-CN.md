@@ -58,6 +58,7 @@ open -g /Applications/ChatType.app
 
 - [架构](docs/architecture.md)：运行链、服务、持久化与设置状态归属。
 - [运维](docs/operations.md)：诊断、服务边界与安装版验收。
+- [公开示例](docs/privacy-fixtures.md)：虚构测试资料与历史结果的匿名摘要。
 - [全面清理方案与处置](docs/cleanup-2026-11-16.md)：依据、保留能力与交付状态。
 - [历史证据](docs/history.md)：固定提交中的旧方案与保留的实验结果。
 - [更新记录](CHANGELOG.md)：版本历史。

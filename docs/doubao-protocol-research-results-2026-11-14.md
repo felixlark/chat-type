@@ -12,7 +12,7 @@
 
 这是后端可行性证明，不能等同于正式产品通过验收。样本只有一条本地合成语音，识别把“只讨论”写成“之讨论”，接续整理未充分清除旧时间与改口，质量门槛尚未通过。热词生效、长语音跨 VAD 合并、真实麦克风中断、凭据过期和长期服务条件仍需验证。
 
-完整证据位于[本轮日志目录](</Users/longbiao/Library/Logs/ChatType/doubao-research/20261114/>)；工具源码位于[隔离研究目录](</Users/longbiao/Library/Application Support/ChatType/DoubaoResearch/>)，没有写入产品 Sources。
+完整证据位于本轮日志目录 (`~/Library/Logs/ChatType/doubao-research/20261114/`; private local receipt)；工具源码位于隔离研究目录 (`~/Library/Application Support/ChatType/DoubaoResearch/`; private local receipt)，没有写入产品 Sources。
 
 ## 研究对象与证据等级
 
@@ -32,11 +32,11 @@ doctor 的引擎、架构、原生组件、Java 与注册检查均通过；另�
 
 豆包整个主程序的默认分析出现 330 秒 provider 超时；扩大到 900 秒后，客户端请求也到达期限。日志有 `ObjcMessageAnalyzer.findMessages` 数组越界异常，未确认内存不足。随后按线程证据缩减本目标的全局推断：在独立研究进程中关闭 `Objective-C Message Analyzer`、`Demangler Swift`、`Decompiler Switch Analysis`、`Call Convention ID` 及与覆盖配置不兼容的 checkpoint。两次中间尝试由研究者主动停止、核对清理后重启，不能记成自然超时。没有改变全局引擎默认配置。
 
-**最终配置已在豆包本体通过：分析 240 秒，含请求开销约 249.8 秒，取得 `0x100c8bc5c` 请求构造函数的完整反编译文本（3,251 UTF-16 单元），另取得域名访问函数 `0x100bf1a38` 返回全局地址的结果。** 原始反编译 Evidence 为 `ev_2a65ffc1183b9596a8c4327ae9552baab8b55b8b2b17284da547507078ae93b2`；见 [REA 导出包](</Users/longbiao/Library/Logs/ChatType/doubao-research/20261114/rea-doubao-evidence.json>)及 `ghidra-target-profile-final.json`。它与 Apple 反汇编共同支撑五字段整理请求，不是只做小函数探针。
+**最终配置已在豆包本体通过：分析 240 秒，含请求开销约 249.8 秒，取得 `0x100c8bc5c` 请求构造函数的完整反编译文本（3,251 UTF-16 单元），另取得域名访问函数 `0x100bf1a38` 返回全局地址的结果。** 原始反编译 Evidence 为 `ev_2a65ffc1183b9596a8c4327ae9552baab8b55b8b2b17284da547507078ae93b2`；见 REA 导出包 (`~/Library/Logs/ChatType/doubao-research/20261114/rea-doubao-evidence.json`; private local receipt)及 `ghidra-target-profile-final.json`。它与 Apple 反汇编共同支撑五字段整理请求，不是只做小函数探针。
 
 覆盖仍有限：关闭上述分析器会减少 Swift 类型／调用约定、动态分支和 Objective-C 消息引用的恢复；其他函数出现 VarnodeContext 错误，伪代码也有未恢复的 Swift 寄存器语义，不能当作原源码或完整程序还原。所需四条 Evidence 已导出；最终 REA 状态 `open=false / cleanup_pending=false`，本轮客户端正常关闭，没有留下分析进程。
 
-安装与执行证据：[engine-manifest.json](</Users/longbiao/Library/Logs/ChatType/doubao-research/20261114/engine-manifest.json>)、`ghidra-doctor-ready.json`、`engine-functional-probe-address.json`。当前 chat 在本轮开始时已能发现 REA；引擎新环境由同包官方 MCP SDK／stdio 连接实际加载，未要求重启用户桌面。
+安装与执行证据：engine-manifest.json (`~/Library/Logs/ChatType/doubao-research/20261114/engine-manifest.json`; private local receipt)、`ghidra-doctor-ready.json`、`engine-functional-probe-address.json`。当前 chat 在本轮开始时已能发现 REA；引擎新环境由同包官方 MCP SDK／stdio 连接实际加载，未要求重启用户桌面。
 
 ## 三条不同的认证／传输链
 
@@ -121,7 +121,7 @@ doctor 的引擎、架构、原生组件、Java 与注册检查均通过；另�
 
 首个 ASR 探针总时长 10,881 ms，包含配置、编码、按实时节奏上传与接收；接续整理请求 647 ms。它们不是安装版 F5→粘贴时间，不能直接与旧产品对照表比较或宣称提速比例。
 
-主要证据：[full-chain-result.json](</Users/longbiao/Library/Logs/ChatType/doubao-research/20261114/full-chain-result.json>)、`asr-file-result.json`、`asr-cached-file-result.json`、`asr-cancel-result.json`、`organization-from-asr-result.json`。独立文字正例的初始文件曾被完整链探针覆盖，现从本任务原始工具回执恢复到 [organization-controlled-text-result.json](</Users/longbiao/Library/Logs/ChatType/doubao-research/20261114/organization-controlled-text-result.json>)，保留原回执关联；没有为补证重新请求服务。取消记录曾把总编码字节标为上传字节，已纠正为 encoded_audio_bytes_total；该次实际发送字节未计量，保留为未知，不能宣称已上传整段。
+主要证据：full-chain-result.json (`~/Library/Logs/ChatType/doubao-research/20261114/full-chain-result.json`; private local receipt)、`asr-file-result.json`、`asr-cached-file-result.json`、`asr-cancel-result.json`、`organization-from-asr-result.json`。独立文字正例的初始文件曾被完整链探针覆盖，现从本任务原始工具回执恢复到 organization-controlled-text-result.json (`~/Library/Logs/ChatType/doubao-research/20261114/organization-controlled-text-result.json`; private local receipt)，保留原回执关联；没有为补证重新请求服务。取消记录曾把总编码字节标为上传字节，已纠正为 encoded_audio_bytes_total；该次实际发送字节未计量，保留为未知，不能宣称已上传整段。
 
 ## 热词、上下文与来源限制
 

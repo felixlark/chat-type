@@ -2,6 +2,8 @@ import Foundation
 import Testing
 @testable import ChatType
 
+// All names and organizations below are fictional test fixtures.
+
 @Test
 func terminologyPolicyRemovesBulkSegmentationAndGenericDomainSources() {
     let entries = [
@@ -19,29 +21,29 @@ func terminologyPolicyRemovesBulkSegmentationAndGenericDomainSources() {
 @Test
 func terminologyPolicySeparatesNamesUnitsAndTrailingPositions() {
     let entries = [
-        policyTerm("刘鑫财 漳州龙轴组织部 部长", source: "smart-shadow-weixin-remark"),
-        policyTerm("郑计阮-厦大车队总经理", source: "macos-contacts"),
-        policyTerm("易惠科技总经理、易联众集团副总裁", source: "macos-contacts"),
-        policyTerm("刘伟榕老师", source: "macos-contacts"),
+        policyTerm("周明轩 云城示例组织部 部长", source: "smart-shadow-weixin-remark"),
+        policyTerm("吴语桐-示例车队总经理", source: "macos-contacts"),
+        policyTerm("示例甲科技总经理、示例乙集团副总裁", source: "macos-contacts"),
+        policyTerm("沈初夏老师", source: "macos-contacts"),
         policyTerm("博士，教授", source: "macos-contacts"),
-        policyTerm("杭电校长、浙大控制系教授", source: "smart-shadow-weixin-remark"),
-        policyTerm("厦门金联云投资有限合伙企业", source: "smart-shadow-weixin-remark"),
+        policyTerm("云城大学校长、海城控制系教授", source: "smart-shadow-weixin-remark"),
+        policyTerm("云城示例投资有限合伙企业", source: "smart-shadow-weixin-remark"),
         policyTerm("Alice Smith", source: "apple-contacts-nickname"),
     ]
 
     let sanitized = TerminologyPolicy.sanitizedEntries(entries)
 
     #expect(sanitized.map(\.original) == [
-        "刘鑫财",
-        "漳州龙轴组织部",
-        "郑计阮",
-        "厦大车队",
-        "易惠科技",
-        "易联众集团",
-        "刘伟榕",
-        "杭电",
-        "浙大控制系",
-        "厦门金联云投资有限合伙企业",
+        "周明轩",
+        "云城示例组织部",
+        "吴语桐",
+        "示例车队",
+        "示例甲科技",
+        "示例乙集团",
+        "沈初夏",
+        "云城大学",
+        "海城控制系",
+        "云城示例投资有限合伙企业",
         "Alice Smith",
     ])
 }

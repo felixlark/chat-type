@@ -2,7 +2,7 @@
 
 > Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
 
-日期：2026-11-10。文档编号 CT-VOXT-20261110，候选 v3。范围：技术调查、GSE 方案和验收标准。产品负责人：Longbiao；本 chat 维护方案。实施、模型下载、安装和默认路径切换待单独批准。
+日期：2026-11-10。文档编号 CT-VOXT-20261110，候选 v3。范围：技术调查、GSE 方案和验收标准。产品负责人：用户；本 chat 维护方案。实施、模型下载、安装和默认路径切换待单独批准。
 
 ## 1. 建议与目标
 

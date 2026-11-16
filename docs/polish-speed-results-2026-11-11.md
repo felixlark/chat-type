@@ -71,6 +71,6 @@ Sol低思考没有带来本轮速度收益。长句标准/简洁实际分别74/6
 ## 可复核记录
 
 - 计划：[评测边界与判据](polish-speed-evaluation-2026-11-11.md)。既有短句完整polish中位≤1.5秒、中长改善≥30%、p95不劣化及保真要求未降低。
-- 脱敏统计：`/Users/longbiao/Library/Logs/ChatType/polish-speed-20261111/combined-summary.json`，保留每组结构完成/尝试、分层中位和样本p95。
-- 私有原始记录：`/Users/longbiao/Library/Application Support/ChatType/PolishSpeedEvaluation/20261111/` 下四个结果jsonl及manifest；含用户正文，仅本机消费。
-- 构建/安装/检查：`/Users/longbiao/Library/Logs/ChatType/polish-speed-20261111/`。未提交、未推送；保留其他owner未提交改动。
+- 脱敏统计：`~/Library/Logs/ChatType/polish-speed-20261111/combined-summary.json`，保留每组结构完成/尝试、分层中位和样本p95。
+- 私有原始记录：`~/Library/Application Support/ChatType/PolishSpeedEvaluation/20261111/` 下四个结果jsonl及manifest；含用户正文，仅本机消费。
+- 构建/安装/检查：`~/Library/Logs/ChatType/polish-speed-20261111/`。未提交、未推送；保留其他owner未提交改动。

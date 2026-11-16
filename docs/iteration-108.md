@@ -10,7 +10,7 @@
 
 ## Pstack 安装与执行
 
-通过官方 skill-installer 安装 `cursor/plugins` 上游 Pstack 0.15.36，提交 `6b0300214a09fd6029cfb7077043125758cd1fd2`，58 个技能位于 `/Users/longbiao/.codex/skills/pstack/`。本轮直接读取 how、architect、arena 及相关原则。新技能目录供后续回合发现。
+通过官方 skill-installer 安装 `cursor/plugins` 上游 Pstack 0.15.36，提交 `6b0300214a09fd6029cfb7077043125758cd1fd2`，58 个技能位于 `~/.codex/skills/pstack/`。本轮直接读取 how、architect、arena 及相关原则。新技能目录供后续回合发现。
 
 本机原生子代理暴露 GPT 系列，Pstack 默认 Claude/Grok runner 不在可用目录。本轮使用继承模型的两个独立架构候选，跨模型 cross-judge 记为能力缺口。EGM 使用 fresh-context 原生 reviewer，按实际结果记录。
 
@@ -120,7 +120,7 @@ Pstack GLM 候选 A/B 分别位于 `/tmp/chattype-108-glm-a.md`、`/tmp/chattype
 
 ### 凭据、请求与设置
 
-- 新增可注入 `GLMKeyStoring`，提供 load/save/contains；生产使用独立 Keychain service `me.longbiaochen.ChatType.GLMAPIKey`，account `default`，沿 SecItemAdd/Update 范式；测试用内存实现。UI只通过contains读保存状态，SecureField仅保存新输入，保存成功清空；配置、日志、报告与历史均不写 Key。
+- 新增可注入 `GLMKeyStoring`，提供 load/save/contains；生产使用独立 Keychain service the existing GLM Keychain service，account `default`，沿 SecItemAdd/Update 范式；测试用内存实现。UI只通过contains读保存状态，SecureField仅保存新输入，保存成功清空；配置、日志、报告与历史均不写 Key。
 - `TextPolisher` 在选择 GLM 后只访问 GLM store；ChatGPT 分支只取 OAuth。发送前校验原 ChatGPT endpoint 为已审计 HTTPS ChatGPT host；固定接口拒绝全部重定向（包括同host、异port或HTTPS降级），OAuth 和 GLM key 各自绑定受批准目的地。
 - GLM endpoint 固定 `https://open.bigmodel.cn/api/paas/v4/chat/completions`，model 固定 `glm-4.7-flash`；`stream=true`、`thinking.type=disabled`，messages复用原完整 prompt、术语与全文，temperature/max_tokens沿现有配置。provider失败继续经原 pipeline 的规范化文本回退，取消向网络任务传播；保持一次插入和截断保护。
 - GLM SSE 累积 `choices[0].delta.content`。非空内容且 `finish_reason=stop` 视为语义完成，及时结束传输；`length`、filter、error、坏JSON、仅[DONE]以及无stop的EOF均失败。选择候选A的stop语义终止，避免额外等待连接关闭。仅接收 content，忽略 reasoning_content。

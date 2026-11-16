@@ -251,7 +251,7 @@ func configDecodeRemovesRetiredBulkSourcesAndCleansContactPositions() throws {
             },
             {
               "type": "term",
-              "original": "刘鑫财 漳州龙轴组织部 部长",
+              "original": "周明轩 云城示例组织部 部长",
               "aliases": [],
               "source": "smart-shadow-weixin-remark",
               "usageCount": 0,
@@ -274,8 +274,8 @@ func configDecodeRemovesRetiredBulkSourcesAndCleansContactPositions() throws {
     let decoded = try JSONDecoder().decode(AppConfig.self, from: json)
 
     #expect(decoded.transcription.terminology.entries.map(\.original) == [
-        "刘鑫财",
-        "漳州龙轴组织部",
+        "周明轩",
+        "云城示例组织部",
         "ChatType",
     ])
 }

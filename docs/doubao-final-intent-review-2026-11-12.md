@@ -36,4 +36,4 @@ ChatType媒体分流三轮均保留有效关系。权限短句第三轮保留ASR
 
 原速度数据及其限制不变，本次未重测125或将新候选拼成F5时间。后续候选须逐项对照同六条意图，减少真实新增错误并保持最终质量；不能因为豆包也有错误就放宽保真合同。纯英文和更广场景仍缺覆盖，默认切换仍由用户在合格实证后决定。
 
-私有证据在[本机评测目录](</Users/longbiao/Library/Application Support/ChatType/PolishSpeedEvaluation/20261112/>)：`comparison-intent-review-input-36.jsonl`及manifest、裁决合同、主Agent初判、最终36行裁决、独立审读与两项裁决修订记录。输入SHA为`0794cd1bb4eeab9ded06f418c35ba87c15a23aa7fd79dce2816e8a00ae4b9c0f`。独立审读确认36/36终稿及18份ASR实际读取，合同0 Blocker/0 Major；其未重读原声/Recovery本体，来源匹配由主Agent消费原保存记录核对。模型/总token工具未暴露，保持未知。
+私有证据在本机评测目录 (`~/Library/Application Support/ChatType/PolishSpeedEvaluation/20261112/`; private local receipt)：`comparison-intent-review-input-36.jsonl`及manifest、裁决合同、主Agent初判、最终36行裁决、独立审读与两项裁决修订记录。输入SHA为`0794cd1bb4eeab9ded06f418c35ba87c15a23aa7fd79dce2816e8a00ae4b9c0f`。独立审读确认36/36终稿及18份ASR实际读取，合同0 Blocker/0 Major；其未重读原声/Recovery本体，来源匹配由主Agent消费原保存记录核对。模型/总token工具未暴露，保持未知。

@@ -182,7 +182,7 @@ History对cancelled/interrupted、已有partial标记及PCM中断检测统一请
 
 ### B. 费用、凭据和数据去向是前置门禁
 
-- 未经 Longbiao 在当前请求明确授权，禁止调用或添加任何按量收费端点，包括 `api.openai.com/v1/audio/transcriptions`。
+- 未经用户在当前请求明确授权，禁止调用或添加任何按量收费端点，包括 `api.openai.com/v1/audio/transcriptions`。
 - ChatGPT OAuth token 不能被当作 OpenAI Platform API 免费凭证。
 - token 只能发往仓库中固定审计过的官方 OpenAI/ChatGPT host，绝不发送到用户自定义兼容地址。
 - 新增任何 provider、网络域名、系统权限、Cookie 使用或数据去向，必须先说明费用、凭据、数据是否离机、质量和失败模式，并取得产品负责人确认。

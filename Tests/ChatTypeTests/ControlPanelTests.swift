@@ -103,11 +103,11 @@ private func rule(_ from: String, _ to: String) -> TerminologyEntry {
 }
 
 @Test func importedChineseFragmentsStayStableAcrossSaveAndReload() {
-    let imported = AppleContactRemarkImporter.entries(from: ["张明 厦大-实验室", "Alice Smith", "李四-研发部"], importedAt: "test", source: "smart-shadow-weixin-remark")
+    let imported = AppleContactRemarkImporter.entries(from: ["张明 示例大学-实验室", "Alice Smith", "李四-研发部"], importedAt: "test", source: "smart-shadow-weixin-remark")
     let saved = TerminologyPolicy.sanitizedEntries(imported)
     let reloaded = TerminologyPolicy.sanitizedEntries(saved)
     #expect(saved == reloaded)
-    #expect(saved.map(\.original) == ["张明", "厦大", "实验室", "Alice Smith", "李四", "研发部"])
+    #expect(saved.map(\.original) == ["张明", "示例大学", "实验室", "Alice Smith", "李四", "研发部"])
 }
 
 @Test func vocabularyEditingCannotTargetShiftedOrReplacedEntries() throws {

@@ -60,9 +60,10 @@ def main():
             duration = write_wav(root / f"{name}.wav", np.concatenate(samples))
             cases.append({"id": name, "audio": name + ".wav", "kind": "human-reading" if len(chosen) == 1 else "human-reading-assembled", "layer": layer, "language": "en", "durationSeconds": duration, "reference": " ".join(item[2] for item in chosen), "referenceKind": "source-published-transcript", "sourceClipIDs": [item[0] for item in chosen], "source": source["repo"] + "@" + source["revision"]})
 
+    # Fictional fixtures only; never seed this corpus from a real address book.
     short = [
         "请用 pstack 评审 SmartShadow，先暂缓发布；只改设置页，保留原有整段润色流程。",
-        "请把陈龙彪、李卓玟和戴锦钗的名字写准确，今天下午三点讨论。",
+        "请把顾清禾、陶星澜和周远舟的名字写准确，今天下午三点讨论。",
         "这幅画的 smart shade 是普通阴影，诊断结果写进报告，保留原来的英文。",
         "会议从周二改为周三，预算改为三千五百元，先保存草稿，等确认再发送。",
     ]
@@ -71,7 +72,7 @@ def main():
         "第二项任务是整理语音输入的测试材料。中文和英文要分别统计，姓名和工程术语需要单独核对，普通词语继续保留原意。",
         "第三项任务只修改本地转写流程。原始录音需要完整保存，停录之后检查末尾内容，失败时保留材料以便重新识别。",
         "第四项任务使用 pstack 评审 SmartShadow。请保留完整上下文和前面的限制条件，先暂缓发布，等整个方案核对完成再讨论上线。",
-        "第五项任务需要联系陈龙彪、李卓玟和戴锦钗。这三个人的名字请按照已有词库准确书写，先把消息保存为草稿，等待人工确认。",
+        "第五项任务需要联系顾清禾、陶星澜和周远舟。这三个人的名字请按照已有词库准确书写，先把消息保存为草稿，等待人工确认。",
         "第六项任务检查 OpenClaw 的连接状态。请先看日志中的错误分类，再核对最近一次成功请求，保留当前会话和已经完成的工作。",
         "第七项任务调整会议安排。原定下周二上午十点改为下周三下午三点，预算从三千元改为三千五百元，请以最后这组时间和金额为准。",
         "第八项任务保留这幅画的普通阴影，英文原文是 smart shade。诊断结果属于独立报告，原来已经确认的内容继续保存。",
