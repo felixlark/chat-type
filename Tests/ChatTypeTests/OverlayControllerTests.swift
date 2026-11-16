@@ -8,7 +8,7 @@ func minimalOverlayPresetUsesNineBarVoiceGlyph() {
 
     #expect(preset.pillHeight == 44)
     #expect(preset.cornerRadius == 15)
-    #expect(preset.topInset == 24)
+    #expect(preset.topInset == 16)
     #expect(preset.waveformBarCount == 9)
     #expect(preset.showsTranscriptPreview == false)
     #expect(preset.inlineCancelControlSize == 14)
@@ -19,6 +19,7 @@ func minimalOverlayPresetUsesNineBarVoiceGlyph() {
 func outputBadgeAndSymbolRemainInsideCompactStatusHUD(outcome: InjectionOutcome) {
     let overlay = OverlayController(presentsPanel: false)
     overlay.showResult(text: "终稿", outcome: outcome)
+    overlay.debugAcknowledgeCaptionDraw()
     let snapshot = overlay.debugSnapshot
     #expect(snapshot.panelHeight == 44)
     #expect(snapshot.badgeFrame.width == 20 && snapshot.badgeFrame.height == 20)
@@ -144,7 +145,7 @@ func overlayRecordingWidthExpandsToFitTimer() {
 
 @MainActor
 @Test
-func overlayPanelPlacementDefaultsToBottomSafeArea() {
+func overlayPanelPlacementDefaultsBelowTopSafeArea() {
     let preset = OverlayStylePreset.typeWhisperIndicator
     let visibleFrame = CGRect(x: 40, y: 30, width: 1440, height: 860)
     let frame = OverlayController.panelFrame(
@@ -153,7 +154,7 @@ func overlayPanelPlacementDefaultsToBottomSafeArea() {
         topInset: preset.topInset
     )
 
-    #expect(frame.minY == visibleFrame.minY + 24)
+    #expect(frame.maxY == visibleFrame.maxY - 16)
     #expect(abs(frame.midX - visibleFrame.midX) < 0.0001)
     #expect(visibleFrame.contains(frame))
 }
@@ -167,7 +168,7 @@ func overlayPanelPlacementFitsSmallAndOffsetScreens() {
     )
     #expect(visibleFrame.contains(frame))
     #expect(frame.width == 180)
-    #expect(frame.minY == visibleFrame.maxY - frame.height)
+    #expect(frame.minY == visibleFrame.minY)
     #expect(frame.midX == visibleFrame.midX)
 }
 
@@ -226,6 +227,7 @@ func overlayControllerHidesInlineCancelAfterSuccess() {
     #expect(overlay.debugSnapshot.isTimerVisible == false)
 
     overlay.showResult(text: "Done", outcome: .pasted)
+    overlay.debugAcknowledgeCaptionDraw()
     #expect(overlay.debugSnapshot.isCancelControlVisible == false)
     #expect(overlay.debugSnapshot.isRetryControlVisible == false)
 }
@@ -347,9 +349,9 @@ private actor OverlayDeadlineGate {
         overlay.showRecording(elapsedText: "00:00")
         overlay.updateTranscriptPreview("保留全文直到终态结束。")
         if isError { overlay.showError("普通错误") }
-        else { overlay.showResult(text: "完成", outcome: .pasted) }
+        else { overlay.showResult(text: "完成", outcome: .pasted); overlay.debugAcknowledgeCaptionDraw() }
         let duration = await gate.started()
-        #expect(duration == (isError ? 2 : 1.2))
+        #expect(duration == (isError ? 2 : 1.5))
         let deadline = overlay.debugHideTask
         for _ in 0..<8 { overlay.refreshGeometry() }
         overlay.updateRecording(level: 0.8, elapsedText: "00:09")
@@ -370,6 +372,7 @@ private actor OverlayDeadlineGate {
     let gate = OverlayDeadlineGate()
     let overlay = OverlayController(presentsPanel: false, hideDelay: { await gate.sleep(seconds: $0) })
     overlay.showResult(text: "完成", outcome: .copiedToClipboard(reason: .noEditableTarget))
+    overlay.debugAcknowledgeCaptionDraw()
     _ = await gate.started()
     let oldDeadline = overlay.debugHideTask
     overlay.showRecording(elapsedText: "00:00")

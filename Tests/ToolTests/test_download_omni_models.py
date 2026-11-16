@@ -38,6 +38,13 @@ class ModelDownloadsTests(unittest.TestCase):
             self.assertTrue((directory / "verified-manifest.json").exists())
             return count
 
+    def test_default_manifest_is_available_without_network(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch("sys.argv", ["download", "--model", "not-a-manifest-model", "--receipt", str(Path(temporary) / "receipt.json")]), patch.object(downloader.urllib.request, "build_opener") as factory:
+                with self.assertRaisesRegex(ValueError, "Unknown model id"):
+                    downloader.main()
+                factory.assert_not_called()
+
     def test_completed_partial_is_verified_without_network(self):
         self.assertEqual(self.exercise(b"pinned-model", []), 0)
 

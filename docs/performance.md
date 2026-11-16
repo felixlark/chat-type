@@ -1,4 +1,6 @@
-# ChatType transcription performance
+# Historical ChatType transcription performance
+
+These are historical measurements for the configurations recorded below, not a performance claim for the current candidate. Current defaults and failure behavior are maintained in [PRODUCT](../PRODUCT.md).
 
 ## 2026-08-04 baseline
 
@@ -44,6 +46,6 @@ All five runs succeeded. This fixture is suitable for repeatable installed-build
 
 ## API research decision
 
-OpenAI's current file-transcription guide recommends [`gpt-transcribe`](https://developers.openai.com/api/docs/guides/speech-to-text) for completed recordings and recommends Realtime transcription for audio that is still arriving. `gpt-transcribe` supports prompt, keyword, and language hints for domain terminology and code-switching.
+The API research note recorded the file-transcription guide recommending [`gpt-transcribe`](https://developers.openai.com/api/docs/guides/speech-to-text) for completed recordings and recommends Realtime transcription for audio that is still arriving. `gpt-transcribe` supports prompt, keyword, and language hints for domain terminology and code-switching.
 
-ChatType's default product path currently uses a ChatGPT account and the private ChatGPT transcription bridge, not an OpenAI Platform API key. Moving the default to `/v1/audio/transcriptions` or Realtime would introduce a new credential and transport architecture. This upgrade therefore keeps the no-key default path and improves its measured local and rewrite stages. The public `gpt-transcribe` route remains an explicit future product migration rather than a silent provider switch.
+At the time of this historical upgrade, ChatType's default path used a ChatGPT account and the private ChatGPT transcription bridge, not an OpenAI Platform API key. Moving the default to `/v1/audio/transcriptions` or Realtime would introduce a new credential and transport architecture. This upgrade therefore keeps the no-key default path and improves its measured local and rewrite stages. The public `gpt-transcribe` route remains an explicit future product migration rather than a silent provider switch.

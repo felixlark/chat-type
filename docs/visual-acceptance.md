@@ -1,43 +1,35 @@
-# ChatType Visual Acceptance
+# ChatType visual and native acceptance
 
-Use this chain for ChatType HUD or interaction-facing visual work after unit/integration tests pass.
+Unit/integration checks, packaged identity, demo rendering and real dictation prove different parts of delivery. The current journey and product contract are maintained in [operations](operations.md) and [PRODUCT](../PRODUCT.md).
 
-## Required Command
+## Existing installed candidate
 
-```sh
-./scripts/visual_acceptance.sh --install
+When the intended signed candidate is already installed, collect optional demo evidence without rebuilding it:
+
+```bash
+./scripts/visual_acceptance.sh
 ```
 
-The command packages the current build, installs it to `/Applications/ChatType.app`, launches one installed-app demo process per HUD state through LaunchServices with `CHATTYPE_OVERLAY_DEMO=1` and `--overlay-demo-state`, discovers the ChatType HUD window with CoreGraphics, captures that window with `screencapture -l`, and runs the screenshot verifier.
+Use `--install` only when this invocation is responsible for the one intended package/install pass. The script launches each demo state through LaunchServices at `/Applications/ChatType.app`, captures its identified window and verifies visible/different state images. With separate status and caption windows, window selection requires owner ChatType and exact title `ChatType Status HUD`; captions use `ChatType Captions`, and the first visible app window is not a reliable HUD identity. Verify selected CGWindowID against the installed-app window before treating it as HUD evidence.
 
-The script intentionally stops each transient overlay-demo process between HUD states. That cleanup is not the final user-review state. A successful run must relaunch the normal installed app from `/Applications/ChatType.app`, verify that ChatType is running, and leave it running.
+Both successful and failed demo runs must restore the normal installed runtime. Failure cleanup waits for the demo's `open -W` process to finish before opening a fresh normal instance, checks it remains running, and preserves the original failure code.
 
-## Evidence
+## Evidence location
 
-Each run writes a timestamped directory under:
+Default output is under the user's Library logs, outside the repository:
 
 ```text
-dist/visual-acceptance/<run-id>
+~/Library/Logs/ChatType/visual-acceptance/<run-id>/
 ```
 
-The directory must contain HUD-window screenshots:
+`CHATTYPE_VISUAL_OUT_ROOT` can select another approved log/artifact directory. Each run keeps recording, processing, result, error and retryable-error PNGs, verification.txt, the per-state logs and summary.md. Evidence must identify source candidate, installed version/build and the actual status/caption windows covered.
 
-- `01-recording.png`
-- `02-processing.png`
-- `03-result.png`
-- `04-error.png`
-- `05-retryable-error.png`
-- `verification.txt`
-- `summary.md`
+## Native interaction
 
-## Closeout Rule
+Use official Computer Use on the installed app with accurate PID/window_id, background actions and readback; preserve human focus and windows. Agent-owned windows belong on the rightmost physical screen. Physical F5 and continuous speech/focus switching require the prepared user test when the supported background route cannot reproduce them. Do not substitute a demo, generated subtitle or injected unit-test callback for real microphone/output acceptance.
 
-For ChatType UI closeouts, report:
+Check only changed journey branches and reuse still-valid evidence: actual F5/F5 audio, live captions, exactly one confirmed output into the captured target, ESC/close cancellation and re-entry, original-route Retry/error preservation, the clipboard outcome and affected Settings navigation/save. Record any missing branch precisely and continue until it is observed.
 
-- the visual acceptance artifact directory
-- whether `verification.txt` passed
-- the installed-app live flow used for interaction acceptance
-- the observed paste-versus-clipboard result when transcription/injection behavior was touched
-- the normal installed ChatType runtime state left for user review
+For a final package containing only resource/document changes, compare executable/framework identity and the relevant configuration to the live-accepted candidate before reusing its behavior evidence. Independently verify the final package version, signature, resource contents, installed identity and normal runtime. A changed version number alone does not prove or invalidate a particular behavior claim.
 
-The scripted visual run does not replace Computer Use interaction acceptance. It proves the installed build can render the expected HUD states and retry affordance without relying on full-screen screenshots, foreground browser state, or guessed screen bands. Do not finish a ChatType GUI closeout by quitting or killing the app; if a script performs internal demo cleanup, relaunch `/Applications/ChatType.app` before reporting completion.
+Leave the normal `/Applications/ChatType.app` running. For Settings cleanup, leave its verified window visible when practical. Report implemented, checked, packaged, installed, live accepted and left running separately with candidate-bound evidence.

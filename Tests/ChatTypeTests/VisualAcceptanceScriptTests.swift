@@ -32,6 +32,8 @@ func visualAcceptanceWindowDiscoveryUsesCoreGraphicsWindowList() throws {
 
     #expect(script.contains("CGWindowListCopyWindowInfo"))
     #expect(script.contains("kCGWindowOwnerName"))
+    #expect(script.contains("kCGWindowName"))
+    #expect(script.contains("ChatType Status HUD"))
     #expect(script.contains("kCGWindowNumber"))
     #expect(script.contains("kCGWindowBounds"))
 }

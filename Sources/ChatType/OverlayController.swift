@@ -2,23 +2,30 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import QuartzCore
 
 @MainActor
 protocol OverlayControlling: AnyObject {
     var onCancel: (@MainActor () -> Void)? { get set }
     var onRetry: (@MainActor () -> Void)? { get set }
 
+    func beginSession(context: LaunchAppContext?, captionsEnabled: Bool)
     func showRecording(elapsedText: String)
     func updateRecording(level: CGFloat, elapsedText: String)
     func updateTranscriptPreview(_ text: String)
     func showProcessing()
+    func showConfirming()
     func showResult(text: String, outcome: InjectionOutcome)
     func showError(_ message: String)
+    func showOutputUnconfirmed(_ message: String)
     func showRetryableError(_ message: String)
     func hide()
 }
 
 extension OverlayControlling {
+    func beginSession(context: LaunchAppContext?, captionsEnabled: Bool) {}
+    func showConfirming() { showProcessing() }
+    func showOutputUnconfirmed(_ message: String) { showError(message) }
     func updateTranscriptPreview(_ text: String) {}
 }
 
@@ -40,18 +47,13 @@ final class OverlayController: OverlayControlling {
     private let trailingTimerLabel = NSTextField(labelWithString: "")
     private let textStack = NSStackView()
     private let trailingAccessoryStack = NSStackView()
-    private let dragHandle = OverlayDragHandle()
-    private var anchor: CGPoint?
-    private var userAnchor: CGPoint?
-    private var dragSession: (pointer: CGPoint, frame: CGRect)?
+    private let caption: OverlayCaptionPanel
+    private var captionsEnabled = true
+    private var pinnedScreenNumber: NSNumber?
     private var isPresented = false
     private var presentationGeneration = 0
     private let hideDelay: @Sendable (Double) async throws -> Void
-    private var geometryOverride: OverlayFocusGeometry?
     private var visibleOverride: CGRect?
-    private var needsPositionAdjustment = false
-    private var geometry = OverlayFocusGeometry(protected: [], hasEditableGeometry: false)
-    private var nextGeometryRead = Date.distantPast
     private var geometryTimer: Timer?
     private var hideTask: Task<Void, Never>?
     private var processingTimer: Timer?
@@ -59,7 +61,6 @@ final class OverlayController: OverlayControlling {
     private var displayedLevels: [CGFloat]
     private var currentState: OverlayVisualState
     private var escapeHotkeyMonitor: HotkeyMonitor?
-    private var placementSession = OverlayPlacementSession()
     var onCancel: (@MainActor () -> Void)?
     var onRetry: (@MainActor () -> Void)?
 
@@ -71,6 +72,7 @@ final class OverlayController: OverlayControlling {
             try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
         }
     ) {
+        self.caption = OverlayCaptionPanel(presentsPanel: presentsPanel)
         self.presentsPanel = presentsPanel
         self.hideDelay = hideDelay
         displayedLevels = Array(
@@ -89,6 +91,7 @@ final class OverlayController: OverlayControlling {
             defer: false
         )
         panel.isFloatingPanel = true
+        panel.title = "ChatType Status HUD"
         panel.level = .statusBar
         panel.backgroundColor = .clear
         panel.hasShadow = true
@@ -100,16 +103,20 @@ final class OverlayController: OverlayControlling {
         self.onRetry = onRetry
 
         configureViews()
+        caption.onFinalDraw = { [weak self] in
+            guard let self, case .success = self.currentState else { return }
+            self.scheduleHide(afterSeconds: 1.5)
+        }
+    }
+
+    func beginSession(context: LaunchAppContext?, captionsEnabled: Bool) {
+        hide()
+        self.captionsEnabled = captionsEnabled
+        let screen = activeScreen(context: context)
+        pinnedScreenNumber = screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
     }
 
     func showRecording(elapsedText: String) {
-        // The coordinator also calls this when starting level updates. Do not
-        // reselect the display on that second call within the same recording.
-        if case .recording = currentState {} else {
-            placementSession.reset(); anchor = nil; userAnchor = nil
-            dragSession = nil
-            nextGeometryRead = .distantPast
-        }
         stopProcessingAnimation()
         displayedLevels = Array(
             repeating: WaveformNormalizer.minimumVisibleLevel,
@@ -132,8 +139,23 @@ final class OverlayController: OverlayControlling {
         present()
     }
 
-    // Transcript presentation belongs to the pinned input, never the status HUD.
-    func updateTranscriptPreview(_ text: String) {}
+    func updateTranscriptPreview(_ text: String) {
+        guard captionsEnabled, !text.isEmpty else { return }
+        switch currentState {
+        case .recording, .processing, .confirming: break
+        default: return
+        }
+        caption.update(text, hud: panel.frame, visible: currentVisibleFrame())
+    }
+
+    func showConfirming() {
+        transition(to: .confirming)
+        present()
+        if presentsPanel {
+            panel.displayIfNeeded()
+            CATransaction.flush()
+        }
+    }
 
     func showProcessing() {
         processingFrameIndex = 0
@@ -147,7 +169,6 @@ final class OverlayController: OverlayControlling {
     }
 
     func showResult(text: String, outcome: InjectionOutcome) {
-        _ = text
         stopProcessingAnimation()
 
         let successKind: OverlaySuccessKind
@@ -160,7 +181,9 @@ final class OverlayController: OverlayControlling {
 
         transition(to: .success(successKind))
         present()
-        scheduleHide(afterSeconds: style.successAutoHideDelay ?? 1.2)
+        if captionsEnabled, !text.isEmpty {
+            caption.update(text, final: true, hud: panel.frame, visible: currentVisibleFrame())
+        } else { scheduleHide(afterSeconds: style.successAutoHideDelay ?? 1.2) }
     }
 
     func showError(_ message: String) {
@@ -168,6 +191,12 @@ final class OverlayController: OverlayControlling {
         transition(to: .error(message))
         present()
         scheduleHide(afterSeconds: style.errorAutoHideDelay ?? 2.0)
+    }
+
+    func showOutputUnconfirmed(_ message: String) {
+        stopProcessingAnimation()
+        transition(to: .unconfirmed(message))
+        present()
     }
 
     func showRetryableError(_ message: String) {
@@ -181,15 +210,13 @@ final class OverlayController: OverlayControlling {
         hideTask = nil
         presentationGeneration += 1
         isPresented = false
-        dragSession = nil
         stopProcessingAnimation()
         hideSessionControls()
         panel.alphaValue = 0
         panel.orderOut(nil)
         currentState = .processing
-        placementSession.reset()
-        anchor = nil
-        userAnchor = nil
+        pinnedScreenNumber = nil
+        caption.reset()
         geometryTimer?.invalidate(); geometryTimer = nil
     }
 
@@ -207,8 +234,6 @@ final class OverlayController: OverlayControlling {
         positionPanel(size: panelSize(for: state))
 
         titleLabel.stringValue = state.label
-        if needsPositionAdjustment { titleLabel.stringValue += " · 拖动调整位置" }
-        titleLabel.toolTip = needsPositionAdjustment ? "拖动底部空白区域，避开当前应用按钮" : nil
         detailLabel.stringValue = state.supplementaryText ?? ""
         detailLabel.isHidden = !state.allowsSupplementaryText
         trailingTimerLabel.stringValue = state.trailingText ?? ""
@@ -223,7 +248,7 @@ final class OverlayController: OverlayControlling {
             waveformView.update(levels: levels)
             leadingBadgeView.isHidden = true
             iconView.isHidden = true
-        case .processing:
+        case .processing, .confirming:
             waveformView.isHidden = false
             waveformView.update(levels: displayedLevels)
             leadingBadgeView.isHidden = true
@@ -236,6 +261,10 @@ final class OverlayController: OverlayControlling {
                 fillColor: kind == .pasted ? ChatTypePalette.success.withAlphaComponent(0.14) : ChatTypePalette.amber.withAlphaComponent(0.16),
                 borderColor: kind == .pasted ? ChatTypePalette.success.withAlphaComponent(0.34) : ChatTypePalette.amber.withAlphaComponent(0.38)
             )
+        case .unconfirmed:
+            waveformView.isHidden = true
+            configureBadge(symbolName: "questionmark", tintColor: ChatTypePalette.amber,
+                fillColor: ChatTypePalette.amber.withAlphaComponent(0.16), borderColor: ChatTypePalette.amber.withAlphaComponent(0.38))
         case .error, .retryableError:
             waveformView.isHidden = true
             configureBadge(
@@ -279,7 +308,7 @@ final class OverlayController: OverlayControlling {
                     frame: self.processingFrameIndex,
                     barCount: self.style.waveformBarCount
                 )
-                if case .processing = self.currentState {
+                if self.currentState == .processing || self.currentState == .confirming {
                     self.waveformView.update(levels: self.displayedLevels)
                 }
             }
@@ -330,27 +359,6 @@ final class OverlayController: OverlayControlling {
         render()
     }
 
-    func beginDrag(at pointer: CGPoint) {
-        guard isPresented else { return }
-        dragSession = (pointer, panel.frame)
-    }
-
-    func updateDrag(to pointer: CGPoint) {
-        guard let drag = dragSession else { return }
-        let origin = CGPoint(x: drag.frame.minX + pointer.x - drag.pointer.x,
-                             y: drag.frame.minY + pointer.y - drag.pointer.y)
-        panel.setFrameOrigin(origin)
-    }
-
-    func endDrag(at pointer: CGPoint) {
-        guard dragSession != nil else { return }
-        updateDrag(to: pointer)
-        userAnchor = CGPoint(x: panel.frame.midX, y: panel.frame.minY)
-        dragSession = nil
-        nextGeometryRead = .distantPast
-        render()
-    }
-
     private func configureViews() {
         panelRootView.translatesAutoresizingMaskIntoConstraints = false
         panelRootView.wantsLayer = false
@@ -358,7 +366,7 @@ final class OverlayController: OverlayControlling {
             guard let self else {
                 return []
             }
-            return [self.dragHandle, self.closeButton, self.retryButton]
+            return [self.closeButton, self.retryButton]
         }
         panel.contentView = panelRootView
         panelRootView.addSubview(backgroundView)
@@ -454,18 +462,6 @@ final class OverlayController: OverlayControlling {
         trailingAccessoryStack.addArrangedSubview(retryButton)
         trailingAccessoryStack.addArrangedSubview(closeButton)
 
-        dragHandle.translatesAutoresizingMaskIntoConstraints = false
-        dragHandle.setAccessibilityLabel("拖动状态浮窗")
-        dragHandle.onBegin = { [weak self] in self?.beginDrag(at: $0) }
-        dragHandle.onChange = { [weak self] in self?.updateDrag(to: $0) }
-        dragHandle.onEnd = { [weak self] in self?.endDrag(at: $0) }
-        backgroundView.addSubview(dragHandle)
-        NSLayoutConstraint.activate([
-            dragHandle.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor),
-            dragHandle.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor),
-            dragHandle.bottomAnchor.constraint(equalTo: backgroundView.bottomAnchor),
-            dragHandle.heightAnchor.constraint(equalToConstant: style.pillHeight),
-        ])
         backgroundView.addSubview(leadingContainer)
         backgroundView.addSubview(textStack)
         backgroundView.addSubview(trailingAccessoryStack)
@@ -518,91 +514,55 @@ final class OverlayController: OverlayControlling {
         return NSSize(width: width, height: style.pillHeight)
     }
 
+    private func currentScreen() -> NSScreen? {
+        guard presentsPanel else { return nil }
+        if let pinnedScreenNumber,
+           let screen = NSScreen.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber) == pinnedScreenNumber }) { return screen }
+        let screen = activeScreen(context: nil)
+        pinnedScreenNumber = screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        return screen
+    }
+    private func currentVisibleFrame() -> CGRect {
+        visibleOverride ?? currentScreen()?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1024, height: 768)
+    }
     private func positionPanel(size: NSSize) {
-        guard dragSession == nil else { return }
-        let pinned = placementSession.resolve {
-            guard presentsPanel else { return NSRect(x: 0, y: 0, width: 1440, height: 900) }
-            return (activeScreen() ?? NSScreen.main)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        }
-        let visible: NSRect
-        if let visibleOverride { visible = visibleOverride }
-        else if presentsPanel {
-            let sameScreen = NSScreen.screens.first { $0.frame.contains(CGPoint(x: pinned.midX, y: pinned.midY)) }
-            visible = (sameScreen ?? activeScreen() ?? NSScreen.main)?.visibleFrame ?? pinned
-        } else { visible = pinned }
-        if let geometryOverride { geometry = geometryOverride }
-        else if Date() >= nextGeometryRead,
-           !presentsPanel || NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier {
-            geometry = presentsPanel ? OverlayFocusGeometry.read(visible: visible) : OverlayFocusGeometry(protected: [], hasEditableGeometry: true)
-            nextGeometryRead = Date().addingTimeInterval(0.25)
-        }
-        let preferred = userAnchor.map { CGPoint(x: $0.x - size.width / 2, y: $0.y) }
-        let placement = BottomOverlayLayout.place(size: size, visible: visible, protected: geometry.protected,
-            preferred: preferred, manual: userAnchor != nil)
-        needsPositionAdjustment = placement.needsAdjustment
-        anchor = placement.frame.origin
-        panel.setFrame(placement.frame, display: false)
+        let visible = currentVisibleFrame()
+        let screen = currentScreen()
+        let safeTop = visibleOverride == nil ? min(visible.maxY, (screen?.frame.maxY ?? visible.maxY) - (screen?.safeAreaInsets.top ?? 0)) : visible.maxY
+        panel.setFrame(TopOverlayLayout.hud(size: size, visible: visible, safeTop: safeTop), display: false)
         panelRootView.layoutSubtreeIfNeeded()
+        caption.position(hud: panel.frame, visible: visible)
     }
+    func debugSetGeometry(visible: CGRect) { visibleOverride = visible }
+    func debugAcknowledgeCaptionDraw() { caption.debugAcknowledgeFinalDraw() }
+    var debugCaptionLines: [String] { caption.displayedLines }
+    var debugCaptionFrame: CGRect { caption.frame }
 
-    func debugSetGeometry(visible: CGRect, protected: [CGRect], hasEditableGeometry: Bool = true) {
-        visibleOverride = visible
-        geometryOverride = OverlayFocusGeometry(protected: protected, hasEditableGeometry: hasEditableGeometry)
+    static func panelFrame(for size: NSSize, in visibleFrame: NSRect, topInset: CGFloat) -> NSRect {
+        TopOverlayLayout.hud(size: size, visible: visibleFrame, safeTop: visibleFrame.maxY, inset: topInset)
     }
-
-
-    static func panelFrame(
-        for size: NSSize,
-        in visibleFrame: NSRect,
-        topInset: CGFloat
-    ) -> NSRect {
-        let fittedSize = NSSize(
-            width: min(size.width, visibleFrame.width),
-            height: min(size.height, visibleFrame.height)
-        )
-        _ = topInset
-        return BottomOverlayLayout.place(size: fittedSize, visible: visibleFrame, protected: []).frame
-    }
-
-    private func activeScreen() -> NSScreen? {
+    private func activeScreen(context: LaunchAppContext?) -> NSScreen? {
+        guard presentsPanel else { return nil }
         let screens = NSScreen.screens
-        if let windowFrame = focusedWindowFrame(),
-           let index = OverlayPlacementSession.screenIndex(
-               for: windowFrame,
-               screens: screens.map(\.frame)
-           ) {
-            return screens[index]
-        }
-        let mouseLocation = NSEvent.mouseLocation
-        return screens.first(where: { $0.frame.contains(mouseLocation) })
+        if let windowFrame = focusedWindowFrame(pid: context?.processIdentifier),
+           let index = OverlayPlacementSession.screenIndex(for: windowFrame, screens: screens.map(\.frame)) { return screens[index] }
+        return NSScreen.main ?? screens.first
     }
-
-    // Read existing Accessibility authorization without requesting new permissions.
-    // AX coordinates start at the top-left of the primary display; AppKit uses bottom-left.
-    private func focusedWindowFrame() -> NSRect? {
-        guard AXIsProcessTrusted(),
-              let app = NSWorkspace.shared.frontmostApplication,
-              let primaryScreen = NSScreen.screens.first else { return nil }
-        let appElement = AXUIElementCreateApplication(app.processIdentifier)
-        var windowValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowValue) == .success,
-              let windowValue, CFGetTypeID(windowValue) == AXUIElementGetTypeID() else { return nil }
-        let window = windowValue as! AXUIElement
-        var positionValue: CFTypeRef?
-        var sizeValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionValue) == .success,
-              AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success,
-              let positionValue, CFGetTypeID(positionValue) == AXValueGetTypeID(),
-              let sizeValue, CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
-        var origin = CGPoint.zero
-        var size = CGSize.zero
-        guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &origin),
-              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size),
-              size.width > 0, size.height > 0 else { return nil }
-        return OverlayPlacementSession.appKitFrame(
-            fromAccessibility: CGRect(origin: origin, size: size),
-            primaryScreenTop: primaryScreen.frame.maxY
-        )
+    private func focusedWindowFrame(pid: pid_t?) -> NSRect? {
+        guard AXIsProcessTrusted(), let primary = NSScreen.screens.first,
+              let pid = pid ?? NSWorkspace.shared.frontmostApplication?.processIdentifier else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        let window = value as! AXUIElement
+        var p: CFTypeRef?, s: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &p) == .success,
+              AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &s) == .success,
+              let p, let s, CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return nil }
+        var point = CGPoint.zero; var size = CGSize.zero
+        guard AXValueGetValue(p as! AXValue, .cgPoint, &point), AXValueGetValue(s as! AXValue, .cgSize, &size), size.width > 0, size.height > 0 else { return nil }
+        return OverlayPlacementSession.appKitFrame(fromAccessibility: CGRect(origin: point, size: size), primaryScreenTop: primary.frame.maxY)
     }
 
     private func updateSessionControls(for state: OverlayVisualState) {
@@ -689,7 +649,6 @@ final class OverlayController: OverlayControlling {
             isTimerVisible: !trailingTimerLabel.isHidden,
             displayedTitle: titleLabel.stringValue,
             panelFrame: panel.frame,
-            userAnchor: userAnchor,
             isPresented: isPresented,
             panelWidth: panel.frame.width,
             transcript: "",
@@ -719,7 +678,6 @@ struct OverlayDebugSnapshot: Sendable, Equatable {
     let isTimerVisible: Bool
     let displayedTitle: String
     let panelFrame: CGRect
-    let userAnchor: CGPoint?
     let isPresented: Bool
     let panelWidth: CGFloat
     let transcript: String

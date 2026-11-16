@@ -53,3 +53,7 @@ Failed incremental, cloud-prefix and local-editing experiments, the paused fixed
 - [cloud_prefix_asr_research.swift](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/scripts/cloud_prefix_asr_research.swift)
 - [flash_polish_research.swift](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/scripts/flash_polish_research.swift)
 - [post_x.sh](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/scripts/post_x.sh)
+
+## Retired landing illustrations
+
+The older ChatGPT-first landing illustrations were replaced with actual installed 142 HUD/caption windows. Historical versions remain available at [the fixed prior asset tree](https://github.com/felixlark/chat-type/tree/94f85c231e2796a25c30115f4b27cd2c34cb36f6/docs/assets); current pages do not label those old illustrations as current screenshots.

@@ -12,7 +12,7 @@ The current behavior is defined by the [product contract](../PRODUCT.md). This d
 
 `DictationPipeline` performs recognition, local terminology alignment, optional whole-transcript polish, final alignment, explicit corrections and formatting. It seals stage audit data before output. Processing failure throws with evidence and never silently substitutes partial text. A deliberate provider safety decision retaining the original text is recorded separately from a transport failure.
 
-`LiveTextInput` and `InputCompositionController` own provisional presentation. `TextInjector`, `FocusedElementInspector` and `SublimeEditorBridge` own captured-target output and receipts. `OverlayController` owns the status HUD; `OverlayDragHandle` owns its pointer callbacks. Cleanup does not implement the separate top-caption proposal or alter brand rendering.
+`LiveTextInput` captures the original target and UTF-16 selection; it no longer presents draft text. `TextInjector`, `FocusedElementInspector` and `SublimeEditorBridge` own verified final output. `OverlayController` owns the top status HUD and `OverlayCaptionPanel`; `TopOverlayLayout` places both below the selected screen's live menu-bar/camera safe area. `OverlayCaptionText` selects and wraps the latest sentence, and a versioned drawing receipt starts the final reading interval after injection. No input caret/font reads are needed for captions. The old input-attached renderer and bottom/drag placement have been retired.
 
 ## Services and persistence
 

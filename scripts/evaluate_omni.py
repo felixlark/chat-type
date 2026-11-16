@@ -160,7 +160,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite", type=Path, required=True)
     parser.add_argument("--runtime", type=Path, required=True)
-    parser.add_argument("--manifest", type=Path, default=Path(__file__).resolve().parents[1] / "Sources/ChatType/Resources/Omni/models.json")
+    parser.add_argument("--manifest", type=Path, default=Path(__file__).resolve().parents[1] / "scripts/fixtures/omni-models.json")
     parser.add_argument("--models-root", type=Path, default=Path.home() / "Library/Application Support/ChatType/Models")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--rounds", type=int, default=3)

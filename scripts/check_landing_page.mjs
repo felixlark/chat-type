@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import assert from "node:assert/strict";
 
 const root = resolve(import.meta.dirname, "..");
 const html = readFileSync(resolve(root, "docs", "index.html"), "utf8");
 const assets = [
-  resolve(root, "docs", "assets", "chattype-recording.png"),
-  resolve(root, "docs", "assets", "chattype-result.png"),
+  resolve(root, "docs", "images", "top-captions-installed-142.png"),
+  resolve(root, "docs", "images", "top-hud-result-142.png"),
 ];
 
 function includes(text, label = text) {
@@ -28,7 +28,11 @@ function hasHref(href) {
 assert.match(html, /<html\s+lang=["']zh-CN["']/, "landing page should be Chinese-first");
 includes("ChatType", "product name");
 includes("F5", "F5 workflow");
-includes("ChatGPT", "ChatGPT account path");
+includes("ChatGPT", "preserved ChatGPT account path");
+includes("豆包", "current default provider");
+includes("失败不会自动切换服务", "explicit provider selection");
+includes("公开 v0.5.1 下载包可能早于当前实现", "source candidate versus public download version");
+assert.ok(!html.includes("默认走本机 ChatGPT 登录态"), "landing page must not advertise the retired default");
 includes("剪贴板", "clipboard fallback");
 includes("不是稳定公开 API", "private backend boundary");
 includes("local-first", "local-first positioning");
@@ -58,7 +62,9 @@ assert.ok(!html.includes("border-radius: 28px"), "landing page should avoid over
 
 for (const asset of assets) {
   assert.ok(existsSync(asset), `${asset} must exist`);
-  assert.ok(statSync(asset).size > 20_000, `${asset} must be a non-empty image asset`);
+  const png = readFileSync(asset);
+  assert.ok(png.length >= 24 && png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), `${asset} must be a PNG image`);
+  assert.ok(png.readUInt32BE(16) > 0 && png.readUInt32BE(20) > 0, `${asset} must have positive image dimensions`);
 }
 
 console.log("landing page content contract passed");

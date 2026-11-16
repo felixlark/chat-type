@@ -135,6 +135,7 @@ extension TextInjecting {
 
 @MainActor
 final class TextInjector: TextInjecting {
+    private static let targetUIResponseBudgetNanoseconds: UInt64 = 1_000_000_000
     private let pasteboard: NSPasteboard
     private let sendPaste: @MainActor (pid_t?) throws -> Void
     private let settleAfterPaste: @MainActor () -> Void
@@ -172,10 +173,25 @@ final class TextInjector: TextInjecting {
         }
         // Keep post -> receipt synchronous on MainActor. Cancellation cannot
         // interleave a cancelled journal between the event and its receipt.
+        let receiptDeadline = DispatchTime.now().uptimeNanoseconds + Self.targetUIResponseBudgetNanoseconds
         try sendPaste(target.processIdentifier)
         settleAfterPaste()
-        let matched = PinnedPasteReceipt.matches(observed: target.value, span: span, inserted: text,
-                                                placeholder: placeholder)
+        var observed = target.value
+        func matches() -> Bool {
+            PinnedPasteReceipt.matches(observed: observed, span: span, inserted: text, placeholder: placeholder)
+        }
+        // Reuse the existing target-UI response budget for this separate
+        // receipt phase. An AX IPC call can itself outlast the polling window.
+        while !matches(), DispatchTime.now().uptimeNanoseconds < receiptDeadline {
+            usleep(25_000)
+            observed = target.value
+        }
+        guard matches() else {
+            let observedLength = observed?.utf16.count ?? -1
+            let breaks = observed?.filter { $0 == "\n" }.count ?? -1
+            logger.error("Pinned paste receipt unavailable: originalUTF16=\(span.original.utf16.count, privacy: .public), insertedUTF16=\(text.utf16.count, privacy: .public), observedUTF16=\(observedLength, privacy: .public), observedParagraphBreaks=\(breaks, privacy: .public)")
+            throw EditorDeliveryError.outputUnknown
+        }
         if let snapshot {
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: configuration.restoreDelayMilliseconds * 1_000_000)
@@ -183,7 +199,6 @@ final class TextInjector: TextInjecting {
                 snapshot.restore(to: self.pasteboard)
             }
         }
-        guard matched else { throw EditorDeliveryError.outputUnknown }
         return .pasted
     }
     private let logger = Logger(
@@ -322,7 +337,7 @@ final class TextInjector: TextInjecting {
     private func waitForPasteTarget(launchAppContext: LaunchAppContext?, pinned: (any PinnedPasteTarget)? = nil,
                                     selection: NSRange = NSRange(location: 0, length: 0)) -> Bool {
         func ready() -> Bool { pinned?.hasPasteFocus(selection: selection) ?? isPasteTargetReady(launchAppContext: launchAppContext) }
-        let deadline = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
+        let deadline = DispatchTime.now().uptimeNanoseconds + Self.targetUIResponseBudgetNanoseconds
         while DispatchTime.now().uptimeNanoseconds < deadline {
             if ready() {
                 return true

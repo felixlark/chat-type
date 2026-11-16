@@ -300,6 +300,7 @@ final class AppCoordinator {
         activeSessionID = sessionID
         launchAppContext = launchAppContextProvider()
         liveTextInput.begin(context: launchAppContext, enabled: !sessionConfig.injection.clipboardOnly)
+        overlay.beginSession(context: launchAppContext, captionsEnabled: sessionConfig.transcription.livePreviewEnabled)
         state = .processing
         statusMenu?.update(state: .processing, detail: "Requesting microphone")
         overlay.showProcessing()
@@ -407,7 +408,6 @@ final class AppCoordinator {
 
         do {
             stopRecordingLevelUpdates()
-            liveTextInput.endRecording()
             var audio = try recorder.stopRecording()
             if let live = liveDoubao { audio.cloudTranscript = live.finish(audio) }
             liveDoubao = nil
@@ -577,9 +577,10 @@ final class AppCoordinator {
                         injectionSnapshot: injectionConfig))
                     outputSealed = true
                     if transcriptionConfig.livePreviewEnabled {
-                        try await self.liveTextInput.completePreview(prepared.rawText)
+                        self.overlay.updateTranscriptPreview(prepared.rawText)
                         guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
                     }
+                    self.overlay.showConfirming()
                     let injectStarted = DispatchTime.now().uptimeNanoseconds
                     let liveOutcome = try await self.liveTextInput.finish(prepared.finalText, injector: self.injector,
                                                                          configuration: injectionConfig)
@@ -657,7 +658,8 @@ final class AppCoordinator {
                     self.activeSessionID = nil
                     self.statusMenu?.update(state: .error, detail: error.localizedDescription)
                     let message = outputWritten ? "文字已经输出，但结果保存未完成；请先核对目标，避免重复粘贴。\(error.localizedDescription)" : "保存或输出未完成；未报告成功。\(error.localizedDescription)"
-                    self.overlay.showError(message)
+                    if case EditorDeliveryError.outputUnknown = error { self.overlay.showOutputUnconfirmed(message) }
+                    else { self.overlay.showError(message) }
                     self.notifier.notify(title: "ChatType", body: message)
                     self.launchAppContext = nil
                 }
@@ -840,10 +842,12 @@ final class AppCoordinator {
         activeSessionID = sessionID; state = .processing
         let audio = RecordedAudio(fileURL: audioURL, durationMs: record.audioDurationMs,
             previewText: record.asrText ?? "", isPartialReplay: partial)
+        let replayContext = launchAppContextProvider()
         statusMenu?.update(state: .processing, detail: useCurrentFlow ? "按当前流程重跑" : "重试原路线")
+        overlay.beginSession(context: replayContext, captionsEnabled: replay.livePreviewEnabled)
         overlay.showProcessing()
         startProcessing(audio: audio, sessionID: sessionID, transcriptionConfig: replay,
-            injectionConfig: injection, launchAppContext: launchAppContextProvider(), attemptPolicy: .manualRetry)
+            injectionConfig: injection, launchAppContext: replayContext, attemptPolicy: .manualRetry)
     }
 
     private func openConfigFolder() {
@@ -950,6 +954,7 @@ final class AppCoordinator {
         state = .processing
         statusMenu?.update(state: .demo, detail: "Overlay demo")
         overlay.showRecording(elapsedText: "00:00")
+        overlay.updateTranscriptPreview("字幕跟随说话实时出现，自动换行；常态两行，长句可以自然扩展。")
         overlayDemoFrameIndex = 0
 
         recordingLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
@@ -991,17 +996,8 @@ final class AppCoordinator {
         case .recording:
             overlay.showRecording(elapsedText: "00:07")
             overlay.updateRecording(level: 0.72, elapsedText: "00:07")
-            // Exercise the production composition panel without a microphone,
-            // network request or document mutation in explicit visual-demo mode.
-            liveTextInput.begin(context: LaunchAppContext.current(), enabled: true)
-            Task { @MainActor in
-                await liveTextInput.prepare()
-                for draft in ["原位初稿", "原位初稿从光标右下角展开，长句应自动换行。",
-                              String(repeating: "原位初稿从光标右下角展开，长句自动换行。保留数字 136 与 API。\n", count: 12)] {
-                    self.liveTextInput.update(draft)
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
-                }
-            }
+            // Explicit, local-only subtitle demo: no microphone or document access.
+            overlay.updateTranscriptPreview("实时字幕在这里显示，自动换行。说话时可以切换焦点，录音继续。")
         case .processing:
             overlay.showProcessing()
         case .result:
@@ -1023,7 +1019,7 @@ final class AppCoordinator {
     private func placeOverlayDemoOnRightScreen() {
         guard let screen = NSScreen.screens.max(by: { $0.frame.maxX < $1.frame.maxX }),
               let controller = overlay as? OverlayController else { return }
-        controller.debugSetGeometry(visible: screen.visibleFrame, protected: [])
+        controller.debugSetGeometry(visible: screen.visibleFrame)
     }
 
     private func startRecordingLevelUpdates() {
@@ -1046,8 +1042,8 @@ final class AppCoordinator {
                     let session = self.activeSessionID
                     let text = await live.state.preview
                     guard self.state == .recording, self.activeSessionID == session else { return }
-                    self.liveTextInput.update(text)
-                } else { self.liveTextInput.update(recorder.liveTranscript) }
+                    self.overlay.updateTranscriptPreview(text)
+                } else { self.overlay.updateTranscriptPreview(recorder.liveTranscript) }
             }
         }
     }

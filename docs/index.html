@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ChatType - F5 语音输入到当前光标</title>
-  <meta name="description" content="ChatType 是原生 macOS 语音输入工具。连接本机 ChatGPT 登录态，按 F5 录音，再按 F5 停止，把转写结果回填到当前光标，无法安全粘贴时保留到剪贴板。">
+  <meta name="description" content="ChatType 是原生 macOS 语音输入工具。新配置默认豆包识别与文字整理，按 F5 开始和停止，确认写入输入目标；无合适目标时保留到剪贴板。">
   <meta property="og:title" content="ChatType - F5 语音输入到当前光标">
   <meta property="og:description" content="原生 macOS 语音输入工具。F5 开始，F5 停止，结果直达输入层。">
   <meta property="og:type" content="website">
@@ -252,7 +252,7 @@
     .product-shot img {
       width: 100%;
       aspect-ratio: 16 / 10;
-      object-fit: cover;
+      object-fit: contain;
       object-position: center;
     }
 
@@ -634,7 +634,7 @@
           <p class="eyebrow">local-first macOS input layer</p>
           <h1>按下 <span class="hero-word">F5</span> 说话，文字回到<span class="hero-word alt">当前光标</span>。</h1>
           <p class="lead">
-            ChatType 是原生 macOS 语音输入工具。它连接这台 Mac 上的 ChatGPT 登录态，录音结束后转写、术语修正、可选润色，再把结果送回你正在输入的地方。不能安全粘贴时，结果保留在剪贴板。
+            ChatType 是原生 macOS 语音输入工具。新配置默认豆包识别与文字整理，已有服务选择保持。录音结束后按所选流程处理完整录音，确认文字写入原目标；没有合适目标时，结果保留在剪贴板。
           </p>
           <div class="actions">
             <a class="button primary" href="https://github.com/felixlark/chat-type/releases/tag/v0.5.1">下载 v0.5.1</a>
@@ -642,14 +642,14 @@
           </div>
           <ul class="hero-notes" aria-label="产品要点">
             <li>原生菜单栏 app</li>
-            <li>ChatGPT Desktop 登录路径</li>
+            <li>识别与润色独立选择</li>
             <li>剪贴板安全回退</li>
             <li>MIT 开源</li>
           </ul>
         </div>
         <div class="visual-stage" aria-label="ChatType 实际界面截图">
           <div class="product-shot">
-            <img id="product-shot" src="assets/chattype-recording.png" alt="ChatType 录音状态 HUD 截图">
+            <img id="product-shot" src="images/top-captions-installed-142.png" alt="ChatType 0.6.0（142）安装版状态 HUD 与单行字幕">
           </div>
           <div class="demo-toggle" aria-label="切换产品截图">
             <button type="button" data-shot="recording" aria-pressed="true">录音中</button>
@@ -701,12 +701,12 @@
           <article class="card">
             <span class="number">B</span>
             <h3>长句可选 AI Polish</h3>
-            <p>长段口述可以被整理成更像可执行 prompt 的结构；短句保持快速，不强行润色。</p>
+            <p>按需启用文字整理，保留原意、改口和关键术语；是否润色由你的流程设置决定。</p>
           </article>
           <article class="card">
             <span class="number">C</span>
             <h3>粘贴保守</h3>
-            <p>只有检测到可编辑目标才声明成功，避免把文本送到错误窗口。</p>
+            <p>捕获原输入目标，并在取得写入回执后报告成功；结果未知时提示核对，避免重复粘贴。</p>
           </article>
         </div>
       </div>
@@ -733,8 +733,8 @@
             <ul>
               <li>F5 输入链路就在当前 app，减少切换和复制。</li>
               <li>术语词表和确定性修正保护关键字。</li>
-              <li>检测可编辑目标，失败时改用剪贴板回退。</li>
-              <li>可选 ChatGPT Auth AI Polish，把长段整理成可执行文本。</li>
+              <li>核对原目标的写入回执；无合适目标时保留剪贴板。</li>
+              <li>识别与润色独立选择，失败不会自动切换服务。</li>
             </ul>
           </article>
         </div>
@@ -745,19 +745,19 @@
       <div class="wrap model">
         <div>
           <p class="eyebrow">model and account path</p>
-          <h2>默认走本机 ChatGPT 登录态，不要求额外 API key。</h2>
+          <h2>新配置默认豆包，已有服务选择保持。</h2>
           <p class="large-copy">
-            ChatType 的公开路径是给已经使用 ChatGPT Desktop 的个人用户准备的：通过默认浏览器完成 OAuth，保存 app 自己的本地会话，再调用转写路径。高级 OpenAI-Compatible 路线只作为恢复和自定义场景。
+            识别与润色分别选择。豆包默认使用私有 IME 服务；保留 ChatType 自有 ChatGPT 登录路线，以及需要独立凭据的高级兼容识别、GLM 和 Qwen 润色。只有选用 ChatGPT 阶段才需要登录 ChatGPT。
           </p>
         </div>
         <div class="model-panel">
           <article class="route">
             <strong>默认</strong>
-            <p>ChatGPT 登录态 + ChatType 本地会话。安装后连接账号，之后用 <code>F5</code> 录音。</p>
+            <p>豆包识别 + 豆包文字整理；安装后按所选流程使用 <code>F5</code> 录音，已有配置不被覆盖。</p>
           </article>
           <article class="route">
             <strong>可选</strong>
-            <p>AI Polish 只处理适合整理的长段文本，失败不会吞掉原始转写。</p>
+            <p>润色可独立开启或关闭。处理失败保留录音和阶段结果，不粘贴半成品；Retry 沿用原路线。</p>
           </article>
           <article class="route">
             <strong>高级恢复</strong>
@@ -772,7 +772,7 @@
         <div class="section-head">
           <p class="eyebrow">privacy</p>
           <h2>权限和数据边界写清楚。</h2>
-          <p>ChatType 是 local-first 桌面工具，但它不是离线模型。录音会通过你连接的 ChatGPT 路径完成转写；本地负责录音、会话、术语、权限检查、粘贴判断和剪贴板回退。</p>
+          <p>ChatType 是 local-first 桌面工具。音频发送给所选识别服务，相关文字发送给所选润色服务；原录音、路线快照、阶段结果和错误保留在本机私有历史中。</p>
         </div>
         <div class="feature-grid">
           <article class="card">
@@ -788,7 +788,7 @@
           <article class="card">
             <span class="number">3</span>
             <h3>本地配置</h3>
-            <p>术语词表、会话和偏好保存在这台 Mac 的 ChatType 配置目录里。</p>
+            <p>词库、偏好和恢复历史保存在这台 Mac；凭据只存 Keychain，不导出浏览器 Cookie 或已安装输入法的凭据。</p>
           </article>
         </div>
       </div>
@@ -800,7 +800,7 @@
           <p class="eyebrow">built to trust</p>
           <h2>强在效率，也明确说出限制。</h2>
         </div>
-        <p class="quote">ChatType 不是稳定公开 API 的企业级承诺。它是给个人高频输入做的原生工具，依赖本机 ChatGPT 登录态和上游私有转写链路。</p>
+        <p class="quote">豆包 IME 和 ChatGPT 账户后端不是稳定公开 API，可能随版本变化；成功测试不保证未来可用性或计费。其他已选服务使用各自凭据和计费条件。</p>
         <div class="trust-grid" style="margin-top: 32px;">
           <article class="card">
             <span class="number">A</span>
@@ -810,7 +810,7 @@
           <article class="card">
             <span class="number">B</span>
             <h3>上游可能变化</h3>
-            <p>如果 ChatGPT Web 会话或私有端点变化，ChatType 会把失败暴露出来，而不是伪装成功。</p>
+            <p>如果所选服务或私有端点变化，ChatType 会显示错误并保留尝试记录，不暗中换服务或重复写入。</p>
           </article>
           <article class="card">
             <span class="number">C</span>
@@ -824,12 +824,12 @@
     <section class="download" id="download">
       <div class="wrap">
         <h2>下载 ChatType，开始用 F5 输入。</h2>
-        <p>macOS 原生菜单栏 app。连接 ChatGPT，授予麦克风和可选 Accessibility 权限，然后把语音输入放回你的日常写作位置。</p>
+        <p>macOS 原生菜单栏 app。按首次使用流程授予所需权限；选择 ChatGPT 阶段时再登录对应账户。此页描述当前源码候选，公开 v0.5.1 下载包可能早于当前实现，请核对实际构建版本。</p>
         <div class="actions">
           <a class="button primary" href="https://github.com/felixlark/chat-type/releases/tag/v0.5.1">下载 v0.5.1</a>
           <a class="button secondary" href="https://github.com/felixlark/chat-type">查看 GitHub 仓库</a>
         </div>
-        <div class="fine-print">MIT 开源 · macOS · ChatGPT Desktop 登录路径 · local-first input layer</div>
+        <div class="fine-print">MIT 开源 · macOS · 豆包默认 · 识别与润色独立选择</div>
       </div>
     </section>
   </main>
@@ -844,12 +844,12 @@
   <script>
     const shots = {
       recording: {
-        src: "assets/chattype-recording.png",
-        alt: "ChatType 录音状态 HUD 截图"
+        src: "images/top-captions-installed-142.png",
+        alt: "ChatType 0.6.0（142）安装版状态 HUD 与单行字幕"
       },
       result: {
-        src: "assets/chattype-result.png",
-        alt: "ChatType 结果状态 HUD 截图"
+        src: "images/top-hud-result-142.png",
+        alt: "ChatType 0.6.0（142）安装版结果 HUD"
       }
     };
 

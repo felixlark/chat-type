@@ -10,7 +10,7 @@ New configurations select Doubao IME for recognition and text organization. Save
 
 The complete recording, original route snapshot, stage outputs, final text and errors remain in private local recovery history. Retry reuses the original selection. Reprocessing with current settings is a distinct history action; partial audio requires an explicit replay decision. Processing failure preserves the attempt and does not paste partial text. Disabled polish intentionally skips that stage.
 
-The current installed interaction is the baseline for maintenance. A proposed top HUD with separate captions belongs to a separate product decision and is not implemented by cleanup. Preserve existing product icons, menu-bar rendering and colors.
+Recording uses a centered status HUD below the screen's menu-bar/camera safe area, with separate black-and-white captions underneath. Captions use their own readable typography, a single line showing the latest wrapped phrase; they never depend on the input's caret or font. The session stays on its initial screen when focus changes. Final captions remain readable after verified output; reading time does not delay paste. Preserve existing product icons, menu-bar rendering and status colors.
 
 ## Output and settings
 

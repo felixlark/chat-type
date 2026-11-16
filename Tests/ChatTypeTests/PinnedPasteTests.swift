@@ -3,7 +3,12 @@ import Testing
 @testable import ChatType
 
 @MainActor private final class PasteProbe: PinnedPasteTarget {
-    var value: String? = "前🙂选中后"
+    private var storedValue: String? = "前🙂选中后"
+    var onRead: (() -> Void)?
+    var value: String? {
+        get { onRead?(); return storedValue }
+        set { storedValue = newValue }
+    }
     let processIdentifier: pid_t = 12345
     var placeholderLabel: String?
     var focus = false
@@ -20,14 +25,8 @@ import Testing
     init(_ pin: PasteProbe) { self.pin = pin }
     var value: String? { pin.value }
     var selection: NSRange? { NSRange(location: 3, length: 2) }
-    var anchor: InputCompositionAnchor? { nil }
     var nativePasteTarget: (any PinnedPasteTarget)? { pin }
     func write(_ value: String, caret: Int) -> LiveTextWriteResult { writes += 1; return .rejected }
-}
-
-@MainActor private final class NoComposition: InputCompositionPresenting {
-    func show(_ text: String, anchor: @escaping @MainActor () async -> InputCompositionAnchor?) {}
-    func hide() {}
 }
 
 @Test @MainActor func webTargetRestoresOriginalPinAndUsesOneVerifiedNativePaste() async throws {
@@ -37,7 +36,7 @@ import Testing
     let injector = TextInjector(pasteboard: board, sendPaste: { pid in
         posts.append(pid); pin.value = "前🙂终稿后"
     }, settleAfterPaste: {})
-    let input = LiveTextInput(capture: { _ in target }, composition: NoComposition())
+    let input = LiveTextInput(capture: { _ in target })
     input.begin(context: nil, enabled: true)
     #expect(try await input.finish("终稿", injector: injector) == .pasted)
     #expect(posts == [pin.processIdentifier] && target.writes == 0)
@@ -53,6 +52,36 @@ import Testing
     do { _ = try injector.injectPinned(text: "终稿", span: span, target: pin, configuration: InjectionConfig()); Issue.record("Missing receipt must remain unknown") }
     catch { #expect(error is EditorDeliveryError) }
     #expect(posts == 1 && pin.value == span.original)
+}
+
+@Test @MainActor func delayedExactNativeReceiptIsObservedWithoutPostingAgain() throws {
+    let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
+    let pin = PasteProbe()
+    let span = try #require(LiveTextSpan(value: pin.value!, selection: NSRange(location: 3, length: 2)))
+    var posts = 0, postReads = 0
+    pin.onRead = {
+        if posts == 1 {
+            postReads += 1
+            if postReads == 2 { pin.value = "前🙂终稿后" }
+        }
+    }
+    let injector = TextInjector(pasteboard: board, sendPaste: { _ in posts += 1 }, settleAfterPaste: {})
+    #expect(try injector.injectPinned(text: "终稿", span: span, target: pin, configuration: InjectionConfig()) == .pasted)
+    #expect(posts == 1 && postReads == 2)
+}
+
+@Test @MainActor func unknownReceiptNeverRestoresClipboardBeforePossibleDelayedConsumption() async throws {
+    let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
+    board.setString("original clipboard", forType: .string)
+    let pin = PasteProbe()
+    let span = try #require(LiveTextSpan(value: pin.value!, selection: NSRange(location: 3, length: 2)))
+    var posts = 0
+    let injector = TextInjector(pasteboard: board, sendPaste: { _ in posts += 1 }, settleAfterPaste: {})
+    var config = InjectionConfig(); config.preserveClipboard = true; config.restoreDelayMilliseconds = 0
+    do { _ = try injector.injectPinned(text: "终稿", span: span, target: pin, configuration: config); Issue.record("Missing receipt must remain unknown") }
+    catch { #expect(error is EditorDeliveryError) }
+    for _ in 0..<10 { await Task.yield() }
+    #expect(posts == 1 && board.string(forType: .string) == "终稿")
 }
 
 @Test @MainActor func changedPinnedSelectionCannotPasteIntoAnotherFocusedInput() throws {
