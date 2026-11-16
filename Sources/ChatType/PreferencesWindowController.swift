@@ -101,6 +101,10 @@ final class CommandClosingWindow: NSWindow {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if let recorder = firstResponder as? ShortcutRecorder.CaptureView {
+            recorder.keyDown(with: event)
+            return true
+        }
         let modifiers = event.modifierFlags
             .intersection(.deviceIndependentFlagsMask)
             .subtracting(.capsLock)

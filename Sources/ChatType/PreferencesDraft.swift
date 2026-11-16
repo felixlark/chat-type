@@ -6,8 +6,11 @@ import Foundation
 @MainActor
 final class PreferencesDraft: ObservableObject {
     @Published var config: AppConfig
-    @Published var message = "选择完成后可直接按 F5；正在处理的录音保持原路线。"
+    @Published var message = "选择完成后可直接按激活快捷键；正在处理的录音保持原路线。"
     @Published var isError = false
+    @Published private(set) var isRecordingShortcut = false
+    var onBeginShortcutCapture: () throws -> Void = {}
+    var onEndShortcutCapture: () throws -> Void = {}
     private var applied: AppConfig
     private let hasPolishCredential: @MainActor (TextPolishProviderID) -> Bool
 
@@ -23,19 +26,46 @@ final class PreferencesDraft: ObservableObject {
         }
     }
     var hasChanges: Bool { config != applied }
+    var activeShortcut: ActivationShortcut { ActivationShortcut(applied.transcription) }
+    var shortcutHasChanges: Bool { ActivationShortcut(config.transcription) != activeShortcut }
 
-    func apply(using save: (AppConfig) -> Result<Void, any Error>) -> Result<Void, any Error> {
+    func beginShortcutCapture() {
+        do {
+            try onBeginShortcutCapture()
+            isRecordingShortcut = true
+        } catch { message = error.localizedDescription; isError = true }
+    }
+
+    func endShortcutCapture(_ shortcut: ActivationShortcut? = nil) {
+        guard isRecordingShortcut else { return }
+        isRecordingShortcut = false
+        if let shortcut {
+            config.transcription.hotkeyKeyCode = shortcut.keyCode
+            config.transcription.hotkeyModifiers = shortcut.modifiers
+            config.transcription.hotkeyIsCustomized = true
+        }
+        do { try onEndShortcutCapture() }
+        catch { message = error.localizedDescription; isError = true }
+    }
+
+    func apply(includeShortcut: Bool = true, using save: (AppConfig) -> Result<Void, any Error>) -> Result<Void, any Error> {
+        var candidate = config
+        if !includeShortcut {
+            candidate.transcription.hotkeyKeyCode = applied.transcription.hotkeyKeyCode
+            candidate.transcription.hotkeyModifiers = applied.transcription.hotkeyModifiers
+            candidate.transcription.hotkeyIsCustomized = applied.transcription.hotkeyIsCustomized
+        }
         let polish = config.transcription.textPolish
         let result: Result<Void, any Error>
         if polish.isEnabled, [.qwenFlash, .glmFlash].contains(polish.provider), !hasPolishCredential(polish.provider) {
             result = .failure(PolishCredentialRequired(provider: polish.provider))
         } else {
-            result = hasChanges ? save(config) : .success(())
+            result = candidate != applied ? save(candidate) : .success(())
         }
         switch result {
         case .success:
-            applied = config
-            message = "已应用 · 用于新录音和“按当前流程重跑”。"
+            applied = candidate
+            message = shortcutHasChanges ? "流程已应用；快捷键待保存。" : "已应用 · 用于新录音和“按当前流程重跑”。"
             isError = false
         case .failure(let error):
             message = error.localizedDescription; isError = true

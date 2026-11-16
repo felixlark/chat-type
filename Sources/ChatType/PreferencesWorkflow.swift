@@ -38,6 +38,31 @@ extension PreferencesView {
 
     var localSettingsCard: some View {
         VStack(alignment: .leading, spacing: 20) {
+            settingsCard(title: "激活快捷键") {
+                HStack {
+                    Text(ActivationShortcut(config.transcription).title)
+                        .font(.body.weight(.medium))
+                        .accessibilityIdentifier("activation-shortcut-value")
+                    if draft.shortcutHasChanges { Text("待保存").foregroundStyle(.secondary) }
+                    Spacer()
+                    Button(draft.isRecordingShortcut ? "取消录入" : "录入快捷键") {
+                        if draft.isRecordingShortcut { draft.endShortcutCapture() }
+                        else { draft.beginShortcutCapture() }
+                    }.accessibilityIdentifier("record-activation-shortcut")
+                }
+                if draft.isRecordingShortcut {
+                    Text("请按下快捷键；Esc 取消。")
+                        .foregroundStyle(.secondary)
+                        .background(ShortcutRecorder(onCapture: { draft.endShortcutCapture($0) }, onCancel: { draft.endShortcutCapture() }))
+                }
+                Text("按一次开始，再按一次停止。支持普通按键和 Command、Option、Control、Shift 组合；保存设置后生效。录入期间暂停激活。当前生效：\(draft.activeShortcut.title)。")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if config.transcription.hotkeyKeyCode == 79 {
+                    Text("本机键盘映射可能将实体 F5 输出为 F18；这里显示应用实际接收的按键。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             settingsCard(title: "Startup") {
                 Toggle("Launch ChatType at login", isOn: Binding(get: { loginItem.isEnabled }, set: { loginItem.setEnabled($0) }))
                     .accessibilityIdentifier("launch-at-login")

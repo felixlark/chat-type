@@ -47,7 +47,11 @@ final class AppCoordinator {
     )
 
     var config: AppConfig
-    private var hotkeyMonitor: HotkeyMonitor?
+    private lazy var hotkeyRegistration = ActivationShortcutRegistration { [weak self] shortcut in
+        try HotkeyMonitor(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers) { [weak self] in
+            Task { @MainActor in self?.handleHotkeyPress() }
+        }
+    }
     var recorder: (any RecordingControlling)?
     var statusMenu: (any StatusMenuUpdating)?
     private var preferencesWindowController: PreferencesWindowController?
@@ -166,11 +170,7 @@ final class AppCoordinator {
                 try (recoveryRecorder as? RecoveryStore)?.recoverInterruptedRecordings()
                 recorder = recorderFactory(config.transcription)
 
-                hotkeyMonitor = try HotkeyMonitor(keyCode: config.transcription.hotkeyKeyCode) { [weak self] in
-                    Task { @MainActor in
-                        self?.handleHotkeyPress()
-                    }
-                }
+                try hotkeyRegistration.replace(with: ActivationShortcut(config.transcription), persist: {})
                 notifier.ensureAuthorization()
                 installStatusMenuIfNeeded()
                 refreshReadyState()
@@ -227,6 +227,7 @@ final class AppCoordinator {
     }
 
     func handleHotkeyPress() {
+        guard preferencesDraft?.isRecordingShortcut != true else { return }
         switch state {
         case .idle:
             startRecording()
@@ -366,7 +367,7 @@ final class AppCoordinator {
                 logger.info("Recording session started successfully")
                 self.recordingStartedAt = .now()
                 self.state = .recording
-                self.statusMenu?.update(state: .recording, detail: "Recording on F5")
+                self.statusMenu?.update(state: .recording, detail: "Recording on \(ActivationShortcut(self.config.transcription).title)")
                 self.overlay.showRecording(elapsedText: "00:00")
                 self.soundFeedback.play(.recordingStarted, enabled: self.config.transcription.feedbackSoundsEnabled)
                 self.startRecordingLevelUpdates()
@@ -469,7 +470,9 @@ final class AppCoordinator {
 
     private func savePreferences(_ newConfig: AppConfig) -> Result<Void, any Error> {
         do {
-            try configStore.save(newConfig)
+            try hotkeyRegistration.replace(with: ActivationShortcut(newConfig.transcription)) {
+                try configStore.save(newConfig)
+            }
             config = newConfig
             // Saving future choices must not make an active task look Ready.
             refreshReadyState(detailOverride: "Settings saved", state: .ready)
@@ -482,7 +485,7 @@ final class AppCoordinator {
         guard state == .idle else { return false }
         if preferencesDraft == nil { preferencesDraft = PreferencesDraft(config: config) }
         guard let preferencesDraft else { return false }
-        if case .failure(let error) = preferencesDraft.apply(using: savePreferences) {
+        if case .failure(let error) = preferencesDraft.apply(includeShortcut: false, using: savePreferences) {
             let message = "设置未能应用，未开始新的处理。\(error.localizedDescription)"
             if pendingRetry != nil { overlay.showRetryableError(message) } else { overlay.showError(message) }
             return false
@@ -740,6 +743,11 @@ final class AppCoordinator {
                 authManager = ChatGPTAuthManager()
             }
             if preferencesDraft == nil { preferencesDraft = PreferencesDraft(config: config) }
+            preferencesDraft?.onBeginShortcutCapture = { [weak self] in
+                guard let self, self.state == .idle else { throw ShortcutCaptureError.busy }
+                self.hotkeyRegistration.suspend()
+            }
+            preferencesDraft?.onEndShortcutCapture = { [weak self] in try self?.hotkeyRegistration.resume() }
             // Separate production readers from the live recorder lock. Preserve
             // injected implementations and their data sources in tests/embedders.
             let historyReader: any TranscriptionHistoryRecording = (historyRecorder as? TranscriptionHistoryRecorder)
@@ -777,6 +785,7 @@ final class AppCoordinator {
                 },
                 focusRecoveryHistory: focusRecoveryHistory,
                 onClose: { [weak self] in
+                    self?.preferencesDraft?.endShortcutCapture()
                     self?.statusMenu?.ensureVisible()
                 }
             )
@@ -1315,7 +1324,7 @@ final class AppCoordinator {
         } else if let summary = RuntimePreflight.summary(for: issues) {
             statusMenu?.update(state: .setupRequired, detail: summary)
         } else {
-            statusMenu?.update(state: state, detail: "Ready. Press F5 to dictate")
+            statusMenu?.update(state: state, detail: "Ready. Press \(ActivationShortcut(config.transcription).title) to dictate")
         }
     }
 }
