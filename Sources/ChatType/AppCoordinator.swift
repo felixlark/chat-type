@@ -584,6 +584,7 @@ final class AppCoordinator {
                 guard self.shouldContinue(sessionID: sessionID) else { return }
 
                 var outputWritten = false
+                var outputSealed = false
                 do {
                     try self.recoveryRecorder.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: audio.fileURL,
                         durationMs: audio.durationMs, asrText: prepared.rawText, polishText: prepared.stages?.polishOutput,
@@ -591,8 +592,14 @@ final class AppCoordinator {
                         outcome: "readyToInject", errorMessage: nil, snapshot: transcriptionConfig,
                         attemptID: attemptID, stages: prepared.stages ?? DictationStageAudit(asrText: prepared.rawText, finalText: prepared.finalText),
                         injectionSnapshot: injectionConfig))
+                    outputSealed = true
+                    if transcriptionConfig.livePreviewEnabled {
+                        try await self.liveTextInput.completePreview(prepared.rawText)
+                        guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
+                    }
                     let injectStarted = DispatchTime.now().uptimeNanoseconds
-                    let liveOutcome = try await self.liveTextInput.finish(prepared.finalText, injector: self.injector)
+                    let liveOutcome = try await self.liveTextInput.finish(prepared.finalText, injector: self.injector,
+                                                                         configuration: injectionConfig)
                     guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
                     let outcome = try liveOutcome ?? (injectionConfig.clipboardOnly ? self.injector.copyToClipboard(text: prepared.finalText) : self.injector.inject(
                         text: prepared.finalText,
@@ -639,7 +646,21 @@ final class AppCoordinator {
                     self.launchAppContext = nil
                 } catch {
                     guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
-                    if !outputWritten { self.liveTextInput.suspend() }
+                    if !outputWritten {
+                        self.liveTextInput.suspend()
+                        if outputSealed {
+                            do {
+                                try self.recoveryRecorder.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: audio.fileURL,
+                                    durationMs: audio.durationMs, asrText: prepared.rawText, polishText: prepared.stages?.polishOutput,
+                                    appName: launchAppContext?.localizedName, appBundleIdentifier: launchAppContext?.bundleIdentifier,
+                                    outcome: "readyToInject", errorMessage: error.localizedDescription, snapshot: transcriptionConfig,
+                                    attemptID: attemptID, stages: prepared.stages ?? DictationStageAudit(asrText: prepared.rawText, finalText: prepared.finalText),
+                                    injectionSnapshot: injectionConfig))
+                            } catch {
+                                self.logger.error("Could not retain output failure details; sealed final text remains saved: \(error.localizedDescription, privacy: .public)")
+                            }
+                        }
+                    }
                     let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
                     self.recordLatency(
                         prepared: prepared,
@@ -940,6 +961,7 @@ final class AppCoordinator {
     }
 
     private func runOverlayDemo() {
+        placeOverlayDemoOnRightScreen()
         let demoLevels: [CGFloat] = [0.14, 0.28, 0.46, 0.72, 0.54, 0.32, 0.18, 0.64]
 
         state = .processing
@@ -978,6 +1000,7 @@ final class AppCoordinator {
     }
 
     private func runOverlayDemoState(_ demoState: OverlayDemoState) {
+        placeOverlayDemoOnRightScreen()
         state = .processing
         statusMenu?.update(state: .demo, detail: "Overlay demo")
 
@@ -1000,6 +1023,8 @@ final class AppCoordinator {
             overlay.showProcessing()
         case .result:
             overlay.showResult(text: "Demo", outcome: .pasted)
+        case .copied:
+            overlay.showResult(text: "Demo", outcome: .copiedToClipboard(reason: .noEditableTarget))
         case .error:
             overlay.showError("Clipboard only")
         case .retryableError:
@@ -1010,6 +1035,12 @@ final class AppCoordinator {
             try? await Task.sleep(nanoseconds: 180_000_000_000)
             NSApplication.shared.terminate(nil)
         }
+    }
+
+    private func placeOverlayDemoOnRightScreen() {
+        guard let screen = NSScreen.screens.max(by: { $0.frame.maxX < $1.frame.maxX }),
+              let controller = overlay as? OverlayController else { return }
+        controller.debugSetGeometry(visible: screen.visibleFrame, protected: [])
     }
 
     private func startRecordingLevelUpdates() {

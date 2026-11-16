@@ -4,6 +4,7 @@ enum OverlayDemoState: String, Equatable, Sendable, CaseIterable {
     case recording
     case processing
     case result
+    case copied
     case error
     case retryableError = "retryable-error"
 }

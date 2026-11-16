@@ -11,7 +11,11 @@ struct InputCompositionAnchor {
 @MainActor
 protocol InputCompositionPresenting: AnyObject {
     func show(_ text: String, anchor: @escaping @MainActor () async -> InputCompositionAnchor?)
+    func waitUntilRendered(_ text: String) async -> Bool
     func hide()
+}
+extension InputCompositionPresenting {
+    func waitUntilRendered(_ text: String) async -> Bool { false }
 }
 
 /// A provisional composition at the input, separate from the state HUD.
@@ -26,6 +30,7 @@ final class InputCompositionController: InputCompositionPresenting {
     private var timer: Timer?
     private var refreshTask: Task<Void, Never>?
     private var generation = 0
+    private var renderedValue: String?
 
     func show(_ text: String, anchor: @escaping @MainActor () async -> InputCompositionAnchor?) {
         value = text
@@ -43,7 +48,14 @@ final class InputCompositionController: InputCompositionPresenting {
         timer?.invalidate(); timer = nil
         refreshTask?.cancel(); refreshTask = nil
         anchorProvider = nil
+        renderedValue = nil
         panel?.orderOut(nil)
+    }
+
+    func waitUntilRendered(_ text: String) async -> Bool {
+        let current = generation
+        await refreshTask?.value
+        return !Task.isCancelled && generation == current && renderedValue == text && panel?.isVisible == true
     }
 
     private func refresh() {
@@ -53,7 +65,7 @@ final class InputCompositionController: InputCompositionPresenting {
             let anchor = await anchorProvider()
             guard let self, self.generation == current, !Task.isCancelled else { return }
             defer { self.refreshTask = nil }
-            guard let anchor else { self.panel?.orderOut(nil); return }
+            guard let anchor else { self.renderedValue = nil; self.panel?.orderOut(nil); return }
             self.render(anchor)
         }
     }
@@ -117,6 +129,8 @@ final class InputCompositionController: InputCompositionPresenting {
         textView.setFrameSize(CGSize(width: max(1, width - 12), height: max(scroll.frame.height, ceil(measured.height))))
         textView.scrollToEndOfDocument(nil)
         panel?.orderFrontRegardless()
+        panel?.displayIfNeeded()
+        renderedValue = value
     }
 }
 

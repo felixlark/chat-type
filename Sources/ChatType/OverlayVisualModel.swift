@@ -116,7 +116,7 @@ enum OverlaySuccessKind: Sendable, Equatable {
         case .pasted:
             return "Pasted"
         case .copied:
-            return "Copied"
+            return "已复制，未粘贴"
         }
     }
 }

@@ -11,6 +11,7 @@ import Testing
     var rejects = false
     var transformed = false
     var unreadable = false
+    var nativePasteTarget: (any PinnedPasteTarget)?
     var writes = 0
     var caret = 0
     func write(_ value: String, caret: Int) -> LiveTextWriteResult {
@@ -23,9 +24,18 @@ import Testing
 }
 @MainActor private final class Composition: InputCompositionPresenting {
     var text: String?
+    var rendered = true
     var provider: (@MainActor () async -> InputCompositionAnchor?)?
     func show(_ text: String, anchor: @escaping @MainActor () async -> InputCompositionAnchor?) { self.text = text; provider = anchor }
+    func waitUntilRendered(_ text: String) async -> Bool { rendered }
     func hide() { text = nil; provider = nil }
+}
+@MainActor private final class LiveInputHolder { var input: LiveTextInput? }
+private actor PreviewDwellGate {
+    var continuation: CheckedContinuation<Void, Never>?
+    func wait() async { await withCheckedContinuation { continuation = $0 } }
+    var waiting: Bool { continuation != nil }
+    func resume() { continuation?.resume(); continuation = nil }
 }
 @MainActor private final class Clipboard: TextInjecting {
     var copied: String?
@@ -79,6 +89,60 @@ import Testing
     #expect(target.value == "前🙂选中后" && target.writes == 0 && composition.text == nil && input.hasSession)
     input.reset()
     #expect(!input.hasSession && target.writes == 0)
+}
+
+@Test @MainActor func completeAsrTailRemainsReadableBeforeFinalHandoff() async throws {
+    let composition = Composition(), target = Target(), clipboard = Clipboard()
+    let input = LiveTextInput(capture: { _ in target }, composition: composition, previewReadDelay: {
+        await MainActor.run {
+            #expect(composition.text == "停录后才到达的完整末尾")
+            #expect(target.writes == 0)
+        }
+    })
+    input.begin(context: nil, enabled: true); input.update("停录前初稿")
+    input.endRecording()
+    try await input.completePreview("停录后才到达的完整末尾")
+    #expect(composition.text == "停录后才到达的完整末尾")
+    #expect(try await input.finish("终稿", injector: clipboard) == .pasted)
+    #expect(composition.text == nil && target.writes == 1)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func unavailablePreviewNeverDelaysTargetFallback(noTarget: Bool) async throws {
+    let composition = Composition(); composition.rendered = false
+    let target = Target(), clipboard = Clipboard()
+    let input = LiveTextInput(capture: { _ in noTarget ? nil : target }, composition: composition,
+        previewReadDelay: { Issue.record("Unavailable preview must not wait for future visibility") })
+    input.begin(context: nil, enabled: true)
+    try await input.completePreview("完整末尾")
+    let outcome = try await input.finish("终稿", injector: clipboard)
+    #expect(outcome == (noTarget ? .copiedToClipboard(reason: .originalTargetUnavailable) : .pasted))
+}
+
+@Test @MainActor func replacementDuringPreviewReadTimeCannotCommitOrHideNewDraft() async throws {
+    let composition = Composition(), target = Target()
+    let holder = LiveInputHolder()
+    let input = LiveTextInput(capture: { _ in target }, composition: composition, previewReadDelay: {
+        await MainActor.run { holder.input?.reset(); holder.input?.begin(context: nil, enabled: true); holder.input?.update("新的录音") }
+    })
+    holder.input = input
+    input.begin(context: nil, enabled: true)
+    do { try await input.completePreview("旧的完整末尾"); Issue.record("Replaced preview must abort") }
+    catch { #expect(error is CancellationError) }
+    #expect(composition.text == "新的录音" && target.writes == 0)
+}
+
+@Test @MainActor func cancellationDuringCompletePreviewPreventsFinalOutput() async throws {
+    let composition = Composition(), target = Target(), gate = PreviewDwellGate()
+    let input = LiveTextInput(capture: { _ in target }, composition: composition, previewReadDelay: { await gate.wait() })
+    input.begin(context: nil, enabled: true)
+    let task = Task { try await input.completePreview("完整末尾") }
+    while !(await gate.waiting) { await Task.yield() }
+    task.cancel(); await gate.resume()
+    do { try await task.value; Issue.record("Cancelled readable tail must abort") }
+    catch { #expect(error is CancellationError) }
+    #expect(target.writes == 0)
+    input.reset()
 }
 
 @Test @MainActor func manualEditsPreservedAndFinalCopiedTruthfully() async throws {
