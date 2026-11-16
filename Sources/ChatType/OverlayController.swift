@@ -433,7 +433,7 @@ final class OverlayController: OverlayControlling {
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.isBordered = false
         retryButton.bezelStyle = .regularSquare
-        retryButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "选择重跑方式")
+        retryButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "重试原录音")
         retryButton.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
         retryButton.imagePosition = .imageOnly
         retryButton.contentTintColor = ChatTypePalette.mistMuted.withAlphaComponent(0.84)

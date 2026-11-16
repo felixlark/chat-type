@@ -24,12 +24,17 @@ struct LiveTextSpan: Equatable {
     mutating func accept(_ value: String) { expected = value }
 }
 
+enum LiveTextWriteResult {
+    case rejected
+    case applied(observedValue: String?)
+}
+
 @MainActor
 protocol LiveTextTarget: AnyObject {
     var value: String? { get }
     var selection: NSRange? { get }
     var frame: CGRect? { get }
-    func write(_ value: String, caret: Int) -> Bool
+    func write(_ value: String, caret: Int) -> LiveTextWriteResult
 }
 
 @MainActor
@@ -119,16 +124,23 @@ final class LiveTextInput: LiveTextInputControlling {
         guard let target, var span, let current = target.value,
               let next = span.replacing(with: text, current: current) else { return false }
         if next == current { return true }
-        guard target.write(next, caret: span.selection.location + text.utf16.count) else { return false }
-        span.accept(next); self.span = span
-        return true
+        switch target.write(next, caret: span.selection.location + text.utf16.count) {
+        case .rejected: return false
+        case .applied(let observed):
+            // An app can normalize a successful AX mutation. Track that exact
+            // mutation too, so Cancel/error can undo it while it is unchanged.
+            if let observed { span.accept(observed); self.span = span }
+            return observed == next
+        }
     }
 
     private func rollback() {
         guard let target, var span, span.expected != span.original,
-              target.value == span.expected,
-              target.write(span.original, caret: span.selection.location + span.selection.length) else { return }
-        span.accept(span.original); self.span = span
+              target.value == span.expected else { return }
+        if case .applied(let observed) = target.write(span.original, caret: span.selection.location + span.selection.length),
+           let observed {
+            span.accept(observed); self.span = span
+        }
     }
 }
 
@@ -175,17 +187,18 @@ private final class AXLiveTextTarget: LiveTextTarget {
               size.width > 0, size.height > 0 else { return nil }
         return OverlayPlacementSession.appKitFrame(fromAccessibility: CGRect(origin: point, size: size), primaryScreenTop: primary.frame.maxY)
     }
-    func write(_ value: String, caret: Int) -> Bool {
+    func write(_ value: String, caret: Int) -> LiveTextWriteResult {
         var settable = DarwinBoolean(false)
         guard AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success,
               settable.boolValue,
-              AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFString) == .success,
-              self.value == value else { return false }
+              AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFString) == .success else { return .rejected }
+        let observed = self.value
+        guard observed == value else { return .applied(observedValue: observed) }
         var range = CFRange(location: caret, length: 0)
         if let raw = AXValueCreate(.cfRange, &range) {
             AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, raw)
         }
-        return true
+        return .applied(observedValue: observed)
     }
 }
 

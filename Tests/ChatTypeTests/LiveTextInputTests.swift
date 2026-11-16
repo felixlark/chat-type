@@ -11,12 +11,12 @@ private final class Target: LiveTextTarget {
     var transforms = false
     var writes = 0
     var caret = 0
-    func write(_ value: String, caret: Int) -> Bool {
+    func write(_ value: String, caret: Int) -> LiveTextWriteResult {
         writes += 1
-        guard !rejects else { return false }
-        self.value = transforms ? value + "edited" : value
+        guard !rejects else { return .rejected }
+        self.value = transforms && value.contains("草稿") ? value + "edited" : value
         self.caret = caret
-        return !transforms
+        return .applied(observedValue: self.value)
     }
 }
 
@@ -96,9 +96,11 @@ private final class Clipboard: TextInjecting {
         #expect(preview.text == "草稿" && preview.frame == target.frame)
         let current = target.value
         input.suspend()
-        #expect(target.value == current && preview.text == nil)
-        #expect(try input.finish("终稿", injector: clipboard) == .copiedToClipboard(reason: .originalTargetUnavailable))
-        #expect(target.value == current && clipboard.copied == "终稿")
+        #expect(target.value == "前🙂选中后" && preview.text == nil)
+        let result = try input.finish("终稿", injector: clipboard)
+        #expect(result == (transforms ? .pasted : .copiedToClipboard(reason: .originalTargetUnavailable)))
+        #expect(target.value == (transforms ? "前🙂终稿后" : current))
+        #expect(clipboard.copied == (transforms ? nil : "终稿"))
     }
 }
 
@@ -137,4 +139,14 @@ private final class Clipboard: TextInjecting {
     target.frame = nil
     #expect(try input.finish("终稿", injector: Clipboard()) == .copiedToClipboard(reason: .originalTargetUnavailable))
     #expect(preview.text == nil)
+}
+
+@Test @MainActor func transformedDraftRollbackNeverOverwritesSubsequentUserEdit() {
+    let target = Target(); target.transforms = true
+    let input = LiveTextInput(capture: { _ in target }, preview: Preview())
+    input.begin(context: nil, enabled: true); input.update("草稿")
+    #expect(target.value == "前🙂草稿后edited")
+    target.value = "后来手工写入"
+    input.reset()
+    #expect(target.value == "后来手工写入")
 }
