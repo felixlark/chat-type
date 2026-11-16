@@ -570,7 +570,10 @@ struct AppCoordinatorCancellationTests {
 
         #expect(recorder.stopRecordingCallCount == 1)
         #expect(overlay.showProcessingCallCount >= 1)
-        #expect(statusMenu.updates.last?.0 == .error)
+        // An independent auth test can broadcast a readiness refresh after the
+        // interruption. Assert that stopping capture reported the error rather
+        // than depending on the final globally notified menu state.
+        #expect(statusMenu.updates.contains { $0.0 == .error && $0.1.contains("麦克风输入已中断") })
 
         await processingGate.resume()
     }
