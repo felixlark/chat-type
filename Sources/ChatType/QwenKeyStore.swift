@@ -10,7 +10,7 @@ protocol QwenKeyStoring: Sendable {
 struct KeychainQwenKeyStore: QwenKeyStoring {
     private var query: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "me.longbiaochen.ChatType.QwenAPIKey",
+         kSecAttrService as String: AppIdentity.current.qwenService,
          kSecAttrAccount as String: "default"]
     }
 
@@ -19,11 +19,14 @@ struct KeychainQwenKeyStore: QwenKeyStoring {
         SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
-    func load() throws -> String? {
+    var credentialReadQuery: [String: Any] {
         var lookup = query
         lookup[kSecReturnData as String] = true
+        return lookup
+    }
+    func load() throws -> String? {
         var result: CFTypeRef?
-        let status = SecItemCopyMatching(lookup as CFDictionary, &result)
+        let status = SecItemCopyMatching(credentialReadQuery as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = result as? Data,
               let key = String(data: data, encoding: .utf8) else {

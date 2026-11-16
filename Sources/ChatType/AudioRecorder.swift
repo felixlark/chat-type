@@ -77,7 +77,7 @@ final class AudioRecorder: RecordingControlling {
     typealias TemporaryFileURLFactory = @Sendable () -> URL
 
     nonisolated private static let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "me.longbiaochen.chattype",
+        subsystem: AppIdentity.loggingSubsystem,
         category: "Permissions"
     )
 

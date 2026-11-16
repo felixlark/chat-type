@@ -4,6 +4,17 @@ import Foundation
 enum ChatTypeCLI {
     static func runIfRequested(arguments: [String]) -> Bool {
         let command = arguments.dropFirst().first
+        // This synchronous branch exits before NSApplication/AppDelegate and
+        // never creates an auth manager or a provider that could refresh state.
+        if command == "credential-read-check" {
+            do {
+                try CredentialReadCheckCommand.run(arguments: Array(arguments.dropFirst(2)))
+                Foundation.exit(EXIT_SUCCESS)
+            } catch {
+                FileHandle.standardError.write(Data("Credential read check failed; no credentials were changed.\n".utf8))
+                Foundation.exit(EXIT_FAILURE)
+            }
+        }
         guard command == "process" || command == "contacts-report" || command == "quality-evaluate" || command == "polish-evaluate" || command == "streaming-evaluate" else { return false }
         if command == "streaming-evaluate" {
             Task { @MainActor in

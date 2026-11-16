@@ -53,7 +53,7 @@ final class LocalSpeechRecorder: RecordingControlling {
     private var generation = UUID()
     private var firstPreviewReported = false
     private var recordingStarted = Date()
-    private let logger = Logger(subsystem: "me.longbiaochen.chattype", category: "LocalSpeech")
+    private let logger = Logger(subsystem: AppIdentity.loggingSubsystem, category: "LocalSpeech")
     private var health = RecordingInputHealthMonitor()
     var liveTranscript: String {
         if previewUnavailable || sink?.previewUnavailable == true {

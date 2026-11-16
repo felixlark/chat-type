@@ -34,7 +34,7 @@ For a locally built candidate:
 open -g /Applications/ChatType.app
 ```
 
-Keep a stable Apple signing identity. Run only the installed app for permission and interaction verification. See [release instructions](docs/release.md) for signing, packaging, acceptance and rollback. Homebrew cask metadata lives in [packaging](packaging/homebrew/Casks/chattype.rb); it is not a claim that a public tap is available.
+Keep a stable Apple signing identity. Existing local installations need the [explicit compatible identity profile](docs/runtime-identity.md); the public default must not overwrite a different installed identity. Run only the installed app for permission and interaction verification. See [release instructions](docs/release.md) for signing, packaging, acceptance and rollback. Homebrew cask metadata lives in [packaging](packaging/homebrew/Casks/chattype.rb); it is not a claim that a public tap is available.
 
 ## Use and recovery
 

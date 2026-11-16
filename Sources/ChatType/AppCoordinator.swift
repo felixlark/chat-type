@@ -42,7 +42,7 @@ final class AppCoordinator {
     let pipelineFactory: PipelineFactory
     let launchAppContextProvider: LaunchAppContextProvider
     private let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "me.longbiaochen.chattype",
+        subsystem: AppIdentity.loggingSubsystem,
         category: "Permissions"
     )
 

@@ -34,7 +34,7 @@
 open -g /Applications/ChatType.app
 ```
 
-保留稳定的 Apple 签名身份，权限和交互只在真实安装版验收。签名、打包、验收与回滚见[发布说明](docs/release.md)。[Homebrew cask](packaging/homebrew/Casks/chattype.rb) 只是仓内元数据，不表示已有公开 tap。
+保留稳定的 Apple 签名身份；已有本机安装使用[显式兼容身份 profile](docs/runtime-identity.md)，同一文件贯通打包、检查和安装。公开默认身份不覆盖不同身份的原安装，私有兼容签名包不作为匿名公开制品上传。权限和交互只在真实安装版验收。签名、打包、验收与回滚见[发布说明](docs/release.md)。[Homebrew cask](packaging/homebrew/Casks/chattype.rb) 只是仓内元数据，不表示已有公开 tap。
 
 ## 使用与恢复
 
