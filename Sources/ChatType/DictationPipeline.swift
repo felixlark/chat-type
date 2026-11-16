@@ -88,9 +88,9 @@ struct DictationPipeline: DictationPreparing {
             stages.protocolVersion = "DoubaoIME-1.1.0/v2/Opus-16000"
         }
         try audit?(stages)
-        let terms = importedEntries.filter { $0.type == .term }
         // Identity rules are literal locks; retain them during alignment and text polish.
-        let alignmentEntries = terms + (correctionsEnabled ? importedEntries.filter { $0.type == .correction && $0.original == $0.replacement } : [])
+        let alignmentEntries = AlignmentVocabularyCache.shared.vocabulary(for: importedEntries)
+            .entries(correctionsEnabled: correctionsEnabled)
         let namesStarted = ProcessingTiming.now()
         let relatedHints = hintTerms + PersonalNameHints.relatedTerms(in: transcription.text, entries: importedEntries)
         trace.recordStage("nameLookup", since: namesStarted)

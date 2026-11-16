@@ -112,3 +112,46 @@ final class VocabularyIndexCache: @unchecked Sendable {
         }
     }
 }
+
+/// Keep the filtered arrays stable across recordings so normalization can reuse its index.
+/// Retaining the source enforces copy-on-write when the settings or an old snapshot is edited.
+struct AlignmentVocabulary: Sendable {
+    let sourceEntries: [TerminologyEntry]
+    let storageIdentity: UInt
+    let localeIdentifier: String
+    let terms: [TerminologyEntry]
+    let termsWithLiteralCorrections: [TerminologyEntry]
+
+    init(entries: [TerminologyEntry], locale: Locale) {
+        sourceEntries = entries
+        storageIdentity = VocabularyIndex.identity(entries)
+        localeIdentifier = locale.identifier
+        terms = entries.filter { $0.type == .term }
+        termsWithLiteralCorrections = terms + entries.filter {
+            $0.type == .correction && $0.original == $0.replacement
+        }
+    }
+
+    func entries(correctionsEnabled: Bool) -> [TerminologyEntry] {
+        correctionsEnabled ? termsWithLiteralCorrections : terms
+    }
+}
+
+final class AlignmentVocabularyCache: @unchecked Sendable {
+    static let shared = AlignmentVocabularyCache()
+    private let lock = NSLock()
+    private var cached: AlignmentVocabulary?
+
+    func vocabulary(for entries: [TerminologyEntry], locale: Locale = .current) -> AlignmentVocabulary {
+        lock.withLock {
+            let identity = VocabularyIndex.identity(entries)
+            if let cached, cached.storageIdentity == identity,
+               cached.sourceEntries.count == entries.count, cached.localeIdentifier == locale.identifier {
+                return cached
+            }
+            let vocabulary = AlignmentVocabulary(entries: entries, locale: locale)
+            cached = vocabulary
+            return vocabulary
+        }
+    }
+}

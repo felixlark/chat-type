@@ -2,6 +2,47 @@ import Foundation
 import Testing
 @testable import ChatType
 
+@Test func alignmentVocabularyReusesArraysAndInvalidatesEditsWithoutChangingOldSnapshots() {
+    let cache = AlignmentVocabularyCache()
+    var entries = [TerminologyEntry(canonical: "taskd", aliases: ["task d"]),
+        TerminologyEntry(type: .correction, original: "Shade", replacement: "Shade", aliases: [],
+            source: "user", usageCount: 0, createdAt: "test"),
+        TerminologyEntry(type: .correction, original: "typo", replacement: "fixed", aliases: [],
+            source: "user", usageCount: 0, createdAt: "test")]
+    let old = cache.vocabulary(for: entries)
+    let same = cache.vocabulary(for: entries)
+    for enabled in [false, true] {
+        let expected = entries.filter { $0.type == .term }
+            + (enabled ? entries.filter { $0.type == .correction && $0.original == $0.replacement } : [])
+        #expect(old.entries(correctionsEnabled: enabled) == expected)
+        #expect(VocabularyIndex.identity(old.entries(correctionsEnabled: enabled))
+            == VocabularyIndex.identity(same.entries(correctionsEnabled: enabled)))
+        let normalizer = TerminologyNormalizer()
+        #expect(normalizer.normalize(text: "请检查 task d 与 Shade。", importedEntries: expected, hintTerms: [])
+            == normalizer.normalize(text: "请检查 task d 与 Shade。",
+                importedEntries: same.entries(correctionsEnabled: enabled), hintTerms: []))
+    }
+    entries[0].original = "contextd"
+    let edited = cache.vocabulary(for: entries)
+    #expect(edited.storageIdentity != old.storageIdentity)
+    #expect(edited.terms.first?.original == "contextd")
+    #expect(old.terms.first?.original == "taskd")
+    #expect(cache.vocabulary(for: old.sourceEntries).terms == old.terms)
+    #expect(cache.vocabulary(for: []).entries(correctionsEnabled: true).isEmpty)
+}
+
+@Test func alignmentVocabularyConcurrentSnapshotReadsStayCoherent() async {
+    let cache = AlignmentVocabularyCache()
+    let snapshots = (0..<4).map { [TerminologyEntry(canonical: "Snapshot\($0)", aliases: [])] }
+    await withTaskGroup(of: Bool.self) { group in
+        for i in 0..<40 {
+            let entries = snapshots[i % snapshots.count]
+            group.addTask { cache.vocabulary(for: entries).entries(correctionsEnabled: i.isMultiple(of: 2)) == entries }
+        }
+        for await coherent in group { #expect(coherent) }
+    }
+}
+
 @Test func cachedVocabularyPreserves109PromptsAcrossBudgetsAndUnicode() {
     var popular = TerminologyEntry(canonical: "Zeta", aliases: ["zeta alias"])
     popular.usageCount = 10
