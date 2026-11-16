@@ -1,152 +1,166 @@
 import AppKit
+import ApplicationServices
 import Testing
 @testable import ChatType
 
-@MainActor
-private final class Target: LiveTextTarget {
+@MainActor private final class Target: LiveTextTarget {
     var value: String? = "前🙂选中后"
     var selection: NSRange? = NSRange(location: 3, length: 2)
-    var frame: CGRect? = CGRect(x: 10, y: 20, width: 400, height: 80)
+    var anchor: InputCompositionAnchor? = InputCompositionAnchor(caret: CGRect(x: 20, y: 50, width: 1, height: 20),
+        input: CGRect(x: 10, y: 20, width: 400, height: 80), font: .systemFont(ofSize: 16), foreground: .black, background: .white)
     var rejects = false
-    var transforms = false
+    var transformed = false
+    var unreadable = false
     var writes = 0
     var caret = 0
     func write(_ value: String, caret: Int) -> LiveTextWriteResult {
         writes += 1
-        guard !rejects else { return .rejected }
-        self.value = transforms && value.contains("草稿") ? value + "edited" : value
+        if rejects { return .rejected }
+        self.value = transformed ? value + "edited" : value
         self.caret = caret
-        return .applied(observedValue: self.value)
+        return .applied(observedValue: unreadable ? nil : self.value)
     }
 }
-
-@MainActor
-private final class Preview: LiveTextPresenting {
+@MainActor private final class Composition: InputCompositionPresenting {
     var text: String?
-    var frame: CGRect?
-    func show(_ text: String, frame: CGRect) { self.text = text; self.frame = frame }
-    func hide() { text = nil }
+    var provider: (@MainActor () async -> InputCompositionAnchor?)?
+    func show(_ text: String, anchor: @escaping @MainActor () async -> InputCompositionAnchor?) { self.text = text; provider = anchor }
+    func hide() { text = nil; provider = nil }
 }
-
-@MainActor
-private final class Clipboard: TextInjecting {
+@MainActor private final class Clipboard: TextInjecting {
     var copied: String?
     func copyToClipboard(text: String) throws -> InjectionOutcome { copied = text; return .copiedToClipboard(reason: .userSelected) }
     func inject(text: String, preserveClipboard: Bool, restoreDelayMilliseconds: UInt64, launchAppContext: LaunchAppContext?) throws -> InjectionOutcome {
-        Issue.record("Pinned live output must never use current-focus injection")
-        return .pasted
+        Issue.record("Pinned output must not use current focus"); return .pasted
     }
 }
-
-@MainActor private final class Focus {
-    var target: Target
-    init(_ target: Target) { self.target = target }
+@MainActor private final class Editor: PinnedEditorSession {
+    var commits: [String] = []
+    var ready = true
+    var applied = true
+    var unknown = false
+    var closeCount = 0
+    var gate: CheckedContinuation<Void, Never>?
+    var wait = false
+    func prepare() async throws -> EditorBridgeResponse {
+        if !ready { throw EditorDeliveryError.unavailable }
+        return EditorBridgeResponse(protocol: 1, build: 136, status: "active")
+    }
+    func geometry() async throws -> EditorBridgeResponse { EditorBridgeResponse(protocol: 1, build: 136, status: "active", visible: true) }
+    func commit(_ text: String) async throws -> Bool {
+        commits.append(text)
+        if wait { await withCheckedContinuation { gate = $0 } }
+        if unknown { throw EditorDeliveryError.outputUnknown }
+        return applied
+    }
+    func cancelPending() {}
+    func close() { closeCount += 1 }
 }
 
-@Test @MainActor func pinnedInputRevisesUTF16SelectionAndFinalizesWithoutRecapturingFocus() throws {
-    let original = Target(); let other = Target(); let preview = Preview(); let clipboard = Clipboard()
-    let focus = Focus(original); var captures = 0
-    let input = LiveTextInput(capture: { _ in captures += 1; return focus.target }, preview: preview)
+@Test @MainActor func liveCompositionDoesNotModifyDocumentAndFinalUsesOriginalSelection() async throws {
+    let original = Target(), other = Target(), composition = Composition(), clipboard = Clipboard()
+    let input = LiveTextInput(capture: { _ in original }, composition: composition)
+    input.begin(context: nil, enabled: true); await input.prepare()
+    input.update("实时初稿"); input.update("完整初稿")
+    #expect(original.value == "前🙂选中后" && original.writes == 0)
+    #expect(composition.text == "完整初稿")
+    #expect(await composition.provider?()?.font.pointSize == 16)
+    input.endRecording()
+    #expect(composition.text == "完整初稿")
+    #expect(try await input.finish("终稿", injector: clipboard) == .pasted)
+    #expect(original.value == "前🙂终稿后" && original.writes == 1 && original.caret == 5)
+    #expect(other.writes == 0 && clipboard.copied == nil && composition.text == nil)
+}
+
+@Test @MainActor func cancellingOrFailedProcessingOnlyRemovesComposition() {
+    let target = Target(), composition = Composition()
+    let input = LiveTextInput(capture: { _ in target }, composition: composition)
+    input.begin(context: nil, enabled: true); input.update("草稿"); input.suspend()
+    #expect(target.value == "前🙂选中后" && target.writes == 0 && composition.text == nil && input.hasSession)
+    input.reset()
+    #expect(!input.hasSession && target.writes == 0)
+}
+
+@Test @MainActor func manualEditsPreservedAndFinalCopiedTruthfully() async throws {
+    let target = Target(), composition = Composition(), clipboard = Clipboard()
+    let input = LiveTextInput(capture: { _ in target }, composition: composition)
+    input.begin(context: nil, enabled: true); input.update("草稿")
+    target.value = "后来手工写入"
+    #expect(await composition.provider?() == nil)
+    #expect(try await input.finish("终稿", injector: clipboard) == .copiedToClipboard(reason: .originalTargetUnavailable))
+    #expect(target.value == "后来手工写入" && target.writes == 0 && clipboard.copied == "终稿")
+}
+
+@Test(arguments: [false, true]) @MainActor
+func appliedButUnverifiedAXFinalNeverCopiesOrRollsBack(unreadable: Bool) async {
+    let target = Target(), clipboard = Clipboard()
+    target.unreadable = unreadable; target.transformed = !unreadable
+    let input = LiveTextInput(capture: { _ in target }, composition: Composition())
     input.begin(context: nil, enabled: true)
-    input.update("初稿")
-    #expect(original.value == "前🙂初稿后")
-    focus.target = other
-    input.update("实时修正")
-    #expect(original.value == "前🙂实时修正后")
-    #expect(other.writes == 0 && captures == 1)
-    #expect(try input.finish("终稿", injector: clipboard) == .pasted)
-    #expect(original.value == "前🙂终稿后" && original.caret == 5)
-    input.reset()
-    #expect(original.value == "前🙂终稿后" && clipboard.copied == nil)
+    do { _ = try await input.finish("终稿", injector: clipboard); Issue.record("Must report unknown output") }
+    catch { #expect(error is EditorDeliveryError) }
+    input.suspend(); input.reset()
+    #expect(target.writes == 1 && clipboard.copied == nil)
+    #expect(target.value == (unreadable ? "前🙂终稿后" : "前🙂终稿后edited"))
 }
 
-@Test @MainActor func cancellationRestoresOriginalAndRetryRetainsPinnedTarget() throws {
-    let target = Target(); let input = LiveTextInput(capture: { _ in target }, preview: Preview())
-    input.begin(context: nil, enabled: true); input.update("草稿")
+@Test @MainActor func actualEditorRouteWorksWithoutAnyAXTextElementAndRetainsPinForRetry() async throws {
+    let editor = Editor(), composition = Composition(), clipboard = Clipboard()
+    var captures = 0
+    let input = LiveTextInput(capture: { _ in captures += 1; return nil }, composition: composition, editorFactory: { _ in editor })
+    input.begin(context: nil, enabled: true); await input.prepare(); input.update("初稿")
     input.suspend()
-    #expect(target.value == "前🙂选中后")
-    #expect(input.hasSession)
-    #expect(try input.finish("重跑终稿", injector: Clipboard()) == .pasted)
-    #expect(target.value == "前🙂重跑终稿后")
-    input.begin(context: nil, enabled: true); input.update("下一段")
+    #expect(editor.commits.isEmpty && captures == 0 && editor.closeCount == 0)
+    #expect(try await input.finish("重跑终稿", injector: clipboard) == .pasted)
+    #expect(editor.commits == ["重跑终稿"] && editor.closeCount == 1 && clipboard.copied == nil)
+}
+
+@Test @MainActor func missingEditorReadinessCannotClaimPasteOrRecaptureFocus() async throws {
+    let editor = Editor(), clipboard = Clipboard(); editor.ready = false
+    let input = LiveTextInput(capture: { _ in nil }, composition: Composition(), editorFactory: { _ in editor })
+    input.begin(context: nil, enabled: true); await input.prepare()
+    #expect(try await input.finish("保留终稿", injector: clipboard) == .copiedToClipboard(reason: .originalTargetUnavailable))
+    #expect(editor.commits.isEmpty && clipboard.copied == "保留终稿")
+}
+
+@Test @MainActor func uncertainEditorCommitNeverCopiesAnotherFinal() async {
+    let editor = Editor(), clipboard = Clipboard(); editor.unknown = true
+    let input = LiveTextInput(capture: { _ in nil }, composition: Composition(), editorFactory: { _ in editor })
+    input.begin(context: nil, enabled: true); await input.prepare()
+    do { _ = try await input.finish("终稿", injector: clipboard); Issue.record("Must report uncertainty") }
+    catch { #expect(error is EditorDeliveryError) }
+    #expect(editor.commits == ["终稿"] && clipboard.copied == nil)
+}
+
+@Test @MainActor func staleFinalReceiptCannotResetTheNextComposition() async {
+    let editor = Editor(), composition = Composition(); editor.wait = true
+    let input = LiveTextInput(capture: { _ in nil }, composition: composition, editorFactory: { _ in editor })
+    input.begin(context: nil, enabled: true); await input.prepare()
+    let finish = Task { try await input.finish("旧终稿", injector: Clipboard()) }
+    while editor.gate == nil { await Task.yield() }
+    input.reset(); input.begin(context: nil, enabled: true); input.update("新初稿")
+    editor.gate?.resume()
+    do { _ = try await finish.value; Issue.record("Old final must not complete new session") } catch { #expect(error is CancellationError) }
+    #expect(input.hasSession && composition.text == "新初稿")
     input.reset()
-    #expect(target.value == "前🙂重跑终稿后")
-    #expect(!input.hasSession)
 }
 
-@Test @MainActor func editsAfterPreviewRemainUntouchedAndFinalGoesToClipboard() throws {
-    let target = Target(); let preview = Preview(); let clipboard = Clipboard()
-    let input = LiveTextInput(capture: { _ in target }, preview: preview)
-    input.begin(context: nil, enabled: true); input.update("草稿")
-    target.value = "手工修改了草稿"
-    input.update("新草稿")
-    #expect(target.value == "手工修改了草稿")
-    #expect(preview.text == "新草稿" && preview.frame == target.frame)
-    #expect(try input.finish("最终结果", injector: clipboard) == .copiedToClipboard(reason: .originalTargetUnavailable))
-    #expect(target.value == "手工修改了草稿" && clipboard.copied == "最终结果")
-    #expect(preview.text == nil)
-}
-
-@Test @MainActor func rejectedAndTransformedWritesUseSeparateInputPreview() throws {
-    for transforms in [false, true] {
-        let target = Target(); target.rejects = !transforms; target.transforms = transforms
-        let preview = Preview(); let clipboard = Clipboard()
-        let input = LiveTextInput(capture: { _ in target }, preview: preview)
-        input.begin(context: nil, enabled: true); input.update("草稿")
-        #expect(preview.text == "草稿" && preview.frame == target.frame)
-        let current = target.value
-        input.suspend()
-        #expect(target.value == "前🙂选中后" && preview.text == nil)
-        let result = try input.finish("终稿", injector: clipboard)
-        #expect(result == (transforms ? .pasted : .copiedToClipboard(reason: .originalTargetUnavailable)))
-        #expect(target.value == (transforms ? "前🙂终稿后" : current))
-        #expect(clipboard.copied == (transforms ? nil : "终稿"))
-    }
-}
-
-@Test @MainActor func unavailableOrUnreadableTargetsKeepRecordingSessionAndClipboardOutput() throws {
-    for missing in [false, true] {
-        let target = Target(); target.selection = nil; target.rejects = true
-        let preview = Preview(); let clipboard = Clipboard()
-        let input = LiveTextInput(capture: { _ in missing ? nil : target }, preview: preview)
-        input.begin(context: nil, enabled: true); input.update("实时文字")
-        #expect(input.hasSession)
-        #expect(preview.text == (missing ? nil : "实时文字"))
-        target.frame = nil; input.update("实时文字")
-        #expect(preview.text == nil)
-        #expect(try input.finish("终稿", injector: clipboard) == .copiedToClipboard(reason: .originalTargetUnavailable))
-    }
-}
-
-@Test @MainActor func clipboardOnlyDoesNotCaptureOrChangeAnyInput() throws {
-    let input = LiveTextInput(capture: { _ in Issue.record("Must not inspect target"); return nil }, preview: Preview())
+@Test @MainActor func clipboardOnlyDoesNotCaptureAnyInput() async throws {
+    let input = LiveTextInput(capture: { _ in Issue.record("Must not inspect target"); return nil }, composition: Composition())
     input.begin(context: nil, enabled: false); input.update("草稿")
-    #expect(try input.finish("终稿", injector: Clipboard()) == nil)
+    #expect(try await input.finish("终稿", injector: Clipboard()) == nil)
 }
-
-@Test func invalidLiveSelectionDoesNotProduceInsertionPlan() {
+@Test func invalidUTF16SelectionCannotReplaceText() {
     #expect(LiveTextSpan(value: "abc", selection: NSRange(location: 4, length: 0)) == nil)
     #expect(LiveTextSpan(value: "abc", selection: NSRange(location: 1, length: 3)) == nil)
 }
 
-@Test @MainActor func stoppingRecordingHidesFallbackBeforeProcessingWhileRetainingTarget() throws {
-    let target = Target(); target.rejects = true
-    let preview = Preview(); let input = LiveTextInput(capture: { _ in target }, preview: preview)
-    input.begin(context: nil, enabled: true); input.update("草稿")
-    #expect(preview.text == "草稿")
-    input.endRecording()
-    #expect(preview.text == nil && input.hasSession)
-    target.frame = nil
-    #expect(try input.finish("终稿", injector: Clipboard()) == .copiedToClipboard(reason: .originalTargetUnavailable))
-    #expect(preview.text == nil)
-}
-
-@Test @MainActor func transformedDraftRollbackNeverOverwritesSubsequentUserEdit() {
-    let target = Target(); target.transforms = true
-    let input = LiveTextInput(capture: { _ in target }, preview: Preview())
-    input.begin(context: nil, enabled: true); input.update("草稿")
-    #expect(target.value == "前🙂草稿后edited")
-    target.value = "后来手工写入"
-    input.reset()
-    #expect(target.value == "后来手工写入")
+@Test @MainActor func sourceFontUsesAnAdjacentWholeUTF16CharacterAndAXFontDictionary() throws {
+    #expect(InputCompositionTextStyle.adjacentRange(in: "A🙂Z", caret: 1) == NSRange(location: 1, length: 2))
+    #expect(InputCompositionTextStyle.adjacentRange(in: "A🙂", caret: 3) == NSRange(location: 1, length: 2))
+    #expect(InputCompositionTextStyle.adjacentRange(in: "", caret: 0) == nil)
+    let attributes: [NSAttributedString.Key: Any] = [NSAttributedString.Key("AXFont"): [
+        "AXFontName": "Menlo-Regular", "AXFontSize": NSNumber(value: 24)]]
+    let font = InputCompositionTextStyle.font(attributes, fallbackSize: 13)
+    #expect(font.pointSize == 24 && font.fontName == "Menlo-Regular")
 }

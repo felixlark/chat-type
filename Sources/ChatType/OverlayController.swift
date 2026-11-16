@@ -533,12 +533,10 @@ final class OverlayController: OverlayControlling {
             geometry = presentsPanel ? OverlayFocusGeometry.read(visible: visible) : OverlayFocusGeometry(protected: [], hasEditableGeometry: true)
             nextGeometryRead = Date().addingTimeInterval(0.25)
         }
-        let unknown = !geometry.hasEditableGeometry
         let preferred = userAnchor.map { CGPoint(x: $0.x - size.width / 2, y: $0.y) }
-            ?? anchor ?? (unknown ? CGPoint(x: visible.minX + 16, y: visible.minY + 16) : nil)
         let placement = BottomOverlayLayout.place(size: size, visible: visible, protected: geometry.protected,
             preferred: preferred, manual: userAnchor != nil)
-        needsPositionAdjustment = unknown || placement.needsAdjustment
+        needsPositionAdjustment = placement.needsAdjustment
         anchor = placement.frame.origin
         panel.setFrame(placement.frame, display: false)
         panelRootView.layoutSubtreeIfNeeded()

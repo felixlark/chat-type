@@ -136,7 +136,7 @@ import Testing
     overlay.debugSetGeometry(visible: visible, protected: [], hasEditableGeometry: false)
     overlay.refreshGeometry()
     #expect(overlay.debugSnapshot.panelFrame == intended)
-    #expect(overlay.debugSnapshot.displayedTitle.contains("拖动调整位置"))
+    #expect(!overlay.debugSnapshot.displayedTitle.contains("拖动调整位置"))
     overlay.hide()
 }
 
@@ -175,5 +175,20 @@ import Testing
     overlay.showRetryableError("test error")
     #expect(overlay.debugSimulateRetryControlClick())
     #expect(retries == 1)
+    overlay.hide()
+}
+
+@MainActor
+@Test func statusHUDKeepsCenteredDefaultWithoutAXGeometryAcrossStates() {
+    let overlay = OverlayController(presentsPanel: false)
+    let visible = CGRect(x: -1900, y: 100, width: 1500, height: 900)
+    overlay.debugSetGeometry(visible: visible, protected: [], hasEditableGeometry: false)
+    overlay.showRecording(elapsedText: "00:00")
+    #expect(overlay.debugSnapshot.panelFrame.midX == visible.midX)
+    #expect(overlay.debugSnapshot.panelFrame.minY == visible.minY + 24)
+    overlay.showProcessing()
+    #expect(overlay.debugSnapshot.panelFrame.midX == visible.midX)
+    overlay.showRetryableError("test")
+    #expect(overlay.debugSnapshot.panelFrame.midX == visible.midX)
     overlay.hide()
 }

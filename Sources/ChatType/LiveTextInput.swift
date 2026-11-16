@@ -1,236 +1,285 @@
 import AppKit
 import ApplicationServices
 
-/// Own only the selected span. UTF-16 offsets match the Accessibility contract.
 struct LiveTextSpan: Equatable {
     let original: String
     let selection: NSRange
-    private(set) var expected: String
-
     init?(value: String, selection: NSRange) {
         guard selection.location >= 0, selection.length >= 0,
               selection.location <= value.utf16.count,
               selection.length <= value.utf16.count - selection.location else { return nil }
-        self.original = value
-        self.selection = selection
-        self.expected = value
+        original = value; self.selection = selection
     }
-
     func replacing(with text: String, current: String) -> String? {
-        guard current == expected else { return nil }
+        guard current == original else { return nil }
         return (original as NSString).replacingCharacters(in: selection, with: text)
     }
-
-    mutating func accept(_ value: String) { expected = value }
 }
 
-enum LiveTextWriteResult {
-    case rejected
-    case applied(observedValue: String?)
-}
+enum LiveTextWriteResult { case rejected, applied(observedValue: String?) }
 
 @MainActor
 protocol LiveTextTarget: AnyObject {
     var value: String? { get }
     var selection: NSRange? { get }
-    var frame: CGRect? { get }
+    var anchor: InputCompositionAnchor? { get }
     func write(_ value: String, caret: Int) -> LiveTextWriteResult
-}
-
-@MainActor
-protocol LiveTextPresenting: AnyObject {
-    func show(_ text: String, frame: CGRect)
-    func hide()
 }
 
 @MainActor
 protocol LiveTextInputControlling: AnyObject {
     func begin(context: LaunchAppContext?, enabled: Bool)
+    func prepare() async
     func update(_ text: String)
-    func finish(_ text: String, injector: any TextInjecting) throws -> InjectionOutcome?
+    func finish(_ text: String, injector: any TextInjecting) async throws -> InjectionOutcome?
     func endRecording()
     func suspend()
     func reset()
 }
+extension LiveTextInputControlling { func prepare() async {} }
 
-/// The captured element remains the destination even if another field/app gains focus.
 @MainActor
 final class LiveTextInput: LiveTextInputControlling {
+    typealias EditorFactory = @MainActor (LaunchAppContext?) -> (any PinnedEditorSession)?
     private let capture: @MainActor (LaunchAppContext?) -> (any LiveTextTarget)?
-    private let preview: any LiveTextPresenting
+    private let composition: any InputCompositionPresenting
+    private let editorFactory: EditorFactory
     private var target: (any LiveTextTarget)?
     private var span: LiveTextSpan?
+    private var editor: (any PinnedEditorSession)?
+    private var editorReady = false
+    private var editorWindow: InputWindowAnchor?
     private var text = ""
-    private var direct = true
+    private var generation = 0
     private(set) var hasSession = false
 
     init(capture: @escaping @MainActor (LaunchAppContext?) -> (any LiveTextTarget)? = AXLiveTextTarget.capture,
-         preview: (any LiveTextPresenting)? = nil) {
-        self.capture = capture
-        self.preview = preview ?? InputPreviewPanel()
+         composition: (any InputCompositionPresenting)? = nil,
+         editorFactory: @escaping EditorFactory = { context in
+             context?.bundleIdentifier == "com.sublimetext.4" ? SublimeEditorSession() : nil
+         }) {
+        self.capture = capture; self.composition = composition ?? InputCompositionController(); self.editorFactory = editorFactory
     }
 
     func begin(context: LaunchAppContext?, enabled: Bool) {
         reset()
         guard enabled else { return }
         hasSession = true
+        editor = editorFactory(context)
+        if editor != nil { editorWindow = InputWindowAnchor.capture(context); return }
         target = capture(context)
-        if let value = target?.value, let selection = target?.selection {
-            span = LiveTextSpan(value: value, selection: selection)
-        }
+        if let value = target?.value, let selection = target?.selection { span = LiveTextSpan(value: value, selection: selection) }
+    }
+
+    func prepare() async {
+        guard let editor else { return }
+        let current = generation
+        let ready = (try? await editor.prepare()) != nil
+        if generation == current { editorReady = ready }
     }
 
     func update(_ text: String) {
         guard hasSession, !text.isEmpty else { return }
-        if text != self.text {
-            self.text = text
-            if direct, replace(text) { preview.hide(); return }
-            direct = false
+        self.text = text
+        let current = generation
+        composition.show(text) { [weak self] in
+            guard let self, self.generation == current else { return nil }
+            if let editor = self.editor {
+                guard self.editorReady, let window = self.editorWindow,
+                      let response = try? await editor.geometry(), response.visible == true,
+                      self.generation == current else { return nil }
+                return window.compositionAnchor(response)
+            }
+            guard self.target?.value == self.span?.original else { return nil }
+            return self.target?.anchor
         }
-        if !direct, let frame = target?.frame {
-            preview.show(text, frame: frame)
-        } else if !direct { preview.hide() }
     }
 
-    /// Call only after the final result is durably sealed. nil means live input was disabled.
-    func finish(_ text: String, injector: any TextInjecting) throws -> InjectionOutcome? {
+    func finish(_ text: String, injector: any TextInjecting) async throws -> InjectionOutcome? {
         guard hasSession else { return nil }
-        preview.hide()
-        if replace(text) { resetWithoutRollback(); return .pasted }
-        rollback()
+        let current = generation
+        composition.hide()
+        if let editor {
+            if editorReady {
+                let applied = try await editor.commit(text)
+                try Task.checkCancellation()
+                guard generation == current else { throw CancellationError() }
+                if applied { reset(); return .pasted }
+            }
+        } else if let target, let span, let value = target.value,
+                  let final = span.replacing(with: text, current: value) {
+            if final == value { reset(); return .pasted }
+            switch target.write(final, caret: span.selection.location + text.utf16.count) {
+            case .rejected: break
+            case .applied(let observed):
+                guard observed == final else { throw EditorDeliveryError.outputUnknown }
+                reset(); return .pasted
+            }
+        }
+        try Task.checkCancellation()
+        guard generation == current else { throw CancellationError() }
         let result = try injector.copyToClipboard(text: text)
-        resetWithoutRollback()
+        reset()
         if case .copiedToClipboard = result { return .copiedToClipboard(reason: .originalTargetUnavailable) }
         return result
     }
 
-    func endRecording() { preview.hide() }
-
-    /// Errors/cancellation remove only our unchanged draft. Retain the pin for manual Retry.
-    func suspend() {
-        rollback()
-        preview.hide()
-        text = ""
+    func endRecording() { /* The original composition stays provisional through polish. */ }
+    func suspend() { composition.hide(); editor?.cancelPending(); text = "" }
+    func reset() {
+        generation += 1
+        composition.hide(); editor?.close()
+        target = nil; span = nil; editor = nil; editorWindow = nil; editorReady = false; text = ""; hasSession = false
     }
+}
 
-    func reset() { suspend(); resetWithoutRollback() }
-
-    private func resetWithoutRollback() {
-        preview.hide()
-        target = nil; span = nil; text = ""; direct = true; hasSession = false
+@MainActor
+final class InputWindowAnchor {
+    let window: AXUIElement
+    let pid: pid_t
+    init(window: AXUIElement, pid: pid_t) { self.window = window; self.pid = pid }
+    static func capture(_ context: LaunchAppContext?) -> InputWindowAnchor? {
+        guard let context, AXIsProcessTrusted(),
+              let window = axElement(AXUIElementCreateApplication(context.processIdentifier), kAXFocusedWindowAttribute) else { return nil }
+        return InputWindowAnchor(window: window, pid: context.processIdentifier)
     }
-
-    private func replace(_ text: String) -> Bool {
-        guard let target, var span, let current = target.value,
-              let next = span.replacing(with: text, current: current) else { return false }
-        if next == current { return true }
-        switch target.write(next, caret: span.selection.location + text.utf16.count) {
-        case .rejected: return false
-        case .applied(let observed):
-            // An app can normalize a successful AX mutation. Track that exact
-            // mutation too, so Cancel/error can undo it while it is unchanged.
-            if let observed { span.accept(observed); self.span = span }
-            return observed == next
-        }
+    var visible: Bool {
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+              (axAttribute(window, kAXMinimizedAttribute) as? Bool) != true,
+              let focused = axElement(AXUIElementCreateApplication(pid), kAXFocusedWindowAttribute) else { return false }
+        return CFEqual(focused, window)
     }
+    func compositionAnchor(_ r: EditorBridgeResponse) -> InputCompositionAnchor? {
+        guard visible, let frame = axRect(window), let x = r.caretX, let y = r.caretY,
+              let vx = r.viewportX, let vy = r.viewportY, let width = r.width, let height = r.height else { return nil }
+        let scale = r.uiScale.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 1
+        // Sublime window coordinates exclude the native title bar. AppKit
+        // supplies its current system metric; full-screen windows have none.
+        let content = NSWindow.contentRect(forFrameRect: frame, styleMask: [.titled])
+        let titleBar = (axAttribute(window, "AXFullScreen") as? Bool) == true ? 0 : frame.height - content.height
+        let geometry = EditorCompositionGeometry(window: frame, scale: scale, titleBarHeight: titleBar)
+        let caret = appKitRect(geometry.rect(x: x, y: y, width: 1 / scale, height: r.lineHeight ?? 20))
+        let input = appKitRect(geometry.rect(x: vx, y: vy, width: width, height: height))
+        return InputCompositionAnchor(caret: caret, input: input,
+            font: NSFont(name: r.fontName ?? "Menlo", size: (r.fontSize ?? 13) * scale) ?? .systemFont(ofSize: (r.fontSize ?? 13) * scale),
+            foreground: color(r.foreground) ?? .labelColor, background: color(r.background) ?? .textBackgroundColor)
+    }
+    private func color(_ hex: String?) -> NSColor? {
+        guard let hex, hex.hasPrefix("#"), hex.count == 7, let value = UInt32(hex.dropFirst(), radix: 16) else { return nil }
+        return NSColor(srgbRed: CGFloat((value >> 16) & 255) / 255, green: CGFloat((value >> 8) & 255) / 255, blue: CGFloat(value & 255) / 255, alpha: 1)
+    }
+}
 
-    private func rollback() {
-        guard let target, var span, span.expected != span.original,
-              target.value == span.expected else { return }
-        if case .applied(let observed) = target.write(span.original, caret: span.selection.location + span.selection.length),
-           let observed {
-            span.accept(observed); self.span = span
-        }
+struct EditorCompositionGeometry {
+    let window: CGRect
+    let scale: CGFloat
+    let titleBarHeight: CGFloat
+
+    func rect(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) -> CGRect {
+        CGRect(x: window.minX + x * scale, y: window.minY + titleBarHeight + y * scale,
+               width: width * scale, height: height * scale)
     }
 }
 
 @MainActor
 private final class AXLiveTextTarget: LiveTextTarget {
-    private let element: AXUIElement
-    private let pid: pid_t
-    init(_ element: AXUIElement, pid: pid_t) { self.element = element; self.pid = pid }
-
+    let element: AXUIElement
+    let window: InputWindowAnchor?
+    let selected: NSRange?
+    init(_ element: AXUIElement, window: InputWindowAnchor?) {
+        self.element = element; self.window = window
+        if let raw = axAttribute(element, kAXSelectedTextRangeAttribute), CFGetTypeID(raw) == AXValueGetTypeID() {
+            var r = CFRange()
+            selected = AXValueGetValue(raw as! AXValue, .cfRange, &r) ? NSRange(location: r.location, length: r.length) : nil
+        } else { selected = nil }
+    }
     static func capture(_ context: LaunchAppContext?) -> (any LiveTextTarget)? {
-        guard AXIsProcessTrusted(), let context, context.processIdentifier > 0 else { return nil }
-        let app = AXUIElementCreateApplication(context.processIdentifier)
-        var raw: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &raw) == .success,
-              let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
-        let target = AXLiveTextTarget(raw as! AXUIElement, pid: context.processIdentifier)
-        let role = target.attribute(kAXRoleAttribute) as? String
-        let subrole = target.attribute(kAXSubroleAttribute) as? String
-        guard [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role ?? ""),
-              subrole != kAXSecureTextFieldSubrole as String,
-              (target.attribute(kAXEnabledAttribute) as? Bool) != false else { return nil }
-        return target
+        guard let context, AXIsProcessTrusted(),
+              let element = axElement(AXUIElementCreateApplication(context.processIdentifier), kAXFocusedUIElementAttribute),
+              [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(axAttribute(element, kAXRoleAttribute) as? String ?? ""),
+              axAttribute(element, kAXSubroleAttribute) as? String != kAXSecureTextFieldSubrole as String,
+              (axAttribute(element, kAXEnabledAttribute) as? Bool) != false else { return nil }
+        return AXLiveTextTarget(element, window: InputWindowAnchor.capture(context))
     }
-
-    private func attribute(_ key: String) -> CFTypeRef? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success else { return nil }
-        return value
-    }
-    var value: String? { attribute(kAXValueAttribute) as? String }
-    var selection: NSRange? {
-        guard let raw = attribute(kAXSelectedTextRangeAttribute), CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
-        var range = CFRange()
-        guard AXValueGetValue(raw as! AXValue, .cfRange, &range) else { return nil }
-        return NSRange(location: range.location, length: range.length)
-    }
-    var frame: CGRect? {
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return nil }
-        guard let p = attribute(kAXPositionAttribute), let s = attribute(kAXSizeAttribute),
-              CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID(),
-              let primary = NSScreen.screens.first else { return nil }
-        var point = CGPoint.zero; var size = CGSize.zero
-        guard AXValueGetValue(p as! AXValue, .cgPoint, &point), AXValueGetValue(s as! AXValue, .cgSize, &size),
-              size.width > 0, size.height > 0 else { return nil }
-        return OverlayPlacementSession.appKitFrame(fromAccessibility: CGRect(origin: point, size: size), primaryScreenTop: primary.frame.maxY)
+    var value: String? { axAttribute(element, kAXValueAttribute) as? String }
+    var selection: NSRange? { selected }
+    var anchor: InputCompositionAnchor? {
+        guard window?.visible == true, let input = axRect(element), let selected else { return nil }
+        var range = CFRange(location: selected.location, length: 0)
+        guard let raw = AXValueCreate(.cfRange, &range) else { return nil }
+        var bounds: CFTypeRef?
+        var caret = CGRect(x: input.minX + 6, y: input.minY + 6, width: 1, height: 20)
+        if AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, raw, &bounds) == .success,
+           let bounds, CFGetTypeID(bounds) == AXValueGetTypeID() { _ = AXValueGetValue(bounds as! AXValue, .cgRect, &caret) }
+        var attributed: CFTypeRef?
+        if let styleRange = InputCompositionTextStyle.adjacentRange(in: value ?? "", caret: selected.location) {
+            var range = CFRange(location: styleRange.location, length: styleRange.length)
+            if let styleValue = AXValueCreate(.cfRange, &range) {
+                _ = AXUIElementCopyParameterizedAttributeValue(element, kAXAttributedStringForRangeParameterizedAttribute as CFString, styleValue, &attributed)
+            }
+        }
+        let string = attributed as? NSAttributedString
+        let attributes = (string?.length ?? 0) > 0 ? string!.attributes(at: 0, effectiveRange: nil) : [:]
+        let font = InputCompositionTextStyle.font(attributes, fallbackSize: max(1, caret.height * 0.75))
+        return InputCompositionAnchor(caret: appKitRect(caret), input: appKitRect(input), font: font,
+            foreground: InputCompositionTextStyle.color(attributes, cocoa: .foregroundColor, ax: "AXForegroundColor") ?? .labelColor,
+            background: InputCompositionTextStyle.color(attributes, cocoa: .backgroundColor, ax: "AXBackgroundColor") ?? .textBackgroundColor)
     }
     func write(_ value: String, caret: Int) -> LiveTextWriteResult {
         var settable = DarwinBoolean(false)
         guard AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success,
-              settable.boolValue,
-              AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFString) == .success else { return .rejected }
+              settable.boolValue, AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFString) == .success else { return .rejected }
         let observed = self.value
-        guard observed == value else { return .applied(observedValue: observed) }
-        var range = CFRange(location: caret, length: 0)
-        if let raw = AXValueCreate(.cfRange, &range) {
-            AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, raw)
+        if observed == value {
+            var range = CFRange(location: caret, length: 0)
+            if let raw = AXValueCreate(.cfRange, &range) { AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, raw) }
         }
         return .applied(observedValue: observed)
     }
 }
 
-/// Separate from the status HUD, covering exactly the captured input's rectangle.
-@MainActor
-private final class InputPreviewPanel: LiveTextPresenting {
-    private var panel: NSPanel?
-    private let scroll = NSScrollView()
-    private let textView = NSTextView()
+@MainActor private func axAttribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
+    var value: CFTypeRef?
+    return AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success ? value : nil
+}
+@MainActor private func axElement(_ element: AXUIElement, _ key: String) -> AXUIElement? {
+    guard let value = axAttribute(element, key), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+    return (value as! AXUIElement)
+}
+@MainActor private func axRect(_ element: AXUIElement) -> CGRect? {
+    guard let p = axAttribute(element, kAXPositionAttribute), let s = axAttribute(element, kAXSizeAttribute),
+          CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return nil }
+    var point = CGPoint.zero; var size = CGSize.zero
+    guard AXValueGetValue(p as! AXValue, .cgPoint, &point), AXValueGetValue(s as! AXValue, .cgSize, &size), size.width > 0, size.height > 0 else { return nil }
+    return CGRect(origin: point, size: size)
+}
+@MainActor private func appKitRect(_ rect: CGRect) -> CGRect {
+    OverlayPlacementSession.appKitFrame(fromAccessibility: rect, primaryScreenTop: NSScreen.screens.first?.frame.maxY ?? 0)
+}
 
-    func show(_ text: String, frame: CGRect) {
-        if panel == nil {
-            let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            panel.level = .floating; panel.isFloatingPanel = true
-            panel.hidesOnDeactivate = false; panel.ignoresMouseEvents = true
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-            textView.isEditable = false; textView.isSelectable = false
-            textView.font = .systemFont(ofSize: 14)
-            textView.textContainerInset = NSSize(width: 8, height: 8)
-            textView.isVerticallyResizable = true
-            textView.autoresizingMask = [.width]
-            scroll.documentView = textView; scroll.hasVerticalScroller = false
-            panel.contentView = scroll
-            panel.setAccessibilityLabel("输入框实时预览")
-            self.panel = panel
-        }
-        panel?.setFrame(frame, display: false)
-        textView.setFrameSize(NSSize(width: frame.width, height: frame.height))
-        textView.textContainer?.containerSize = NSSize(width: frame.width, height: .greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = true
-        if textView.string != text { textView.string = text; textView.scrollToEndOfDocument(nil) }
-        panel?.orderFrontRegardless()
+@MainActor
+enum InputCompositionTextStyle {
+    static func adjacentRange(in value: String, caret: Int) -> NSRange? {
+        let string = value as NSString
+        guard string.length > 0, caret >= 0, caret <= string.length else { return nil }
+        return string.rangeOfComposedCharacterSequence(at: min(caret, string.length - 1))
     }
-    func hide() { panel?.orderOut(nil) }
+    // Public AXTextAttributedString.h keys; use their verified string values
+    // because this SDK imports the CFString globals as mutable Unmanaged vars.
+    static func font(_ attributes: [NSAttributedString.Key: Any], fallbackSize: CGFloat) -> NSFont {
+        if let font = attributes[.font] as? NSFont { return font }
+        if let info = attributes[NSAttributedString.Key("AXFont")] as? [String: Any],
+           let name = info["AXFontName"] as? String,
+           let size = info["AXFontSize"] as? NSNumber,
+           let font = NSFont(name: name, size: CGFloat(size.doubleValue)) { return font }
+        return .systemFont(ofSize: fallbackSize)
+    }
+    static func color(_ attributes: [NSAttributedString.Key: Any], cocoa: NSAttributedString.Key, ax: String) -> NSColor? {
+        if let color = attributes[cocoa] as? NSColor { return color }
+        if let raw = attributes[NSAttributedString.Key(ax)] {
+            let value = raw as CFTypeRef
+            if CFGetTypeID(value) == CGColor.typeID { return NSColor(cgColor: value as! CGColor) }
+        }
+        return nil
+    }
 }

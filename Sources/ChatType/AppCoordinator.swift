@@ -316,7 +316,7 @@ final class AppCoordinator {
         let sessionID = UUID()
         activeSessionID = sessionID
         launchAppContext = launchAppContextProvider()
-        liveTextInput.begin(context: launchAppContext, enabled: sessionConfig.transcription.livePreviewEnabled && !sessionConfig.injection.clipboardOnly)
+        liveTextInput.begin(context: launchAppContext, enabled: !sessionConfig.injection.clipboardOnly)
         state = .processing
         statusMenu?.update(state: .processing, detail: "Requesting microphone")
         overlay.showProcessing()
@@ -326,6 +326,8 @@ final class AppCoordinator {
             guard let self else { return }
 
             do {
+                await self.liveTextInput.prepare()
+                guard self.shouldContinue(sessionID: sessionID) else { return }
                 try await self.requestMicrophoneAccess()
                 guard self.shouldContinue(sessionID: sessionID) else { return }
                 logger.info("Microphone access stage completed")
@@ -578,82 +580,84 @@ final class AppCoordinator {
                 }
                 guard !Task.isCancelled else { return }
 
-                await MainActor.run {
-                    guard self.shouldContinue(sessionID: sessionID) else { return }
 
-                    var outputWritten = false
-                    do {
-                        try self.recoveryRecorder.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: audio.fileURL,
-                            durationMs: audio.durationMs, asrText: prepared.rawText, polishText: prepared.stages?.polishOutput,
-                            appName: launchAppContext?.localizedName, appBundleIdentifier: launchAppContext?.bundleIdentifier,
-                            outcome: "readyToInject", errorMessage: nil, snapshot: transcriptionConfig,
-                            attemptID: attemptID, stages: prepared.stages ?? DictationStageAudit(asrText: prepared.rawText, finalText: prepared.finalText),
-                            injectionSnapshot: injectionConfig))
-                        let injectStarted = DispatchTime.now().uptimeNanoseconds
-                        let liveOutcome = try self.liveTextInput.finish(prepared.finalText, injector: self.injector)
-                        let outcome = try liveOutcome ?? (injectionConfig.clipboardOnly ? self.injector.copyToClipboard(text: prepared.finalText) : self.injector.inject(
-                            text: prepared.finalText,
-                            preserveClipboard: injectionConfig.preserveClipboard,
-                            restoreDelayMilliseconds: injectionConfig.restoreDelayMilliseconds,
-                            launchAppContext: launchAppContext
-                        ))
-                        outputWritten = true
-                        let injectMs = self.elapsedMilliseconds(since: injectStarted)
-                        let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
-                        self.recordLatency(
-                            prepared: prepared,
-                            outcome: outcome,
-                            injectMs: injectMs,
-                            totalProcessingMs: totalProcessingMs,
-                            errorCategory: nil
-                        )
-                        try self.recordHistory(
-                            prepared: prepared,
-                            outcome: outcome,
-                            launchAppContext: launchAppContext
-                        )
-                        try self.recordRecoverySuccess(
-                            audio: audio,
-                            prepared: prepared,
-                            outcome: outcome,
-                            launchAppContext: launchAppContext, snapshot: transcriptionConfig, attemptID: attemptID
-                        )
-                        self.clearPendingRetry()
-                        self.state = .idle
-                        self.activeSessionID = nil
-                        self.statusMenu?.update(
-                            state: .ready,
-                            detail: self.statusDetail(for: outcome)
-                        )
-                        self.overlay.showResult(text: prepared.finalText, outcome: outcome)
-                        if case .copiedToClipboard(reason: .originalTargetUnavailable) = outcome {
-                            self.notifier.notify(title: "ChatType · 终稿已复制", body: ClipboardFallbackReason.originalTargetUnavailable.overlaySubtitle)
-                        }
-                        if let reason = prepared.stages?.polishProtectionReason {
-                            self.statusMenu?.update(state: .ready, detail: reason)
-                            self.notifier.notify(title: "ChatType · 已保留识别原文", body: reason)
-                        }
-                        self.launchAppContext = nil
-                    } catch {
-                        if !outputWritten { self.liveTextInput.suspend() }
-                        let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
-                        self.recordLatency(
-                            prepared: prepared,
-                            outcome: nil,
-                            injectMs: 0,
-                            totalProcessingMs: totalProcessingMs,
-                            errorCategory: "inject"
-                        )
-                        self.clearPendingRetry()
-                        self.state = .idle
-                        self.activeSessionID = nil
-                        self.statusMenu?.update(state: .error, detail: error.localizedDescription)
-                        let message = outputWritten ? "文字已经输出，但结果保存未完成；请先核对目标，避免重复粘贴。\(error.localizedDescription)" : "保存或输出未完成；未报告成功。\(error.localizedDescription)"
-                        self.overlay.showError(message)
-                        self.notifier.notify(title: "ChatType", body: message)
-                        self.launchAppContext = nil
+                guard self.shouldContinue(sessionID: sessionID) else { return }
+
+                var outputWritten = false
+                do {
+                    try self.recoveryRecorder.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: audio.fileURL,
+                        durationMs: audio.durationMs, asrText: prepared.rawText, polishText: prepared.stages?.polishOutput,
+                        appName: launchAppContext?.localizedName, appBundleIdentifier: launchAppContext?.bundleIdentifier,
+                        outcome: "readyToInject", errorMessage: nil, snapshot: transcriptionConfig,
+                        attemptID: attemptID, stages: prepared.stages ?? DictationStageAudit(asrText: prepared.rawText, finalText: prepared.finalText),
+                        injectionSnapshot: injectionConfig))
+                    let injectStarted = DispatchTime.now().uptimeNanoseconds
+                    let liveOutcome = try await self.liveTextInput.finish(prepared.finalText, injector: self.injector)
+                    guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
+                    let outcome = try liveOutcome ?? (injectionConfig.clipboardOnly ? self.injector.copyToClipboard(text: prepared.finalText) : self.injector.inject(
+                        text: prepared.finalText,
+                        preserveClipboard: injectionConfig.preserveClipboard,
+                        restoreDelayMilliseconds: injectionConfig.restoreDelayMilliseconds,
+                        launchAppContext: launchAppContext
+                    ))
+                    outputWritten = true
+                    let injectMs = self.elapsedMilliseconds(since: injectStarted)
+                    let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
+                    self.recordLatency(
+                        prepared: prepared,
+                        outcome: outcome,
+                        injectMs: injectMs,
+                        totalProcessingMs: totalProcessingMs,
+                        errorCategory: nil
+                    )
+                    try self.recordHistory(
+                        prepared: prepared,
+                        outcome: outcome,
+                        launchAppContext: launchAppContext
+                    )
+                    try self.recordRecoverySuccess(
+                        audio: audio,
+                        prepared: prepared,
+                        outcome: outcome,
+                        launchAppContext: launchAppContext, snapshot: transcriptionConfig, attemptID: attemptID
+                    )
+                    self.clearPendingRetry()
+                    self.state = .idle
+                    self.activeSessionID = nil
+                    self.statusMenu?.update(
+                        state: .ready,
+                        detail: self.statusDetail(for: outcome)
+                    )
+                    self.overlay.showResult(text: prepared.finalText, outcome: outcome)
+                    if case .copiedToClipboard(reason: .originalTargetUnavailable) = outcome {
+                        self.notifier.notify(title: "ChatType · 终稿已复制", body: ClipboardFallbackReason.originalTargetUnavailable.overlaySubtitle)
                     }
+                    if let reason = prepared.stages?.polishProtectionReason {
+                        self.statusMenu?.update(state: .ready, detail: reason)
+                        self.notifier.notify(title: "ChatType · 已保留识别原文", body: reason)
+                    }
+                    self.launchAppContext = nil
+                } catch {
+                    guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
+                    if !outputWritten { self.liveTextInput.suspend() }
+                    let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
+                    self.recordLatency(
+                        prepared: prepared,
+                        outcome: nil,
+                        injectMs: 0,
+                        totalProcessingMs: totalProcessingMs,
+                        errorCategory: "inject"
+                    )
+                    self.clearPendingRetry()
+                    self.state = .idle
+                    self.activeSessionID = nil
+                    self.statusMenu?.update(state: .error, detail: error.localizedDescription)
+                    let message = outputWritten ? "文字已经输出，但结果保存未完成；请先核对目标，避免重复粘贴。\(error.localizedDescription)" : "保存或输出未完成；未报告成功。\(error.localizedDescription)"
+                    self.overlay.showError(message)
+                    self.notifier.notify(title: "ChatType", body: message)
+                    self.launchAppContext = nil
                 }
+
             } catch is CancellationError {
                 return
             } catch {
@@ -981,7 +985,17 @@ final class AppCoordinator {
         case .recording:
             overlay.showRecording(elapsedText: "00:07")
             overlay.updateRecording(level: 0.72, elapsedText: "00:07")
-            overlay.updateTranscriptPreview(String(repeating: "请把这段语音整理成清晰的文字。保留 ChatType、API 和所有数字。只修改设置页面，先不要发布。后面说的周五为准。实时文字自动换行，长段可以向上滚动回看，再点击回到最新继续跟随。", count: 4))
+            // Exercise the production composition panel without a microphone,
+            // network request or document mutation in explicit visual-demo mode.
+            liveTextInput.begin(context: LaunchAppContext.current(), enabled: true)
+            Task { @MainActor in
+                await liveTextInput.prepare()
+                for draft in ["原位初稿", "原位初稿从光标右下角展开，长句应自动换行。",
+                              String(repeating: "原位初稿从光标右下角展开，长句自动换行。保留数字 136 与 API。\n", count: 12)] {
+                    self.liveTextInput.update(draft)
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                }
+            }
         case .processing:
             overlay.showProcessing()
         case .result:
@@ -1013,6 +1027,7 @@ final class AppCoordinator {
                     return
                 }
                 self.overlay.updateRecording(level: level, elapsedText: self.elapsedRecordingText())
+                guard self.recordingConfig?.transcription.livePreviewEnabled == true else { return }
                 if let live = self.liveDoubao {
                     let session = self.activeSessionID
                     let text = await live.state.preview
