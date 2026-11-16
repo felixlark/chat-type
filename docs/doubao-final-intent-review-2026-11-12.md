@@ -1,5 +1,7 @@
 # 既有产品对照：核准意图后的质量复核
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 CT-VOXT-20261110；2026-11-12追加审读，未新增录音、模型请求或安装版操作。当前默认保持。此复核消费用户已核准的六条最终意图（6/6）；逐字声学稿仍0/6。
 
 ## 分母与判据

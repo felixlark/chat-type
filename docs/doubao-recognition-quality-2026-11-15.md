@@ -1,5 +1,7 @@
 # Doubao recognition fidelity correction — build132
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 The initial adapter used libopus VOIP with its automatic bitrate and VBR defaults. Native 1.1.0's raw speech_opus encoder uses AUDIO, CBR and an explicit bitrate; its default64kbps matches the public Mac settings compression ratio4 for mono PCM16/16kHz. Actual adapter speech packets in the affected acoustic replay carried roughly14kbps, so sharing a service host did not provide equivalent audio fidelity.
 
 Build132 configures bundled libopus AUDIO/CBR at64000bps through a small C variadic ABI bridge, validates each control call and cleans up initialization failures. It preserves the existing supported20ms frame cadence, capture framework, original WAV, immutable attempt snapshots and all ChatGPT/compatible routes. StartSession aligns compression ratio4 and single-toggle input_mode=shortcut_single with the recovered native contract. Those request-field changes alone did not repair recognition in the controlled tests; the codec combination is the demonstrated fix.

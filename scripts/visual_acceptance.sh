@@ -36,10 +36,17 @@ sleep 0.2
 OPEN_PID=""
 
 cleanup() {
-  if [[ -n "$OPEN_PID" ]] && kill -0 "$OPEN_PID" >/dev/null 2>&1; then
-    kill "$OPEN_PID" >/dev/null 2>&1 || true
-  fi
+  local status=$?
+  trap - EXIT
   pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+  # open -W exits only after its demo application has finished terminating.
+  if [[ -n "$OPEN_PID" ]]; then wait "$OPEN_PID" >/dev/null 2>&1 || true; fi
+  /usr/bin/open -n -g "$APP_DIR" || true
+  if ! wait_for_installed_app; then
+    echo "Could not restore the normal installed app after visual acceptance failed." >&2
+    if [[ "$status" == 0 ]]; then status=1; fi
+  fi
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -81,8 +88,6 @@ capture_state "result" "03-result.png"
 capture_state "error" "04-error.png"
 capture_state "retryable-error" "05-retryable-error.png"
 
-trap - EXIT
-
 swift "$ROOT/scripts/verify_visual_acceptance.swift" \
   "$OUT_DIR/01-recording.png" \
   "$OUT_DIR/02-processing.png" \
@@ -97,6 +102,7 @@ if ! wait_for_installed_app; then
 fi
 
 RUNNING_PID="$(pgrep -x "$APP_NAME" | sed -n '1p')"
+trap - EXIT
 
 cat >"$OUT_DIR/summary.md" <<SUMMARY
 # ChatType Visual Acceptance

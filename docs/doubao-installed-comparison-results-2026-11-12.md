@@ -1,5 +1,7 @@
 # 同机原声对照结果与焦点修复
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 CT-VOXT-20261110，执行机 M1 Max / 64GB。六条获准历史原声、两产品各三轮的36个计划单元均取得最终提交计时。豆包在本组短、中、长句都更快；两侧均有质量问题，完整声学参考仍未核准，默认不切换。此前原账户三模型及本机4B的60次文本筛查也没有形成同时提速与保真的采纳证据。
 
 ## 样本、版本与分母

@@ -1,5 +1,7 @@
 # 原ChatGPT账户内的轻量编辑筛查
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 CT-VOXT-20261110。等待本人完成阿里控制台登录期间，独立继续原已授权ChatGPT账户；不操作登录页，不修改阿里停试状态、预算、Key或权限。
 
 此前Luna英文编辑提示存在未清理改口、错名替换。新增对照仅测原已调用过的`gpt-6-luna`与`gpt-6.1-terra`，同一份minimal-v3中文简短编辑合同、不附相关词表，降低误选联系人及输出负担；原ASR错字仍单列，保留原语言和有效意图。输入仍为核准六条的冻结polishInput，不用参考答案、正确人名/协议补题。两个模型同提示，按case交错顺序，每模型6条一轮，共12次；有新增关键错误则不扩大该候选重复。不将异时旧标准提示计时当同批基线；如有价值信号才补同批标准提示及交错重复。

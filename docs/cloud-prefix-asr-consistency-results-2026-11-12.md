@@ -1,5 +1,7 @@
 # 原账户前段云转写：一致性门未过
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 CT-VOXT-20261110；2026-11-12。六条历史原声各一次65%前段与一次全文，原账户12次转写全部HTTP200、非空JSON终稿，未重试、登录、刷新或操作GUI。原始精确前缀命中0/6；按调用前固定的诊断标准，只有2/6达标，长句未过，停止此候选，不继续追加提前润色/调度请求。默认和安装版未改。
 
 ## 试验与预设门槛

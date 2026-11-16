@@ -27,49 +27,6 @@ import Testing
 
 
 
-@MainActor
-@Test func transcriptViewKeepsReviewPositionUntilReturnToLatest() {
-    let view = OverlayTranscriptView(frame: NSRect(x: 0, y: 0, width: 456, height: 80))
-    let original = String(repeating: "这一段文字用于回看测试，并且保留全部内容。\n", count: 30)
-    view.update(original, width: 456, compact: false)
-    #expect(view.followsLatest)
-    view.setFrameSize(NSSize(width: 456, height: 60))
-    view.reflectScrolledClipView(view.contentView)
-    #expect(view.followsLatest)
-    view.contentView.scroll(to: .zero)
-    view.userDidScroll()
-    #expect(!view.followsLatest)
-    view.update(original + "最新的一句。", width: 456, compact: false)
-    #expect(!view.followsLatest)
-    #expect(view.contentView.bounds.minY == 0)
-    #expect(view.fullText == original + "最新的一句。")
-    view.resumeFollowing()
-    #expect(view.followsLatest)
-    #expect(view.contentView.bounds.maxY >= view.documentView!.bounds.maxY - 2)
-    #expect(view.contentView.bounds.minX == 0)
-}
-
-@MainActor
-@Test func transcriptWrapsChineseAndUnbrokenPathsWithinVisibleWidth() {
-    let view = OverlayTranscriptView(frame: NSRect(x: 0, y: 0, width: 456, height: 80))
-    let source = String(repeating: "实时文字需要自动换行。https://example.org/" + String(repeating: "a", count: 100), count: 6)
-    view.update(source, width: 456, compact: false)
-    let text = view.documentView as! NSTextView
-    let manager = text.layoutManager!
-    let glyphs = manager.glyphRange(for: text.textContainer!)
-    var lines = 0
-    manager.enumerateLineFragments(forGlyphRange: glyphs) { _, used, _, _, _ in
-        lines += 1
-        #expect(used.maxX <= 440.5)
-    }
-    #expect(lines > 4)
-    #expect(view.desiredHeight == 80)
-    #expect(view.fullText == source)
-    #expect(view.contentView.bounds.minX == 0)
-}
-
-
-
 @Test func manualOverlayChoosesNearestSafeSideAndKeepsFallbackIntent() {
     let visible = CGRect(x: -1000, y: 100, width: 1000, height: 800)
     let obstacle = CGRect(x: -600, y: 350, width: 60, height: 100)

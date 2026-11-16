@@ -102,24 +102,7 @@ final class AppCoordinator {
             )
         },
         pipelineFactory: @escaping PipelineFactory = { transcriptionConfig, authManager, attemptPolicy in
-            DictationPipeline(
-                transcriber: ChatGPTTranscriber(
-                    authManager: authManager,
-                    config: transcriptionConfig,
-                    cloudflareChallengeMaxAttempts: attemptPolicy.cloudflareChallengeMaxAttempts,
-                    usesLocalSpeechForFiles: false
-                ).selectedRoute,
-                normalizer: TerminologyNormalizer(),
-                importedEntries: transcriptionConfig.activeDictionaryEntries,
-                hintTerms: transcriptionConfig.prioritizedHintTerms,
-                textPolisher: !transcriptionConfig.textPolish.isEnabled ? nil : OpenAICompatibleTextPolisher(
-                    config: transcriptionConfig.textPolish,
-                    chatGPTAuthProvider: authManager,
-                    chatGPTAuthAvailable: transcriptionConfig.needsChatGPT && authManager.authSnapshot().state == .ready
-                ),
-                alignmentEnabled: transcriptionConfig.terminologyAlignmentEnabled,
-                correctionsEnabled: transcriptionConfig.correctionRulesEnabled
-            )
+            DictationServiceFactory.make(config: transcriptionConfig, auth: authManager, policy: attemptPolicy)
         },
         launchAppContextProvider: @escaping LaunchAppContextProvider = { LaunchAppContext.current() }
     ) {

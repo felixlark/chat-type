@@ -1,5 +1,7 @@
 # 润色速度：历史文本、模型与提示实践对照
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 用户2026-11-11确认实时ASR已可用，本轮优先评测更快润色模型/实践，对标豆包输入法速度与准确度。保留CT-VOXT原案及未核准参考，不继续扩大本地ASR工作。开始时0.5.1(122)、M1 Max/64GB、原账户`gpt-6.1-terra`、非思考请求、stream=true；现已安装0.5.1(123)，正式配置与ASR保持。本轮先交付评测结论，不自动切默认或开启新目的地。执行结果见[本轮报告](polish-speed-results-2026-11-11.md)。
 
 ## 现场与研究假设

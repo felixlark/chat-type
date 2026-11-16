@@ -1,5 +1,7 @@
 # 豆包接入实施与验收（当前 127）
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 2026-11-14。负责人：当前 ChatType 实施任务。用户批准按方案实施、保留 ChatGPT，并让用户逐阶段选择，默认使用豆包。基线为 `5a2f40d36e86fc924ca7d40e64a523c3b8a6f245`，规范 checkout 串行写入。
 
 ## 已实现的行为

@@ -1,5 +1,7 @@
 # 本机通讯录报告 111：实施与验收记录
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 2026-11-10，Mac M1 Max / 64 GiB、macOS 27.2。用户批准的首批实施：本机报告、分层姓名清单和离线对照；真实转写不切换，联系人实体不写入。
 
 ## 交付与边界
@@ -38,6 +40,6 @@
 - [274项检查与打包记录](</Users/longbiao/Library/Application Support/ChatType/contacts-report-111/check-final.log>)
 - [签名、安装和配置回执](</Users/longbiao/Library/Application Support/ChatType/contacts-report-111/install-receipt.json>)
 - [正式路径验收与正常运行回执](</Users/longbiao/Library/Application Support/ChatType/contacts-report-111/acceptance-receipt.json>)
-- [EGM审读记录](reviews/contacts-report-111-2026-11-10.md)
+- [EGM审读记录](https://github.com/felixlark/chat-type/blob/5350f037b3782e875f0f23e8cb8421fddcdedcac/docs/reviews/contacts-report-111-2026-11-10.md)
 
 实现、检查、打包、安装、本机报告原生验收均完成；生成后的正常运行PID13358。联系人合并/删除0，生产清单启用0，真人姓名识别修复验收未进行。并行Voxt路线由另一个已授权项目chat负责，此回执只描述111交付现场。

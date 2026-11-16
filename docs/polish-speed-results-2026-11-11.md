@@ -1,5 +1,7 @@
 # 润色模型与实践实测：2026-11-11
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 本轮完成60次尝试：原ChatGPT账户3模型×2提示×6条=36；本机Qwen3.5-4B两种原提示12次、中文指令6次、修改清单6次。结构完整57/60，全部输出和失败均已逐条审读。没有候选同时建立稳定提速和保真通过证据，未替换日常模型。当前实时ASR、原账户gpt-6.1-terra及生产提示保持。
 
 ## 测量对象与限制

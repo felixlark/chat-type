@@ -1,5 +1,7 @@
 # 豆包同机原声对照与安装版 F5 验收
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 沿CT-VOXT-20261110执行。用户2026-11-11已明确允许选定六条历史录音用于豆包输入法对照；先比较速度与准确度，质量通过后再决定是否切默认，继续完成ChatType安装版F5验收。该授权不包含新付费API、协议接受、新敏感权限或其他录音。
 
 ## 冻结范围

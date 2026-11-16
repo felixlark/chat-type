@@ -1,5 +1,7 @@
 # Berryxia 录音豆客户端安装与测试方案
 
+> Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
+
 方案日期：2026-11-12；发布入口复核：2026-11-13。执行负责人：当前任务 Agent；产品取舍与新增权限由用户决定。
 
 ## 当前结果与范围

@@ -334,19 +334,6 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
             && (url.port == nil || url.port == 443) && url.user == nil && url.password == nil
     }
 
-    /// Explicit research caller only; shares the audited account transport and completion checks.
-    func evaluatePreparedMessages(_ messages: [TextPolishMessage]) async throws -> String {
-        guard config.provider == .chatGPTAuth,
-              config.chatGPTResponseModel == "gpt-6.1-terra", reasoningEffort == "none",
-              Self.isAuditedChatGPTURL(config.chatGPTResponseURL),
-              let chatGPTAuthProvider else { throw TextPolishError.providerUnavailable }
-        let call = ProcessingTrace.current?.beginPolishCall()
-        return try await ProcessingTrace.$polishCall.withValue(call) {
-            let token = try await chatGPTAuthProvider.bestAvailableAccessToken()
-            return try await executeChatGPTResponsesRequest(token: token, messages: messages)
-        }
-    }
-
     private func executeChatCompletionRequest(provider: TextPolishProviderID, key: String, messages: [TextPolishMessage]) async throws -> String {
         let endpoint: String
         var body: [String: Any] = [

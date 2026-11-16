@@ -17,11 +17,6 @@ struct AppLaunchModeTests {
     }
 
     @Test
-    func overlayDemoModeKeepsLegacyVoiceDexFlagAsCompatibilityAlias() {
-        #expect(AppLaunchMode.resolve(environment: ["VOICEDEX_OVERLAY_DEMO": "1"]) == .overlayDemo)
-    }
-
-    @Test
     func overlayDemoModeAcceptsLaunchServicesArgument() {
         #expect(AppLaunchMode.resolve(environment: [:], arguments: ["ChatType", "--overlay-demo"]) == .overlayDemo)
         #expect(AppLaunchMode.resolve(environment: [:], arguments: ["ChatType", "--chattype-overlay-demo"]) == .overlayDemo)

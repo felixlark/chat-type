@@ -38,14 +38,9 @@ final class AcceptanceTranscriptionDeadline: @unchecked Sendable {
 
     func pipeline(_ config: TranscriptionConfig, _ auth: any ChatGPTAuthProviding,
                   _ policy: TranscriptionAttemptPolicy) -> any DictationPreparing {
-        DictationPipeline(
-            transcriber: ChatGPTTranscriber(authManager: auth, config: config,
-                cloudflareChallengeMaxAttempts: policy.cloudflareChallengeMaxAttempts,
-                usesLocalSpeechForFiles: false, dataLoader: { request in try await self.load(request) }),
-            normalizer: TerminologyNormalizer(), importedEntries: config.activeDictionaryEntries,
-            hintTerms: config.prioritizedHintTerms,
-            textPolisher: OpenAICompatibleTextPolisher(config: config.textPolish,
-                chatGPTAuthProvider: auth, chatGPTAuthAvailable: auth.authSnapshot().state == .ready)
+        DictationServiceFactory.make(
+            config: config, auth: auth, policy: policy,
+            dataLoader: { request in try await self.load(request) }
         )
     }
 }

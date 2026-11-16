@@ -15,9 +15,6 @@ func defaultConfigUsesDoubaoWithAccountRouteRetained() throws {
     #expect(config.transcription.feedbackSoundsEnabled == true)
     #expect(config.transcription.chatGPTURL == "https://chatgpt.com/backend-api/transcribe")
     #expect(config.injection.preserveClipboard == false)
-    #expect(config.auth.preferredLoginSurface == .defaultBrowser)
-    #expect(config.auth.allowEmbeddedFallback == false)
-    #expect(config.auth.persistCapturedSession == true)
 }
 
 @Test
@@ -484,4 +481,17 @@ func configStoreDoesNotImportPreChatTypeLegacyConfig() throws {
     let storedData = try Data(contentsOf: store.configURL)
     let stored = try JSONDecoder().decode(AppConfig.self, from: storedData)
     #expect(stored.transcription.hintTerms.isEmpty)
+}
+
+@Test
+func removedBrowserSettingsDoNotPreventLegacyConfigRoundTrip() throws {
+    let old = Data(#"{"auth":{"preferredLoginSurface":"embedded","allowEmbeddedFallback":true,"persistCapturedSession":false},"transcription":{"provider":"doubaoIME","hotkeyKeyCode":79},"injection":{"preserveClipboard":true}}"#.utf8)
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: old)
+    #expect(decoded.transcription.provider == .doubaoIME)
+    #expect(decoded.transcription.hotkeyKeyCode == 79)
+    #expect(decoded.injection.preserveClipboard)
+    let saved = try JSONEncoder().encode(decoded)
+    #expect(try JSONDecoder().decode(AppConfig.self, from: saved) == decoded)
+    let object = try #require(JSONSerialization.jsonObject(with: saved) as? [String: Any])
+    #expect(object["auth"] == nil)
 }

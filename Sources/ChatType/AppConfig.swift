@@ -3,7 +3,6 @@ import Foundation
 struct AppConfig: Codable, Sendable, Equatable {
     var transcription: TranscriptionConfig = .init()
     var injection: InjectionConfig = .init()
-    var auth: AuthConfig = .init()
 
     init() {
         transcription.provider = .doubaoIME
@@ -20,27 +19,6 @@ struct AppConfig: Codable, Sendable, Equatable {
             transcription.textPolish.provider = .chatGPTAuth
         }
         injection = try container.decodeIfPresent(InjectionConfig.self, forKey: .injection) ?? .init()
-        auth = try container.decodeIfPresent(AuthConfig.self, forKey: .auth) ?? .init()
-    }
-}
-
-enum PreferredLoginSurface: String, Codable, Sendable, Equatable {
-    case defaultBrowser
-    case embedded
-}
-
-struct AuthConfig: Codable, Sendable, Equatable {
-    var preferredLoginSurface: PreferredLoginSurface = .defaultBrowser
-    var allowEmbeddedFallback: Bool = false
-    var persistCapturedSession: Bool = true
-
-    init() {}
-
-    init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        preferredLoginSurface = try container.decodeIfPresent(PreferredLoginSurface.self, forKey: .preferredLoginSurface) ?? .defaultBrowser
-        allowEmbeddedFallback = try container.decodeIfPresent(Bool.self, forKey: .allowEmbeddedFallback) ?? false
-        persistCapturedSession = try container.decodeIfPresent(Bool.self, forKey: .persistCapturedSession) ?? true
     }
 }
 

@@ -1,108 +1,47 @@
-# ChatType Release Process
+# Build, install and release
 
-## Local Release Checklist
+Current product behavior is defined by [PRODUCT](../PRODUCT.md). Diagnosis and installed-app acceptance belong to [operations](operations.md). Historical version checklists are not current defaults.
 
-1. Run `./scripts/check.sh`
-2. Run `./scripts/package_app.sh` (optimized release configuration; artifacts remain under `dist/`, which may point to the configured cache directory)
-3. Confirm the release assets exist:
-   - `dist/ChatType-0.5.1-macos-arm64.zip`
-   - `dist/ChatType-0.5.1-macos-arm64.dmg`
-4. Install `dist/ChatType.app` to `/Applications/ChatType.app`
-5. Launch `/Applications/ChatType.app`
-6. Verify setup states:
-   - signed-in Codex desktop session shows as ready
-   - microphone state is reported correctly
-   - Accessibility state is reported correctly
-   - denied microphone state exposes `Open Microphone Settings`
-   - missing Accessibility exposes `Guide Accessibility Access`, `Open Accessibility Settings`, and `Refresh Status`
-7. Verify runtime behavior:
-   - HUD appears on `F5`
-   - recording stops on second `F5`
-   - missing Codex desktop install produces a clear setup blocker
-   - missing ChatGPT login in Codex produces a clear setup blocker
-   - first-run microphone flow still surfaces the native macOS system prompt
-   - denied microphone flow jumps to `Privacy & Security > Microphone`
-   - Accessibility guidance opens the correct page and shows the drag-to-authorize helper for the packaged app
-   - paste only reports success when an editable focus target exists
-   - clipboard fallback keeps the latest transcript available for manual `Cmd+V`
-   - Settings exposes Account, Dictation, Terminology, History, and Settings; each destination opens at the top
-   - AI Polish defaults to ChatGPT Auth and offers the approved GLM-4.7-Flash and Beijing Qwen Flash routes with independent secure Keychain input; confirm missing-key save behavior and text-only data-flow disclosure; paid-provider tests require their own authorization
-   - Account shows the actual audio route and model disclosure, while Dictation shows the six processing steps
-   - text polish can produce a concise agent-plan style output for a long dictation sample
-   - terminology import is visible in Settings as Import names → From Contacts / From WeChat, reads the supported contact-name sources without a file picker, and splits explicit Chinese `name + affiliation` values into separate terms
-   - output remains directly usable when text polish is unavailable or disabled
-8. Verify advanced recovery mode:
-   - switching to `OpenAI-Compatible Recovery` exposes endpoint, model, and API env settings
-   - missing API key in recovery mode produces a clear setup blocker
-   - if `transcription.hintTerms` exists in config.json, filenames and product names are preserved
-   - simplified Chinese remains the default when the recognizer drifts into Traditional Chinese
-9. Re-test from the packaged release artifacts:
-   - unzip `dist/ChatType-0.5.1-macos-arm64.zip`
-   - install the extracted `ChatType.app` to `/Applications/ChatType.app`
-   - launch `/Applications/ChatType.app`
-   - mount `dist/ChatType-0.5.1-macos-arm64.dmg`
-   - install the mounted `ChatType.app` to `/Applications/ChatType.app`
-   - launch `/Applications/ChatType.app`
-10. Update GitHub-facing documentation for the same version before publishing the release:
-   - update `README.md` and `README.zh-CN.md`
-   - update `CHANGELOG.md`
-   - add or update `docs/releases/vX.Y.Z.md`
-   - confirm the GitHub release notes match the packaged version and default product path
-11. Update the GitHub Pages landing page for the same version before announcing the release:
-   - update `docs/index.html`
-   - confirm the primary download link points at the new GitHub Release tag
-   - keep the landing page value proposition aligned with the current README and release notes
-12. If you are announcing the release on X, preview the outgoing post first and use the approved `longbiao-x-post-workflow` / `xurl-ops` path. If the current task explicitly requires the X web UI, use IAB first and use the official Chrome extension only for a verified regular-profile dependency.
-   - create the post in one composer session
-   - click `Post` once
-   - treat the post as complete only after opening the profile and finding the new post text plus a fresh `/status/` URL
-13. Update any additional docs if onboarding, naming, packaging, launch assumptions, or live verification surfaces changed.
+## Checks and one package
 
-## Public Promotion Checklist
-
-Use `docs/promotion/README.md` as the source of truth for low-cost public promotion.
-
-Before posting to public channels:
-
-1. Confirm the GitHub README, GitHub release page, and GitHub Pages landing page describe the same default path: local ChatType-owned ChatGPT login, `F5` recording, transcription, optional AI Polish, safe paste, and clipboard fallback.
-2. Keep the private backend dependency explicit. Do not describe the default route as a stable public API.
-3. Publish Chinese social content first, then V2EX, then Hacker News or Product Hunt only after real install feedback exists.
-4. Do not ask for upvotes on Hacker News or Product Hunt.
-5. Submit free or low-cost AI directories first; defer paid directory placement until the first week produces real signal.
-6. Keep support copy framed as optional maintenance support, not a crowdfunding campaign.
-
-## Gatekeeper Notes
-
-`v0.5.1` is expected to be locally signed with Apple Development or Developer ID Application and is not notarized.
-
-`./scripts/package_app.sh` now fails fast when no stable signing identity is available. Only use `CHATTYPE_ALLOW_ADHOC_SIGNING=1` for throwaway local debugging, because ad-hoc builds can break the Accessibility repair flow.
-
-Do not verify or repair permissions from `dist/ChatType.app`. Install the packaged app to `/Applications/ChatType.app` first so TCC binds to the real runtime path.
-
-If macOS blocks the app:
-
-- right-click `ChatType.app` and choose `Open`
-- or remove quarantine:
+The source checks build the executable through Swift test, run Swift and Python tests, validate shell syntax, enforce operational policy and check the landing page. CI invokes this same command; it does not require developer signing credentials or operate the GUI.
 
 ```bash
-xattr -dr com.apple.quarantine /path/to/ChatType.app
+./scripts/check.sh --source
 ```
 
-## Homebrew Cask
+Build one candidate and inspect that same package. `version.env` owns version/build metadata. Packaging uses the pinned Opus codec and a stable Apple signing identity; ad-hoc signing is restricted to explicit disposable debugging.
 
-Keep the cask file aligned with the release artifact:
-
-```text
-packaging/homebrew/Casks/chattype.rb
+```bash
+./scripts/package_app.sh
+./scripts/check_packaged_app.sh --existing
+./scripts/install_app.sh
+open -g /Applications/ChatType.app
 ```
 
-If the asset filename or release URL format changes, update the cask in the same change.
+Alternatively, `./scripts/check.sh` combines source checks with one package/check pass. Do not run an extra package command after it unless the candidate changed. `script/build_and_run.sh` remains the existing local build/install/launch convenience entry; the installer stops the old process only when replacing the app.
 
-## Follow-Up Work After v0.5.1
+## Installed acceptance
 
-- notarize the `.app` or `.dmg`
-- publish a dedicated Homebrew tap
-- broaden first-run diagnostics for desktop-host failures
-- keep benchmark samples around for 3s / 10s / 30s regression checks
+Run the smallest affected journey through official Computer Use at `/Applications/ChatType.app`, using background access where supported and preserving human windows and drafts. Never validate live permissions from `dist` or a raw executable. macOS GUI tests may not drive product windows.
 
-Qwen Flash acceptance: secure key storage and real API requests passed; the 2026-11-10 paired test passed latency and failed complete semantic fidelity. Keep ChatGPT selected by default. See [the Qwen record](qwen-flash-polish-2026-11-10.md).
+Check candidate version, signing identity and enrolled local F5 policy; follow the applicable matrix in operations. Record checks, packaged, installed, live accepted and left running independently. Optional overlay demo captures are supporting visual evidence, not proof of microphone, Retry, login or paste behavior. Restore the normal installed runtime even after an acceptance failure; leave Settings visible when that journey can be safely exercised.
+
+```bash
+./scripts/visual_acceptance.sh
+./scripts/doctor.sh
+```
+
+The visual script's `--install` option builds/installs its own candidate; use it only when that is the intended single release build. Final closeout leaves the normal installed app running.
+
+## Public releases
+
+When publishing a version, align version.env, both READMEs, CHANGELOG, release notes, GitHub Pages download links and the Homebrew cask with the exact package. Keep signing/notarization claims factual; local signature validity is not notarization. Current signing validation remains separate from any public distribution approval.
+
+Public copy follows the current independent ASR/polish selection and private-backend disclosure. [Promotion](promotion/README.md) owns distribution material. External posting requires its own existing authorization and current platform skill; repository cleanup never sends a post. Retired `post_x.sh` was an instruction-printing placeholder, not a release mechanism.
+
+If macOS blocks an otherwise verified authorized build, use the operating system's Open action and diagnose the actual Gatekeeper/signing result. Do not replace TCC or signing evidence with a blanket quarantine-removal instruction. Installed permission repair must retain the product's stable signing identity.
+
+## Rollback
+
+Retain the prior verified signed package and its candidate identity before replacement. Revert the affected cleanup commit, package/install the previous source candidate and repeat the changed installed journey. Do not delete configuration, vocabulary, credentials, recordings or recovery history. A future storage-format migration requires its own explicit backward-read and data recovery strategy.
