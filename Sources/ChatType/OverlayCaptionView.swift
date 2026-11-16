@@ -1,6 +1,6 @@
 import AppKit
 
-/// Four rows are a subtitle viewport, not a limit on recognition or saved text.
+/// One row is a subtitle viewport, not a limit on recognition or saved text.
 @MainActor
 struct OverlayCaptionText {
     static let font = NSFont.systemFont(ofSize: 22, weight: .medium)
@@ -30,17 +30,29 @@ struct OverlayCaptionText {
             if next < trimmed.endIndex { segment = trimmed[next...] }
         }
         let value = String(segment).trimmingCharacters(in: .whitespacesAndNewlines)
-        let storage = NSTextStorage(string: value, attributes: attributes())
-        let manager = NSLayoutManager(); let container = NSTextContainer(size: CGSize(width: max(1, width), height: .greatestFiniteMagnitude))
-        container.lineFragmentPadding = 0
-        manager.addTextContainer(container); storage.addLayoutManager(manager)
-        manager.ensureLayout(for: container)
-        var result: [String] = []
-        manager.enumerateLineFragments(forGlyphRange: NSRange(location: 0, length: manager.numberOfGlyphs)) { _,_,_,glyphs,_ in
-            let range = manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
-            result.append((value as NSString).substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines))
+        let available = max(1, width)
+        var start = value.endIndex
+        while start > value.startIndex {
+            let previous = value.index(before: start)
+            if (String(value[previous...]) as NSString).size(withAttributes: attributes()).width > available { break }
+            start = previous
         }
-        return Array(result.suffix(4))
+        if start == value.endIndex { start = value.index(before: value.endIndex) }
+        let graphemeStart = start
+        // Fill the single line from the end. Unlike taking the last wrapped
+        // line, this retains context when a new word just crossed a line break.
+        if start > value.startIndex {
+            // One preceding grapheme is enough to detect a word crossing the
+            // cut; tokenize the visible suffix, not the accumulated sentence.
+            let contextStart = value.index(before: start)
+            value.enumerateSubstrings(in: contextStart..<value.endIndex, options: [.byWords, .substringNotRequired]) { _, range, _, stop in
+                if range.lowerBound < start && range.upperBound > start && range.upperBound < value.endIndex {
+                    start = range.upperBound; stop = true
+                }
+            }
+        }
+        let suffix = String(value[start...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return [suffix.isEmpty ? String(value[graphemeStart...]) : suffix]
     }
 }
 
@@ -88,6 +100,7 @@ final class OverlayCaptionPanel {
         guard presentsPanel else { return }
         if panel == nil {
             let p = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            p.title = "ChatType Captions"
             p.level = .statusBar; p.isFloatingPanel = true; p.hidesOnDeactivate = false
             p.backgroundColor = .clear; p.isOpaque = false; p.hasShadow = false
             p.ignoresMouseEvents = true
@@ -109,7 +122,7 @@ final class OverlayCaptionPanel {
             view.lines = displayedLines
             view.setAccessibilityValue(displayedLines.joined(separator: "\n"))
         }
-        frame = TopOverlayLayout.caption(hud: hud, visible: visible, lines: displayedLines.count)
+        frame = TopOverlayLayout.caption(hud: hud, visible: visible)
         if panel?.frame != frame { panel?.setFrame(frame, display: true) }
     }
     func reset() {

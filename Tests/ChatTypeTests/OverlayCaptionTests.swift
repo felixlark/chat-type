@@ -6,11 +6,10 @@ import Testing
     let visible = CGRect(x: -1000, y: 100, width: 1500, height: 900)
     let hud = TopOverlayLayout.hud(size: CGSize(width: 224, height: 44), visible: visible, safeTop: 980)
     #expect(hud.midX == visible.midX && hud.maxY == 964)
-    let two = TopOverlayLayout.caption(hud: hud, visible: visible, lines: 1)
-    let four = TopOverlayLayout.caption(hud: hud, visible: visible, lines: 4)
-    #expect(two.midX == hud.midX && four.midX == hud.midX)
-    #expect(two.maxY == hud.minY - 12 && four.maxY == two.maxY)
-    #expect(two.height == 84 && four.height == 144)
+    let two = TopOverlayLayout.caption(hud: hud, visible: visible)
+    #expect(two.midX == hud.midX)
+    #expect(two.maxY == hud.minY - 12)
+    #expect(two.height == 54)
 }
 
 @Test @MainActor func captionsRetainLatestSentenceAndCompleteWrappedTail() {
@@ -19,7 +18,7 @@ import Testing
     let tail = "结尾标记🙂123"
     let long = String(repeating: "连续不断说话也不能省略最后的内容", count: 20) + tail
     let lines = OverlayCaptionText.lines(long, width: 568)
-    #expect(lines.count == 4 && lines.joined().hasSuffix(tail))
+    #expect(lines.count == 1 && lines.joined().hasSuffix(tail))
     #expect(!lines.joined().contains("�"))
     for line in lines { #expect((line as NSString).size(withAttributes: OverlayCaptionText.attributes()).width <= 569) }
 }
@@ -79,7 +78,7 @@ private actor CaptionDelayProbe {
     overlay.debugSetGeometry(visible: visible)
     overlay.showRecording(elapsedText: "00:00")
     overlay.updateTranscriptPreview(String(repeating: "长字幕连续换行", count: 30))
-    #expect(overlay.debugCaptionLines.count == 4)
+    #expect(overlay.debugCaptionLines.count == 1)
     #expect(overlay.debugCaptionFrame.midX == visible.midX)
     #expect(overlay.debugCaptionFrame.maxY == overlay.debugSnapshot.panelFrame.minY - 12)
     #expect(overlay.debugSnapshot.panelHeight == 44)

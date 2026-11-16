@@ -28,7 +28,11 @@ function hasHref(href) {
 assert.match(html, /<html\s+lang=["']zh-CN["']/, "landing page should be Chinese-first");
 includes("ChatType", "product name");
 includes("F5", "F5 workflow");
-includes("ChatGPT", "ChatGPT account path");
+includes("ChatGPT", "preserved ChatGPT account path");
+includes("豆包", "current default provider");
+includes("失败不会自动切换服务", "explicit provider selection");
+includes("公开 v0.5.1 下载包可能早于当前实现", "source candidate versus public download version");
+assert.ok(!html.includes("默认走本机 ChatGPT 登录态"), "landing page must not advertise the retired default");
 includes("剪贴板", "clipboard fallback");
 includes("不是稳定公开 API", "private backend boundary");
 includes("local-first", "local-first positioning");

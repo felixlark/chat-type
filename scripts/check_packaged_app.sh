@@ -16,6 +16,22 @@ if [[ ! -f "$PLIST" ]]; then
   exit 1
 fi
 
+# --existing must inspect the candidate selected by this checkout, not an older package.
+source "$ROOT/version.env"
+for field in CFBundleShortVersionString CFBundleVersion; do
+  actual="$(/usr/bin/plutil -extract "$field" raw -o - "$PLIST")"
+  if [[ "$field" == CFBundleVersion ]]; then expected="$CHATTYPE_BUILD"; else expected="$CHATTYPE_VERSION"; fi
+  if [[ "$actual" != "$expected" ]]; then
+    echo "Packaged $field=$actual does not match version.env ($expected)." >&2
+    exit 1
+  fi
+done
+/usr/bin/codesign --verify --deep --strict "$APP"
+if [[ -e "$APP/Contents/Resources/Omni" ]]; then
+  echo "Research-only Omni model metadata must stay outside the production app bundle." >&2
+  exit 1
+fi
+
 LSUI_ELEMENT="$(/usr/bin/plutil -extract LSUIElement raw -o - "$PLIST" 2>/dev/null || true)"
 if [[ "$LSUI_ELEMENT" != "true" ]]; then
   echo "Packaged app must declare LSUIElement=true so normal launch has no Dock icon." >&2

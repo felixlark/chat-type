@@ -7,9 +7,9 @@ struct TopOverlayLayout {
                       y: max(visible.minY, min(visible.maxY, safeTop) - inset - fitted.height),
                       width: fitted.width, height: fitted.height)
     }
-    static func caption(hud: CGRect, visible: CGRect, lines: Int) -> CGRect {
+    static func caption(hud: CGRect, visible: CGRect) -> CGRect {
         let width = min(600, max(1, visible.width - 32))
-        let height = CGFloat(max(2, lines)) * 30 + 24
+        let height: CGFloat = 30 + 24
         return CGRect(x: visible.midX - width / 2, y: hud.minY - 12 - height, width: width, height: height)
     }
 }

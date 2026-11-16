@@ -14,6 +14,7 @@ func visibleWindowID(for appName: String) -> Int? {
     for window in windows {
         guard
             (window[kCGWindowOwnerName as String] as? String) == appName,
+            (window[kCGWindowName as String] as? String) == "ChatType Status HUD",
             let alpha = window[kCGWindowAlpha as String] as? Double,
             alpha > 0,
             let bounds = window[kCGWindowBounds as String] as? [String: Any],

@@ -38,7 +38,7 @@ class PublicModelRedirects(urllib.request.HTTPRedirectHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, default=Path(__file__).resolve().parents[1] / "Sources/ChatType/Resources/Omni/models.json")
+    parser.add_argument("--manifest", type=Path, default=Path(__file__).resolve().parents[1] / "scripts/fixtures/omni-models.json")
     parser.add_argument("--models-root", type=Path, default=Path.home() / "Library/Application Support/ChatType/Models")
     parser.add_argument("--model", action="append", help="Manifest model id; omitted downloads both ASR models and VAD")
     parser.add_argument("--receipt", type=Path, required=True)

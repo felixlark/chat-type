@@ -2,7 +2,7 @@
 
 Mode: Operate. The user watches live speech while continuing to work in the original app. The approved reference is video-style black-and-white captions underneath the existing compact status HUD.
 
-The status pill stays 44pt high, centered16pt below the selected display's menu/camera safe area. Captions start12pt below it,600pt wide fitted to the visible display, with22pt medium system type and30pt line height on90% black. Two rows are reserved; a long current sentence can expand to four before older wrapped lines leave the viewport. Each line is centered. These are presentation dimensions, not transcript limits.
+The status pill stays 44pt high, centered16pt below the selected display's menu/camera safe area. Captions start12pt below it,600pt wide fitted to the visible display, with22pt medium system type and30pt line height on90% black. The latest fitting phrase is shown; older phrases leave the viewport at word boundaries. Each line is centered. These are presentation dimensions, not transcript limits.
 
 The display is selected at recording start; subsequent focus changes do not retarget captions or stop recognition. Captions receive recognition text independently of input geometry. The original target/selection and output route remain captured separately. Final output is sealed before one delivery attempt; subtitles never write provisional text into the document.
 

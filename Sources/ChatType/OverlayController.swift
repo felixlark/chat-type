@@ -91,6 +91,7 @@ final class OverlayController: OverlayControlling {
             defer: false
         )
         panel.isFloatingPanel = true
+        panel.title = "ChatType Status HUD"
         panel.level = .statusBar
         panel.backgroundColor = .clear
         panel.hasShadow = true

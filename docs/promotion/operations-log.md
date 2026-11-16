@@ -1,5 +1,7 @@
 # ChatType Promotion Operations Log
 
+> Historical April–May 2026 operating record. Old next-actions, runtime/tool paths and queued items below are not current instructions or active schedules. Current product copy: [PRODUCT](../../PRODUCT.md); retired tools/templates: [historical source](https://github.com/felixlark/chat-type/tree/94f85c231e2796a25c30115f4b27cd2c34cb36f6/docs/promotion).
+
 This file tracks public promotion without storing private account data, cookies, passwords, tokens, or verification codes.
 
 ## Links

@@ -1,5 +1,7 @@
 # Voxt 路线：P1 质量对照执行记录
 
+Current tooling note: the research-only model manifest now lives at [scripts/fixtures/omni-models.json](../scripts/fixtures/omni-models.json); it is not bundled with ChatType. Original paths below describe the recorded experiment.
+
 > Historical evidence for the date/build recorded below. Current requirements: [PRODUCT](../PRODUCT.md).
 
 **2026-11-11更正：公开英文结果支持优先继续验证1.7B；完整质量采纳待历史真人录音与参考稿核准，P2正式分段待实施。** 用户听音确认synthetic-medium-3的“只修改”读为zhī、synthetic-short-1的pstack只读出stack。相关合成发音不能按输入稿作为识别真值，范围词和P缺失的模型硬归因撤回。其余未逐条核准的合成输入仅保留诊断身份，不据此判定模型不合格。以下117结果为2026-11-10历史记录，当前集成基线与后续评测见[历史录音主评测](voxt-history-validation-2026-11-11.md)。
