@@ -152,15 +152,32 @@ final class InputWindowAnchor {
     func compositionAnchor(_ r: EditorBridgeResponse) -> InputCompositionAnchor? {
         guard visible, let frame = axRect(window), let x = r.caretX, let y = r.caretY,
               let vx = r.viewportX, let vy = r.viewportY, let width = r.width, let height = r.height else { return nil }
-        let caret = appKitRect(CGRect(x: frame.minX + x, y: frame.minY + y, width: 1, height: r.lineHeight ?? 20))
-        let input = appKitRect(CGRect(x: frame.minX + vx, y: frame.minY + vy, width: width, height: height))
+        let scale = r.uiScale.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 1
+        // Sublime window coordinates exclude the native title bar. AppKit
+        // supplies its current system metric; full-screen windows have none.
+        let content = NSWindow.contentRect(forFrameRect: frame, styleMask: [.titled])
+        let titleBar = (axAttribute(window, "AXFullScreen") as? Bool) == true ? 0 : frame.height - content.height
+        let geometry = EditorCompositionGeometry(window: frame, scale: scale, titleBarHeight: titleBar)
+        let caret = appKitRect(geometry.rect(x: x, y: y, width: 1 / scale, height: r.lineHeight ?? 20))
+        let input = appKitRect(geometry.rect(x: vx, y: vy, width: width, height: height))
         return InputCompositionAnchor(caret: caret, input: input,
-            font: NSFont(name: r.fontName ?? "Menlo", size: r.fontSize ?? 13) ?? .systemFont(ofSize: r.fontSize ?? 13),
+            font: NSFont(name: r.fontName ?? "Menlo", size: (r.fontSize ?? 13) * scale) ?? .systemFont(ofSize: (r.fontSize ?? 13) * scale),
             foreground: color(r.foreground) ?? .labelColor, background: color(r.background) ?? .textBackgroundColor)
     }
     private func color(_ hex: String?) -> NSColor? {
         guard let hex, hex.hasPrefix("#"), hex.count == 7, let value = UInt32(hex.dropFirst(), radix: 16) else { return nil }
         return NSColor(srgbRed: CGFloat((value >> 16) & 255) / 255, green: CGFloat((value >> 8) & 255) / 255, blue: CGFloat(value & 255) / 255, alpha: 1)
+    }
+}
+
+struct EditorCompositionGeometry {
+    let window: CGRect
+    let scale: CGFloat
+    let titleBarHeight: CGFloat
+
+    func rect(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) -> CGRect {
+        CGRect(x: window.minX + x * scale, y: window.minY + titleBarHeight + y * scale,
+               width: width * scale, height: height * scale)
     }
 }
 

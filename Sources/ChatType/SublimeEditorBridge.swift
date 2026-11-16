@@ -9,6 +9,7 @@ struct EditorBridgeResponse: Codable, Sendable {
     var matched: Bool? = nil
     var viewID: Int? = nil
     var visible: Bool? = nil
+    var uiScale: Double? = nil
     var caretX: Double? = nil
     var caretY: Double? = nil
     var lineHeight: Double? = nil

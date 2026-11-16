@@ -985,7 +985,17 @@ final class AppCoordinator {
         case .recording:
             overlay.showRecording(elapsedText: "00:07")
             overlay.updateRecording(level: 0.72, elapsedText: "00:07")
-            overlay.updateTranscriptPreview(String(repeating: "请把这段语音整理成清晰的文字。保留 ChatType、API 和所有数字。只修改设置页面，先不要发布。后面说的周五为准。实时文字自动换行，长段可以向上滚动回看，再点击回到最新继续跟随。", count: 4))
+            // Exercise the production composition panel without a microphone,
+            // network request or document mutation in explicit visual-demo mode.
+            liveTextInput.begin(context: LaunchAppContext.current(), enabled: true)
+            Task { @MainActor in
+                await liveTextInput.prepare()
+                for draft in ["原位初稿", "原位初稿从光标右下角展开，长句应自动换行。",
+                              String(repeating: "原位初稿从光标右下角展开，长句自动换行。保留数字 136 与 API。\n", count: 12)] {
+                    self.liveTextInput.update(draft)
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                }
+            }
         case .processing:
             overlay.showProcessing()
         case .result:

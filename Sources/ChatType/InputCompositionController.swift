@@ -97,17 +97,17 @@ final class InputCompositionController: InputCompositionPresenting {
             .underlineStyle: NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.single.rawValue,
             .underlineColor: anchor.foreground.withAlphaComponent(0.4),
         ]
-        let screen = NSScreen.screens.first { $0.frame.intersects(anchor.input) }?.visibleFrame ?? anchor.input
-        let available = anchor.input.intersection(screen)
+        let screen = NSScreen.screens.first { $0.frame.intersects(anchor.caret) }?.visibleFrame ?? anchor.input
+        let available = screen.insetBy(dx: 8, dy: 8)
         guard !available.isNull, available.width > 0, available.height > 0 else { panel?.orderOut(nil); return }
         let natural = (value as NSString).size(withAttributes: attributes)
-        let width = min(available.width, max(anchor.font.pointSize * 4, natural.width + 12))
+        let width = min(available.width, InputCompositionLayout.preferredWidth,
+                        max(anchor.font.pointSize * 4, natural.width + 12))
         let measured = (value as NSString).boundingRect(with: CGSize(width: max(1, width - 12), height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attributes)
         let height = min(available.height, max(anchor.font.boundingRectForFont.height, ceil(measured.height)) + 12)
-        let x = min(max(available.minX, anchor.caret.minX - 6), available.maxX - width)
-        let top = min(available.maxY, max(available.minY + height, anchor.caret.maxY + 6))
-        panel?.setFrame(CGRect(x: x, y: top - height, width: width, height: height), display: false)
+        panel?.setFrame(InputCompositionLayout.frame(caret: anchor.caret, size: CGSize(width: width, height: height),
+                                                    available: available), display: false)
         surface.layer?.backgroundColor = anchor.background.withAlphaComponent(0.88).cgColor
         surface.layer?.borderColor = anchor.foreground.withAlphaComponent(0.26).cgColor
         scroll.frame = CGRect(x: 6, y: 6, width: max(1, width - 12), height: max(1, height - 12))
@@ -117,5 +117,17 @@ final class InputCompositionController: InputCompositionPresenting {
         textView.setFrameSize(CGSize(width: max(1, width - 12), height: max(scroll.frame.height, ceil(measured.height))))
         textView.scrollToEndOfDocument(nil)
         panel?.orderFrontRegardless()
+    }
+}
+
+enum InputCompositionLayout {
+    // Presentation width requested by the owner: moderate wrapping independent
+    // of the source input's width. This does not truncate the draft.
+    static let preferredWidth: CGFloat = 360
+
+    static func frame(caret: CGRect, size: CGSize, available: CGRect) -> CGRect {
+        let x = min(max(available.minX, caret.maxX + 6), available.maxX - size.width)
+        let top = min(available.maxY, max(available.minY + size.height, caret.minY - 6))
+        return CGRect(x: x, y: top - size.height, width: size.width, height: size.height)
     }
 }

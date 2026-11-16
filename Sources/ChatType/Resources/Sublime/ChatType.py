@@ -26,7 +26,7 @@ def _key(session):
 
 
 def _reply(status, **fields):
-    return dict(protocol=PROTOCOL, build=BUILD, revision=2, status=status, **fields)
+    return dict(protocol=PROTOCOL, build=BUILD, revision=3, status=status, **fields)
 
 
 def _geometry(state):
@@ -40,11 +40,15 @@ def _geometry(state):
     origin = view.layout_to_window(view.viewport_position())
     extent = view.viewport_extent()
     settings = view.settings()
+    # Sublime's public geometry API returns its own DIP coordinates. ui_scale
+    # magnifies the whole interface; the native macOS title bar is outside them.
+    scale = sublime.load_settings('Preferences.sublime-settings').get('ui_scale', 0.0)
+    scale = scale if isinstance(scale, (int, float)) and scale > 0 else 1.0
     style = view.style()
     window = view.window()
     visible = sublime.active_window() == window and window.active_view() == view
     return _reply('active', viewID=view.id(), visible=visible,
-                  caretX=caret[0], caretY=caret[1], lineHeight=view.line_height(),
+                  uiScale=scale, caretX=caret[0], caretY=caret[1], lineHeight=view.line_height(),
                   viewportX=origin[0], viewportY=origin[1], width=extent[0], height=extent[1],
                   fontName=settings.get('font_face') or 'Menlo', fontSize=settings.get('font_size') or 12,
                   foreground=style.get('foreground', '#222222'), background=style.get('background', '#ffffff'))

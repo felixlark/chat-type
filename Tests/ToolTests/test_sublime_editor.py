@@ -52,6 +52,7 @@ class View:
 window = types.SimpleNamespace(active_view=lambda: None)
 pending = []
 sublime = types.SimpleNamespace(HIDDEN=128, NO_UNDO=8192, Region=Region, active_window=lambda: window,
+                                load_settings=lambda _: {'ui_scale': 1.2},
                                 set_timeout=lambda callback, _: pending.append(callback))
 prior_sublime, prior_plugin = sys.modules.get('sublime'), sys.modules.get('sublime_plugin')
 sys.modules['sublime'] = sublime
@@ -72,6 +73,7 @@ class SublimeEditorTests(unittest.TestCase):
         return plugin.dispatch(dict(protocol=1, session=self.session, operation=operation, **fields))
     def test_pin_is_presentation_only_and_commit_is_idempotent(self):
         reply = self.call('begin'); self.assertEqual(reply['fontSize'], 16)
+        self.assertEqual(reply['uiScale'], 1.2)
         self.assertEqual(self.view.value, '前🙂选中后')
         other = View('other'); window.active_view = lambda: other
         self.assertFalse(self.call('geometry')['visible'])
