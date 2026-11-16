@@ -77,7 +77,7 @@ struct OverlayStylePreset: Sendable, Equatable {
         waveformBarCount: 9,
         waveformBarSpacing: 3,
         waveformMinimumBarHeight: 6,
-        showsTranscriptPreview: true,
+        showsTranscriptPreview: false,
         recordingAutoHideDelay: nil,
         processingAutoHideDelay: nil,
         successAutoHideDelay: 1.2,

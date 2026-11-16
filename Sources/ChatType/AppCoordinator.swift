@@ -30,6 +30,7 @@ final class AppCoordinator {
     let configStore: ConfigStore
     let notifier: any NotificationDispatching
     let injector: any TextInjecting
+    let liveTextInput: any LiveTextInputControlling
     let overlay: any OverlayControlling
     let authManager: any ChatGPTAuthProviding
     let latencyRecorder: any LatencyRecording
@@ -79,6 +80,7 @@ final class AppCoordinator {
     }
 
     init(
+        liveTextInput: (any LiveTextInputControlling)? = nil,
         microphoneAccessRequester: (@MainActor () async throws -> Void)? = nil,
         configStore: ConfigStore = ConfigStore(),
         config: AppConfig = AppConfig(),
@@ -121,6 +123,7 @@ final class AppCoordinator {
         },
         launchAppContextProvider: @escaping LaunchAppContextProvider = { LaunchAppContext.current() }
     ) {
+        self.liveTextInput = liveTextInput ?? LiveTextInput()
         self.microphoneAccessRequester = microphoneAccessRequester
         self.configStore = configStore
         self.config = config
@@ -152,7 +155,6 @@ final class AppCoordinator {
         self.overlay.onRetry = { [weak self] in
             self?.retryPendingTranscription()
         }
-        self.overlay.onReprocess = { [weak self] in self?.reprocessPendingTranscription() }
         authStateObserver = NotificationCenter.default.addObserver(
             forName: .chatGPTAuthStateDidChange,
             object: nil,
@@ -257,6 +259,7 @@ final class AppCoordinator {
     }
 
     func cancelCurrentSession() {
+        liveTextInput.reset()
         activeProcessingAudio?.cloudTranscript?.cancel()
         guard state != .idle || activeSessionID != nil || startRecordingTask != nil else {
             interruptedParentRecordID = nil
@@ -313,6 +316,7 @@ final class AppCoordinator {
         let sessionID = UUID()
         activeSessionID = sessionID
         launchAppContext = launchAppContextProvider()
+        liveTextInput.begin(context: launchAppContext, enabled: sessionConfig.transcription.livePreviewEnabled && !sessionConfig.injection.clipboardOnly)
         state = .processing
         statusMenu?.update(state: .processing, detail: "Requesting microphone")
         overlay.showProcessing()
@@ -333,6 +337,7 @@ final class AppCoordinator {
                 )
                 if let message = RuntimePreflight.summary(for: issues) {
                     logger.error("Runtime preflight blocked recording with \(issues.count, privacy: .public) issue(s): \(message, privacy: .public)")
+                    self.liveTextInput.reset()
                     self.stopRecordingLevelUpdates()
                     self.state = .idle
                     self.activeSessionID = nil
@@ -393,6 +398,7 @@ final class AppCoordinator {
                     return
                 }
                 guard self.shouldContinue(sessionID: sessionID) else { return }
+                self.liveTextInput.reset()
                 logger.error("Start recording failed: \(error.localizedDescription, privacy: .public)")
                 self.stopRecordingLevelUpdates()
                 self.state = .idle
@@ -416,6 +422,7 @@ final class AppCoordinator {
 
         do {
             stopRecordingLevelUpdates()
+            liveTextInput.endRecording()
             var audio = try recorder.stopRecording()
             if let live = liveDoubao { audio.cloudTranscript = live.finish(audio) }
             liveDoubao = nil
@@ -441,6 +448,7 @@ final class AppCoordinator {
                 stopRequestedAt: stopRequestedAt
             )
         } catch {
+            liveTextInput.reset()
             liveDoubao?.cancel(); liveDoubao = nil
             stopRecordingLevelUpdates()
             state = .idle
@@ -472,19 +480,6 @@ final class AppCoordinator {
             launchAppContext: pendingRetry.launchAppContext,
             attemptPolicy: .manualRetry
         )
-    }
-
-    private func reprocessPendingTranscription() {
-        guard state == .idle, let pending = pendingRetry else { NSSound.beep(); return }
-        guard applyPendingPreferences() else { return }
-        let sessionID = UUID()
-        activeSessionID = sessionID; state = .processing
-        statusMenu?.update(state: .processing, detail: "按当前流程重跑")
-        overlay.showProcessing()
-        let audio = RecordedAudio(fileURL: pending.audio.fileURL, durationMs: pending.audio.durationMs,
-            previewText: pending.audio.previewText, isPartialReplay: pending.audio.isPartialReplay)
-        startProcessing(audio: audio, sessionID: sessionID, transcriptionConfig: config.transcription,
-            injectionConfig: config.injection, launchAppContext: pending.launchAppContext, attemptPolicy: .manualRetry)
     }
 
     private func savePreferences(_ newConfig: AppConfig) -> Result<Void, any Error> {
@@ -527,6 +522,7 @@ final class AppCoordinator {
             if let store = recoveryRecorder as? RecoveryStore { audio = try store.adopt(sourceAudio) }
             else { audio = sourceAudio }
         } catch {
+            liveTextInput.suspend()
             sourceAudio.cloudTranscript?.cancel()
             self.state = .idle; activeSessionID = nil
             overlay.showError("录音未能安全归档，未继续处理或输出。\(error.localizedDescription)")
@@ -594,12 +590,13 @@ final class AppCoordinator {
                             attemptID: attemptID, stages: prepared.stages ?? DictationStageAudit(asrText: prepared.rawText, finalText: prepared.finalText),
                             injectionSnapshot: injectionConfig))
                         let injectStarted = DispatchTime.now().uptimeNanoseconds
-                        let outcome = try injectionConfig.clipboardOnly ? self.injector.copyToClipboard(text: prepared.finalText) : self.injector.inject(
+                        let liveOutcome = try self.liveTextInput.finish(prepared.finalText, injector: self.injector)
+                        let outcome = try liveOutcome ?? (injectionConfig.clipboardOnly ? self.injector.copyToClipboard(text: prepared.finalText) : self.injector.inject(
                             text: prepared.finalText,
                             preserveClipboard: injectionConfig.preserveClipboard,
                             restoreDelayMilliseconds: injectionConfig.restoreDelayMilliseconds,
                             launchAppContext: launchAppContext
-                        )
+                        ))
                         outputWritten = true
                         let injectMs = self.elapsedMilliseconds(since: injectStarted)
                         let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
@@ -629,12 +626,16 @@ final class AppCoordinator {
                             detail: self.statusDetail(for: outcome)
                         )
                         self.overlay.showResult(text: prepared.finalText, outcome: outcome)
+                        if case .copiedToClipboard(reason: .originalTargetUnavailable) = outcome {
+                            self.notifier.notify(title: "ChatType · 终稿已复制", body: ClipboardFallbackReason.originalTargetUnavailable.overlaySubtitle)
+                        }
                         if let reason = prepared.stages?.polishProtectionReason {
                             self.statusMenu?.update(state: .ready, detail: reason)
                             self.notifier.notify(title: "ChatType · 已保留识别原文", body: reason)
                         }
                         self.launchAppContext = nil
                     } catch {
+                        if !outputWritten { self.liveTextInput.suspend() }
                         let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
                         self.recordLatency(
                             prepared: prepared,
@@ -661,6 +662,7 @@ final class AppCoordinator {
                 await MainActor.run {
                     guard self.shouldContinue(sessionID: sessionID) else { return }
 
+                    self.liveTextInput.suspend()
                     self.recordTranscriptionFailure(
                         audio: audio,
                         transcriptionConfig: transcriptionConfig,
@@ -825,6 +827,7 @@ final class AppCoordinator {
             guard replayDecision(.unknownOriginalRoute(title)), applyPendingPreferences() else { return }
             replay = config.transcription; injection = config.injection
         }
+        liveTextInput.reset()
         let sessionID = UUID()
         activeSessionID = sessionID; state = .processing
         let audio = RecordedAudio(fileURL: audioURL, durationMs: record.audioDurationMs,
@@ -1014,13 +1017,14 @@ final class AppCoordinator {
                     let session = self.activeSessionID
                     let text = await live.state.preview
                     guard self.state == .recording, self.activeSessionID == session else { return }
-                    self.overlay.updateTranscriptPreview(text)
-                } else { self.overlay.updateTranscriptPreview(recorder.liveTranscript) }
+                    self.liveTextInput.update(text)
+                } else { self.liveTextInput.update(recorder.liveTranscript) }
             }
         }
     }
 
     private func interruptRecording() {
+        liveTextInput.reset()
         stopRecordingLevelUpdates()
         liveDoubao?.cancel(); liveDoubao = nil
         let snapshot = recordingConfig ?? config

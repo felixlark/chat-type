@@ -7,7 +7,6 @@ import Foundation
 protocol OverlayControlling: AnyObject {
     var onCancel: (@MainActor () -> Void)? { get set }
     var onRetry: (@MainActor () -> Void)? { get set }
-    var onReprocess: (@MainActor () -> Void)? { get set }
 
     func showRecording(elapsedText: String)
     func updateRecording(level: CGFloat, elapsedText: String)
@@ -41,11 +40,7 @@ final class OverlayController: OverlayControlling {
     private let trailingTimerLabel = NSTextField(labelWithString: "")
     private let textStack = NSStackView()
     private let trailingAccessoryStack = NSStackView()
-    private var previewText = ""
-    private let transcriptView = OverlayTranscriptView(frame: .zero)
     private let dragHandle = OverlayDragHandle()
-    private let latestButton = OverlayHitTargetButton()
-    private var transcriptHeight: NSLayoutConstraint?
     private var anchor: CGPoint?
     private var userAnchor: CGPoint?
     private var dragSession: (pointer: CGPoint, frame: CGRect)?
@@ -54,7 +49,6 @@ final class OverlayController: OverlayControlling {
     private let hideDelay: @Sendable (Double) async throws -> Void
     private var geometryOverride: OverlayFocusGeometry?
     private var visibleOverride: CGRect?
-    private var compactPreview = false
     private var needsPositionAdjustment = false
     private var geometry = OverlayFocusGeometry(protected: [], hasEditableGeometry: false)
     private var nextGeometryRead = Date.distantPast
@@ -68,7 +62,6 @@ final class OverlayController: OverlayControlling {
     private var placementSession = OverlayPlacementSession()
     var onCancel: (@MainActor () -> Void)?
     var onRetry: (@MainActor () -> Void)?
-    var onReprocess: (@MainActor () -> Void)?
 
     init(
         onCancel: (@MainActor () -> Void)? = nil,
@@ -113,9 +106,9 @@ final class OverlayController: OverlayControlling {
         // The coordinator also calls this when starting level updates. Do not
         // reselect the display on that second call within the same recording.
         if case .recording = currentState {} else {
-            placementSession.reset(); previewText = ""; anchor = nil; userAnchor = nil
+            placementSession.reset(); anchor = nil; userAnchor = nil
             dragSession = nil
-            transcriptView.reset(); nextGeometryRead = .distantPast
+            nextGeometryRead = .distantPast
         }
         stopProcessingAnimation()
         displayedLevels = Array(
@@ -139,12 +132,8 @@ final class OverlayController: OverlayControlling {
         present()
     }
 
-    func updateTranscriptPreview(_ text: String) {
-        guard case .recording = currentState, !text.isEmpty else { return }
-        guard text != previewText else { return }
-        previewText = text
-        render()
-    }
+    // Transcript presentation belongs to the pinned input, never the status HUD.
+    func updateTranscriptPreview(_ text: String) {}
 
     func showProcessing() {
         processingFrameIndex = 0
@@ -369,7 +358,7 @@ final class OverlayController: OverlayControlling {
             guard let self else {
                 return []
             }
-            return [self.dragHandle, self.transcriptView, self.latestButton, self.closeButton, self.retryButton]
+            return [self.dragHandle, self.closeButton, self.retryButton]
         }
         panel.contentView = panelRootView
         panelRootView.addSubview(backgroundView)
@@ -444,7 +433,7 @@ final class OverlayController: OverlayControlling {
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.isBordered = false
         retryButton.bezelStyle = .regularSquare
-        retryButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "选择重跑方式")
+        retryButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "重试原录音")
         retryButton.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
         retryButton.imagePosition = .imageOnly
         retryButton.contentTintColor = ChatTypePalette.mistMuted.withAlphaComponent(0.84)
@@ -458,36 +447,17 @@ final class OverlayController: OverlayControlling {
         trailingAccessoryStack.orientation = .horizontal
         trailingAccessoryStack.spacing = style.inlineControlGap
         trailingAccessoryStack.alignment = .centerY
-        latestButton.title = "回到最新"
-        latestButton.isBordered = false
-        latestButton.font = .systemFont(ofSize: 11)
-        latestButton.contentTintColor = ChatTypePalette.mistMuted
-        latestButton.target = self
-        latestButton.action = #selector(returnToLatest)
-        latestButton.isHidden = true
-        trailingAccessoryStack.addArrangedSubview(latestButton)
         trailingAccessoryStack.addArrangedSubview(trailingTimerLabel)
         trailingAccessoryStack.addArrangedSubview(retryButton)
         trailingAccessoryStack.addArrangedSubview(closeButton)
 
-        transcriptView.translatesAutoresizingMaskIntoConstraints = false
         dragHandle.translatesAutoresizingMaskIntoConstraints = false
-        dragHandle.setAccessibilityLabel("拖动实时转写浮窗")
+        dragHandle.setAccessibilityLabel("拖动状态浮窗")
         dragHandle.onBegin = { [weak self] in self?.beginDrag(at: $0) }
         dragHandle.onChange = { [weak self] in self?.updateDrag(to: $0) }
         dragHandle.onEnd = { [weak self] in self?.endDrag(at: $0) }
-        transcriptView.onFollowingChanged = { [weak self] follows in
-            self?.latestButton.isHidden = follows || self?.transcriptView.isHidden == true
-        }
         backgroundView.addSubview(dragHandle)
-        backgroundView.addSubview(transcriptView)
-        let height = transcriptView.heightAnchor.constraint(equalToConstant: 0)
-        transcriptHeight = height
         NSLayoutConstraint.activate([
-            height,
-            transcriptView.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor, constant: 12),
-            transcriptView.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -12),
-            transcriptView.bottomAnchor.constraint(equalTo: backgroundView.bottomAnchor, constant: -(style.pillHeight + 8)),
             dragHandle.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor),
             dragHandle.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor),
             dragHandle.bottomAnchor.constraint(equalTo: backgroundView.bottomAnchor),
@@ -541,7 +511,7 @@ final class OverlayController: OverlayControlling {
     }
 
     private func panelSize(for state: OverlayVisualState) -> NSSize {
-        let width: CGFloat = previewText.isEmpty ? style.width(for: state) : 480
+        let width = style.width(for: state)
         return NSSize(width: width, height: style.pillHeight)
     }
 
@@ -564,66 +534,14 @@ final class OverlayController: OverlayControlling {
             nextGeometryRead = Date().addingTimeInterval(0.25)
         }
         let unknown = !geometry.hasEditableGeometry
-        let hasPreview = !previewText.isEmpty
-        let isRecording: Bool
-        if case .recording = currentState { isRecording = true } else { isRecording = false }
-        if let userAnchor {
-            positionManually(size: size, visible: visible, userAnchor: userAnchor, unknown: unknown)
-            return
-        }
-        var width = hasPreview || isRecording ? CGFloat(480) : size.width
-        var envelopeHeight: CGFloat = hasPreview || isRecording ? 140 : style.pillHeight
-        let preferred = anchor ?? (unknown ? CGPoint(x: visible.minX + 16, y: visible.minY + 16) : nil)
-        var placement = BottomOverlayLayout.place(size: CGSize(width: width, height: envelopeHeight), visible: visible, protected: geometry.protected, preferred: preferred)
-        compactPreview = unknown || placement.needsAdjustment
-        if compactPreview && hasPreview {
-            width = 280; envelopeHeight = 100
-            placement = BottomOverlayLayout.place(size: CGSize(width: width, height: envelopeHeight), visible: visible, protected: geometry.protected, preferred: preferred)
-        }
+        let preferred = userAnchor.map { CGPoint(x: $0.x - size.width / 2, y: $0.y) }
+            ?? anchor ?? (unknown ? CGPoint(x: visible.minX + 16, y: visible.minY + 16) : nil)
+        let placement = BottomOverlayLayout.place(size: size, visible: visible, protected: geometry.protected,
+            preferred: preferred, manual: userAnchor != nil)
         needsPositionAdjustment = unknown || placement.needsAdjustment
         anchor = placement.frame.origin
-        transcriptView.isHidden = !hasPreview
-        latestButton.isHidden = !hasPreview || transcriptView.followsLatest
-        let bodyHeight: CGFloat
-        if hasPreview {
-            transcriptView.update(previewText, width: placement.frame.width - 24, compact: compactPreview)
-            bodyHeight = min(transcriptView.desiredHeight, max(0, visible.height - style.pillHeight - 16))
-        } else { bodyHeight = 0 }
-        transcriptHeight?.constant = bodyHeight
-        let height = style.pillHeight + (hasPreview ? bodyHeight + 16 : 0)
-        let actualWidth = hasPreview ? placement.frame.width : min(size.width, placement.frame.width)
-        let origin = CGPoint(x: placement.frame.midX - actualWidth / 2, y: placement.frame.minY)
-        let frame = BottomOverlayLayout.clamp(CGRect(origin: origin, size: CGSize(width: actualWidth, height: height)), to: visible)
-        panel.setFrame(frame, display: false)
-        panelRootView.layoutSubtreeIfNeeded()
-        if transcriptView.followsLatest { transcriptView.scrollToLatest() }
-    }
-
-    private func positionManually(size: NSSize, visible: CGRect, userAnchor: CGPoint, unknown: Bool) {
-        let hasPreview = !previewText.isEmpty
-        var placement: BottomOverlayLayout.Placement!
-        var bodyHeight: CGFloat = 0
-        compactPreview = false
-        for compact in [false, true] {
-            compactPreview = compact
-            let width = min(hasPreview ? (compact ? 280 : 480) : size.width, visible.width)
-            if hasPreview {
-                transcriptView.update(previewText, width: width - 24, compact: compact)
-                bodyHeight = min(transcriptView.desiredHeight, max(0, visible.height - style.pillHeight - 16))
-            }
-            let height = style.pillHeight + (hasPreview ? bodyHeight + 16 : 0)
-            let preferred = CGPoint(x: userAnchor.x - width / 2, y: userAnchor.y)
-            placement = BottomOverlayLayout.place(size: CGSize(width: width, height: height), visible: visible,
-                protected: geometry.protected, preferred: preferred, manual: true)
-            if !placement.needsAdjustment || !hasPreview { break }
-        }
-        needsPositionAdjustment = unknown || placement.needsAdjustment
-        transcriptView.isHidden = !hasPreview
-        latestButton.isHidden = !hasPreview || transcriptView.followsLatest
-        transcriptHeight?.constant = bodyHeight
         panel.setFrame(placement.frame, display: false)
         panelRootView.layoutSubtreeIfNeeded()
-        if transcriptView.followsLatest { transcriptView.scrollToLatest() }
     }
 
     func debugSetGeometry(visible: CGRect, protected: [CGRect], hasEditableGeometry: Bool = true) {
@@ -631,7 +549,6 @@ final class OverlayController: OverlayControlling {
         geometryOverride = OverlayFocusGeometry(protected: protected, hasEditableGeometry: hasEditableGeometry)
     }
 
-    @objc private func returnToLatest() { transcriptView.resumeFollowing() }
 
     static func panelFrame(
         for size: NSSize,
@@ -720,16 +637,8 @@ final class OverlayController: OverlayControlling {
 
     @objc
     private func handleRetryControlPressed() {
-        let menu = NSMenu()
-        let current = menu.addItem(withTitle: "按当前流程重跑", action: #selector(handleCurrentFlowReprocess), keyEquivalent: "")
-        current.target = self
-        let original = menu.addItem(withTitle: "重试原路线", action: #selector(handleOriginalRouteRetry), keyEquivalent: "")
-        original.target = self
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: retryButton.bounds.maxY), in: retryButton)
+        onRetry?()
     }
-
-    @objc private func handleCurrentFlowReprocess() { onReprocess?() }
-    @objc private func handleOriginalRouteRetry() { onRetry?() }
 
     @discardableResult
     func debugSimulateCancelControlClick() -> Bool {
@@ -763,7 +672,7 @@ final class OverlayController: OverlayControlling {
             return false
         }
 
-        onRetry?()
+        retryButton.performClick(nil)
         return true
     }
 
@@ -782,12 +691,12 @@ final class OverlayController: OverlayControlling {
             userAnchor: userAnchor,
             isPresented: isPresented,
             panelWidth: panel.frame.width,
-            transcript: transcriptView.fullText,
+            transcript: "",
             panelHeight: panel.frame.height,
             footerY: panel.frame.minY,
-            followsLatest: transcriptView.followsLatest,
+            followsLatest: true,
             controlsInsidePanel: panelRootView.bounds.contains(panelRootView.convert(closeButton.bounds, from: closeButton)),
-            previewInsidePanel: transcriptView.isHidden || panelRootView.bounds.contains(panelRootView.convert(transcriptView.bounds, from: transcriptView))
+            previewInsidePanel: true
         )
     }
 }

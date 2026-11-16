@@ -10,7 +10,7 @@ func minimalOverlayPresetUsesNineBarVoiceGlyph() {
     #expect(preset.cornerRadius == 15)
     #expect(preset.topInset == 24)
     #expect(preset.waveformBarCount == 9)
-    #expect(preset.showsTranscriptPreview == true)
+    #expect(preset.showsTranscriptPreview == false)
     #expect(preset.inlineCancelControlSize == 14)
     #expect(preset.timerFontSize == 10)
 }
@@ -288,13 +288,13 @@ func overlayControllerRetryControlRoutesClickIntoOnRetry() {
 }
 
 @MainActor
-@Test func livePreviewSurvivesMeterUpdatesAndResetsOnNewRecording() {
+@Test func statusHUDIgnoresTranscriptDuringMeterUpdatesAndNewRecording() {
     let overlay = OverlayController(presentsPanel: false)
     overlay.showRecording(elapsedText: "00:00")
     overlay.updateTranscriptPreview("这是一段正在更新的文字")
     overlay.updateRecording(level: 0.5, elapsedText: "00:01")
-    #expect(overlay.debugSnapshot.transcript == "这是一段正在更新的文字")
-    #expect(overlay.debugSnapshot.panelWidth == 480)
+    #expect(overlay.debugSnapshot.transcript.isEmpty)
+    #expect(overlay.debugSnapshot.panelWidth == 224)
     overlay.showProcessing()
     overlay.showRecording(elapsedText: "00:00")
     #expect(overlay.debugSnapshot.transcript.isEmpty)
@@ -342,7 +342,7 @@ private actor OverlayDeadlineGate {
         overlay.updateRecording(level: 0.8, elapsedText: "00:09")
         overlay.updateTranscriptPreview("晚到的实时文字")
         #expect(overlay.debugSnapshot.isCancelControlVisible == isError)
-        #expect(overlay.debugSnapshot.transcript == "保留全文直到终态结束。")
+        #expect(overlay.debugSnapshot.transcript.isEmpty)
         #expect(overlay.debugSnapshot.isPresented)
         await gate.fire()
         await deadline?.value
@@ -366,7 +366,7 @@ private actor OverlayDeadlineGate {
     for _ in 0..<8 { overlay.refreshGeometry() }
     #expect(overlay.debugSnapshot.isPresented)
     #expect(overlay.debugSnapshot.isCancelControlVisible)
-    #expect(overlay.debugSnapshot.transcript == "新会话")
+    #expect(overlay.debugSnapshot.transcript.isEmpty)
     overlay.hide()
 }
 

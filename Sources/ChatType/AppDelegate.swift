@@ -21,6 +21,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        coordinator?.cancelCurrentSession()
+    }
+
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         false
     }
