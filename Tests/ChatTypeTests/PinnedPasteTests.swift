@@ -137,6 +137,33 @@ func clipboardRestoresOnlyAfterReceiptAndOnlyWhileStillOwned(newCopy: Bool) asyn
     #expect(!PinnedPasteReceipt.matches(observed: nil, span: span, inserted: "终稿", placeholder: "Work with Codex"))
 }
 
+@Test func emptyWebParagraphReceiptRequiresExactWholeContent() throws {
+    let span = try #require(LiveTextSpan(value: "\n", selection: NSRange(location: 0, length: 0)))
+    for final in ["终稿。", "第一行。\n第二行。", "保留末尾换行。\n"] {
+        #expect(PinnedPasteReceipt.matches(observed: final, span: span, inserted: final, placeholder: nil))
+        #expect(PinnedPasteReceipt.matches(observed: final + "\n", span: span, inserted: final, placeholder: nil))
+        #expect(!PinnedPasteReceipt.matches(observed: final + "\n\n", span: span, inserted: final, placeholder: nil))
+        #expect(!PinnedPasteReceipt.matches(observed: "别的" + final, span: span, inserted: final, placeholder: nil))
+    }
+    #expect(!PinnedPasteReceipt.matches(observed: nil, span: span, inserted: "终稿。", placeholder: nil))
+    let nonempty = try #require(LiveTextSpan(value: "原文\n", selection: NSRange(location: 0, length: 0)))
+    #expect(!PinnedPasteReceipt.matches(observed: "终稿。", span: nonempty, inserted: "终稿。", placeholder: nil))
+    let afterParagraph = try #require(LiveTextSpan(value: "\n", selection: NSRange(location: 1, length: 0)))
+    #expect(!PinnedPasteReceipt.matches(observed: "终稿。", span: afterParagraph, inserted: "终稿。", placeholder: nil))
+}
+
+@Test @MainActor func emptyWebParagraphNativePasteIsAcknowledgedWithoutAnotherEvent() throws {
+    let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
+    let pin = PasteProbe(); pin.value = "\n"
+    let span = try #require(LiveTextSpan(value: pin.value!, selection: NSRange(location: 0, length: 0)))
+    var posts = 0
+    let injector = TextInjector(pasteboard: board, sendPaste: { _ in
+        posts += 1; pin.value = "原输入框收到终稿。"
+    }, settleAfterPaste: {})
+    #expect(try injector.injectPinned(text: "原输入框收到终稿。", span: span, target: pin, configuration: InjectionConfig()) == .pasted)
+    #expect(posts == 1)
+}
+
 @Test(arguments: ["终稿", "终稿\n"]) @MainActor
 func nativePasteUsesCapturedPlaceholderLabelForReceipt(observed: String) throws {
     let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }

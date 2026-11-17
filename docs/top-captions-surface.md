@@ -8,4 +8,6 @@ The display is selected at recording start; subsequent focus changes do not reta
 
 Confirming is rendered before synchronous delivery. On its return, final captions start a fresh draw generation; only its visible drawing receipt begins the1.5s reading hold. Cancel/new-session and stale drawing/hide callbacks are isolated. Unknown output stays an attention state with a request to inspect the input, without an automatic second paste. Retry remains one action.
 
+Web editors can expose an empty paragraph as a single line feed, then omit that structural separator after paste. At the captured empty paragraph's start, the receipt accepts only the exact final text, optionally followed by that one separator. Nonempty originals and other selections retain exact replacement matching. A confirmed receipt follows the ordinary success/hide lifecycle; an unknown receipt still requires inspection and never resends the paste.
+
 Keep existing app and menu-bar icons, status colors, compact controls and native keyboard behavior. The settings language in DESIGN.md is unchanged. Acceptance requires actual installed panels plus real F5 speech, focus switching, last-word visibility and exactly one verified output into the original target; static mockups are design references only.

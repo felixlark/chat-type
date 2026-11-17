@@ -103,11 +103,13 @@ protocol PinnedPasteTarget: AnyObject {
 enum PinnedPasteReceipt {
     static func matches(observed: String?, span: LiveTextSpan, inserted: String, placeholder: String?) -> Bool {
         if observed == span.replacing(with: inserted, current: span.original) { return true }
-        // Chromium exposes the empty ProseMirror placeholder as AXValue plus
-        // its paragraph separator. A real paste removes the placeholder.
-        guard let placeholder, !placeholder.isEmpty,
-              span.selection == NSRange(location: 0, length: 0),
-              span.original == placeholder + "\n" else { return false }
+        // An empty web paragraph can expose either its placeholder plus LF or
+        // just LF as AXValue. Inserting content can remove that structural LF.
+        // Keep this alternative confined to an empty paragraph at its start.
+        guard span.selection == NSRange(location: 0, length: 0) else { return false }
+        let isEmptyParagraph = span.original == "\n"
+        let isPlaceholderParagraph = placeholder.map { !$0.isEmpty && span.original == $0 + "\n" } ?? false
+        guard isEmptyParagraph || isPlaceholderParagraph else { return false }
         // Chromium omits the empty paragraph separator once actual content
         // is inserted; other web editors retain it in their AXValue.
         return observed == inserted || observed == inserted + "\n"
