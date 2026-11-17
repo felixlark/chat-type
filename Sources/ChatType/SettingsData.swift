@@ -20,6 +20,10 @@ final class SettingsResource<Value: Sendable>: ObservableObject {
     }
 
     func refresh() {
+        refresh(using: load)
+    }
+
+    func refresh(using loader: @escaping @Sendable () throws -> Value) {
         guard task == nil else { pending = true; return }
         let id = UUID()
         generation = id
@@ -29,7 +33,6 @@ final class SettingsResource<Value: Sendable>: ObservableObject {
             repeat {
                 pending = false
                 overlays = []
-                let loader = load
                 let result = await Task.detached(priority: .utility) { Result { try loader() } }.value
                 guard generation == id, !Task.isCancelled else { return }
                 switch result {
@@ -45,6 +48,11 @@ final class SettingsResource<Value: Sendable>: ObservableObject {
             isLoading = false
             task = nil
         }
+    }
+
+    func refreshIfIdle(using loader: @escaping @Sendable () throws -> Value) {
+        guard task == nil else { return }
+        refresh(using: loader)
     }
 
     /// A recording notification or successful credential save wins over a read

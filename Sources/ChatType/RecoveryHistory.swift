@@ -62,6 +62,14 @@ struct RecoveryRecord: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+struct RecoveryRecordPage: Sendable {
+    let records: [RecoveryRecord]
+    let offset: Int
+    let totalCount: Int
+    var hasPrevious: Bool { offset > 0 }
+    var hasNext: Bool { offset + records.count < totalCount }
+}
+
 enum RecoveryHistoryKind: String, CaseIterable, Identifiable, Sendable {
     case audio
     case asr
@@ -178,6 +186,17 @@ protocol RecoveryRecording: Sendable {
     var directoryURL: URL { get }
     func record(_ input: RecoveryRecordInput) throws
     func loadRecent(limit: Int) throws -> [RecoveryRecord]
+    func loadPage(offset: Int, limit: Int) throws -> RecoveryRecordPage
+}
+
+extension RecoveryRecording {
+    func loadPage(offset: Int, limit: Int) throws -> RecoveryRecordPage {
+        let records = try loadRecent(limit: offset + limit + 1)
+        let total = records.count
+        let end = max(0, total - offset)
+        let start = max(0, end - limit)
+        return RecoveryRecordPage(records: Array(records[start..<end]), offset: offset, totalCount: total)
+    }
 }
 
 /// Audio is retained independently of the recent-history display limit.
@@ -339,19 +358,33 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
     }
 
     func loadRecent(limit: Int = 10) throws -> [RecoveryRecord] {
+        try loadPage(offset: 0, limit: limit).records
+    }
+
+    func loadPage(offset: Int, limit: Int) throws -> RecoveryRecordPage {
         lock.lock()
         defer { lock.unlock() }
-        guard limit > 0 else { return [] }
+        guard offset >= 0, limit > 0 else {
+            return RecoveryRecordPage(records: [], offset: max(0, offset), totalCount: 0)
+        }
         // Select by journal metadata first. Restoring every historic vocabulary
         // snapshot merely to display ten rows caused multi-second Settings hangs.
         let candidates = try loadAllUnlocked(hydrateSnapshots: false).sorted { $0.timestamp > $1.timestamp }
         var recent: [RecoveryRecord] = []
+        var skipped = 0
         for record in candidates {
-            if let restored = try? hydrate(record) { recent.append(restored) }
-            else { unreadableJournals += 1 }
+            guard let restored = try? hydrate(record) else {
+                unreadableJournals += 1
+                continue
+            }
+            if skipped < offset {
+                skipped += 1
+                continue
+            }
+            recent.append(restored)
             if recent.count == limit { break }
         }
-        return recent.reversed()
+        return RecoveryRecordPage(records: recent.reversed(), offset: offset, totalCount: candidates.count)
     }
 
     /// Called once on normal launch, never while a recorder owns an open WAV.

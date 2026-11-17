@@ -38,8 +38,8 @@ struct PreferencesView: View {
     @State var terminologyImportIsError = false
     @StateObject var providers: SettingsResource<SettingsProviderEnvironment>
     @StateObject var usage: SettingsResource<SettingsPolishUsage>
-    @StateObject var history: SettingsResource<[TranscriptionHistoryRecord]>
-    @StateObject var recovery: SettingsResource<[RecoveryRecord]>
+    @StateObject var history: SettingsResource<TranscriptionHistoryPage>
+    @StateObject var recovery: SettingsResource<RecoveryRecordPage>
     var authSnapshot: ChatGPTAuthSnapshot {
         get { providers.value.auth }
         nonmutating set { let value = newValue; providers.update { var copy = $0; copy.auth = value; return copy } }
@@ -69,17 +69,19 @@ struct PreferencesView: View {
     let glmKeyStore: any GLMKeyStoring
     @State var textPolishMessage: String?
     @State var textPolishMessageIsError = false
-    var recentHistoryRecords: [TranscriptionHistoryRecord] { history.value }
-    var recentRecoveryRecords: [RecoveryRecord] { recovery.value }
+    var recentHistoryRecords: [TranscriptionHistoryRecord] { history.value.records }
+    var recentRecoveryRecords: [RecoveryRecord] { recovery.value.records }
     @State var selectedRecoveryKind: RecoveryHistoryKind = .audio
+    @State var historyOffset = 0
+    @State var recoveryOffset = 0
     @State var copiedHistoryItemID: String?
 
     let authManager: ChatGPTAuthManager
     let onSave: (AppConfig) -> Result<Void, any Error>
     let onImportAppleContactRemarks: () async -> Result<TerminologyImportResult, any Error>
     let onImportWeixinRemarks: () async -> Result<TerminologyImportResult, any Error>
-    let onLoadRecentHistory: @Sendable () throws -> [TranscriptionHistoryRecord]
-    let onLoadRecoveryHistory: @Sendable () throws -> [RecoveryRecord]
+    let onLoadRecentHistory: @Sendable (Int, Int) throws -> TranscriptionHistoryPage
+    let onLoadRecoveryHistory: @Sendable (Int, Int) throws -> RecoveryRecordPage
     let recoveryDirectoryURL: URL
     let onRetryRecoveryRecord: (RecoveryRecord) -> Void
     let onReprocessRecoveryRecord: (RecoveryRecord) -> Void
@@ -92,8 +94,8 @@ struct PreferencesView: View {
         onSave: @escaping (AppConfig) -> Result<Void, any Error>,
         onImportAppleContactRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
         onImportWeixinRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
-        onLoadRecentHistory: @escaping @Sendable () throws -> [TranscriptionHistoryRecord],
-        onLoadRecoveryHistory: @escaping @Sendable () throws -> [RecoveryRecord],
+        onLoadRecentHistory: @escaping @Sendable (Int, Int) throws -> TranscriptionHistoryPage,
+        onLoadRecoveryHistory: @escaping @Sendable (Int, Int) throws -> RecoveryRecordPage,
         recoveryDirectoryURL: URL,
         onRetryRecoveryRecord: @escaping (RecoveryRecord) -> Void,
         onReprocessRecoveryRecord: @escaping (RecoveryRecord) -> Void,
@@ -111,8 +113,12 @@ struct PreferencesView: View {
                 doubaoInstalled: SettingsProviderEnvironment.doubaoIsInstalled(), checked: true)
         })
         _usage = StateObject(wrappedValue: SettingsResource(SettingsPolishUsage()) { try SettingsPolishUsage.read() })
-        _history = StateObject(wrappedValue: SettingsResource([]) { try onLoadRecentHistory() })
-        _recovery = StateObject(wrappedValue: SettingsResource([]) { try onLoadRecoveryHistory() })
+        _history = StateObject(wrappedValue: SettingsResource(TranscriptionHistoryPage(records: [], offset: 0, totalCount: 0)) {
+            try onLoadRecentHistory(0, 10)
+        })
+        _recovery = StateObject(wrappedValue: SettingsResource(RecoveryRecordPage(records: [], offset: 0, totalCount: 0)) {
+            try onLoadRecoveryHistory(0, 10)
+        })
         _copiedDeviceCode = State(initialValue: nil)
         _selectedSection = State(initialValue: focusRecoveryHistory ? .recovery : .account)
         self.authManager = authManager
@@ -245,7 +251,6 @@ struct PreferencesView: View {
             permissionRefreshNonce += 1
             loginItem.refresh()
             providers.refresh()
-            if selectedSection == .recovery { refreshRecentHistory(); refreshRecoveryHistory() }
 
         }
         .onReceive(NotificationCenter.default.publisher(for: .recoveryRecordDidChange).receive(on: RunLoop.main)) { update in
@@ -253,10 +258,14 @@ struct PreferencesView: View {
                   let record = update.object as? RecoveryRecord else { return }
             // Update the touched row directly: no synchronous scan/decode of
             // the entire original-audio archive on the UI or processing path.
-            recovery.update { records in
-                var updated = records.filter { $0.id != record.id }
+            recovery.update { page in
+                guard page.offset == 0 else { return page }
+                let existed = page.records.contains { $0.id == record.id }
+                var updated = page.records.filter { $0.id != record.id }
                 updated.append(record)
-                return Array(updated.sorted { $0.timestamp < $1.timestamp }.suffix(10))
+                let sorted = Array(updated.sorted { $0.timestamp > $1.timestamp }.prefix(10).reversed())
+                let total = existed ? page.totalCount : max(page.totalCount + 1, sorted.count)
+                return RecoveryRecordPage(records: sorted, offset: 0, totalCount: total)
             }
         }
         .onReceive(

@@ -28,6 +28,14 @@ struct TranscriptionHistoryRecord: Codable, Sendable, Equatable {
     }
 }
 
+struct TranscriptionHistoryPage: Sendable {
+    let records: [TranscriptionHistoryRecord]
+    let offset: Int
+    let totalCount: Int
+    var hasPrevious: Bool { offset > 0 }
+    var hasNext: Bool { offset + records.count < totalCount }
+}
+
 enum TranscriptionHistoryTextSource: Sendable {
     case dictation
     case polish
@@ -140,6 +148,17 @@ struct TranscriptionHistoryPreview: Sendable, Equatable, Identifiable {
 protocol TranscriptionHistoryRecording: Sendable {
     func record(_ record: TranscriptionHistoryRecord) throws
     func loadRecent(limit: Int) throws -> [TranscriptionHistoryRecord]
+    func loadPage(offset: Int, limit: Int) throws -> TranscriptionHistoryPage
+}
+
+extension TranscriptionHistoryRecording {
+    func loadPage(offset: Int, limit: Int) throws -> TranscriptionHistoryPage {
+        let records = try loadRecent(limit: offset + limit + 1)
+        let total = records.count
+        let end = max(0, total - offset)
+        let start = max(0, end - limit)
+        return TranscriptionHistoryPage(records: Array(records[start..<end]), offset: offset, totalCount: total)
+    }
 }
 
 final class TranscriptionHistoryRecorder: TranscriptionHistoryRecording, @unchecked Sendable {
@@ -177,23 +196,32 @@ final class TranscriptionHistoryRecorder: TranscriptionHistoryRecording, @unchec
     }
 
     func loadRecent(limit: Int = 200) throws -> [TranscriptionHistoryRecord] {
+        try loadPage(offset: 0, limit: limit).records
+    }
+
+    func loadPage(offset: Int, limit: Int) throws -> TranscriptionHistoryPage {
         lock.lock()
         defer { lock.unlock() }
 
+        guard offset >= 0, limit > 0 else {
+            return TranscriptionHistoryPage(records: [], offset: max(0, offset), totalCount: 0)
+        }
+
         guard fileManager.fileExists(atPath: historyURL.path) else {
-            return []
+            return TranscriptionHistoryPage(records: [], offset: offset, totalCount: 0)
         }
 
         let contents = try String(contentsOf: historyURL, encoding: .utf8)
+        let lines = contents.split(separator: "\n")
+        let end = max(0, lines.count - offset)
+        let start = max(0, end - limit)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let records = contents
-            .split(separator: "\n")
-            .suffix(max(0, limit))
+        let records = lines[start..<end]
             .compactMap { line -> TranscriptionHistoryRecord? in
                 try? decoder.decode(TranscriptionHistoryRecord.self, from: Data(line.utf8))
             }
-        return Array(records)
+        return TranscriptionHistoryPage(records: Array(records), offset: offset, totalCount: lines.count)
     }
 
     private var historyURL: URL {
