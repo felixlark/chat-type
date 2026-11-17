@@ -5,11 +5,47 @@ import Combine
 import SwiftUI
 
 extension PreferencesView {
+    private static let historyPageSize = 10
+
     func refreshTextPolishStatus() { usage.refresh() }
-    func refreshRecentHistory() { history.refresh() }
-    func refreshRecoveryHistory() { recovery.refresh() }
+    func refreshRecentHistory(resetPage: Bool = true) {
+        if resetPage { historyOffset = 0 }
+        let offset = historyOffset
+        let pageSize = 10
+        history.refresh(using: { try onLoadRecentHistory(offset, pageSize) })
+    }
+    func refreshRecoveryHistory(resetPage: Bool = true) {
+        if resetPage { recoveryOffset = 0 }
+        let offset = recoveryOffset
+        let pageSize = 10
+        recovery.refresh(using: { try onLoadRecoveryHistory(offset, pageSize) })
+    }
     func refreshVisibleSection() {
-        if selectedSection == .recovery { refreshRecentHistory(); refreshRecoveryHistory() }
+        guard selectedSection == .recovery else { return }
+        if !history.hasLoaded && !history.isLoading { refreshRecentHistory() }
+        if !recovery.hasLoaded && !recovery.isLoading { refreshRecoveryHistory() }
+    }
+
+    func loadPreviousHistoryPage() {
+        historyOffset = max(0, historyOffset - Self.historyPageSize)
+        refreshRecentHistory(resetPage: false)
+    }
+
+    func loadNextHistoryPage() {
+        guard history.value.hasNext else { return }
+        historyOffset += Self.historyPageSize
+        refreshRecentHistory(resetPage: false)
+    }
+
+    func loadPreviousRecoveryPage() {
+        recoveryOffset = max(0, recoveryOffset - Self.historyPageSize)
+        refreshRecoveryHistory(resetPage: false)
+    }
+
+    func loadNextRecoveryPage() {
+        guard recovery.value.hasNext else { return }
+        recoveryOffset += Self.historyPageSize
+        refreshRecoveryHistory(resetPage: false)
     }
 
     var recentRecoveryItems: [RecoveryHistoryPreview] {
@@ -23,7 +59,7 @@ extension PreferencesView {
     var recentDictationHistoryItems: [TranscriptionHistoryPreview] {
         TranscriptionHistoryPreview.recentItems(
             from: recentHistoryRecords,
-            limit: 5,
+            limit: Self.historyPageSize,
             textSource: .dictation
         )
     }
@@ -31,7 +67,7 @@ extension PreferencesView {
     var recentPolishHistoryItems: [TranscriptionHistoryPreview] {
         TranscriptionHistoryPreview.recentItems(
             from: recentHistoryRecords,
-            limit: 5,
+            limit: Self.historyPageSize,
             textSource: .polish
         )
     }
@@ -47,7 +83,7 @@ extension PreferencesView {
                 .pickerStyle(.segmented)
 
                 HStack {
-                    Text("最近 10 条")
+                    Text("第 \(recoveryOffset / Self.historyPageSize + 1) 页 · 最近 10 条")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -55,6 +91,17 @@ extension PreferencesView {
                         refreshRecoveryHistory()
                     }
                     .buttonStyle(.bordered)
+                    .disabled(recovery.isLoading)
+                }
+
+                HStack(spacing: 8) {
+                    Button("上一页") { loadPreviousRecoveryPage() }
+                        .disabled(!recovery.value.hasPrevious || recovery.isLoading)
+                    Button("下一页") { loadNextRecoveryPage() }
+                        .disabled(!recovery.value.hasNext || recovery.isLoading)
+                    Text("共约 \(recovery.value.totalCount) 条")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
 
                 if recovery.isLoading { ProgressView("Loading saved recordings…").controlSize(.small) }
@@ -241,6 +288,17 @@ extension PreferencesView {
                     refreshRecentHistory()
                 }
                 .buttonStyle(.bordered)
+                .disabled(history.isLoading)
+            }
+
+            HStack(spacing: 8) {
+                Button("上一页") { loadPreviousHistoryPage() }
+                    .disabled(!history.value.hasPrevious || history.isLoading)
+                Button("下一页") { loadNextHistoryPage() }
+                    .disabled(!history.value.hasNext || history.isLoading)
+                Text("第 \(historyOffset / Self.historyPageSize + 1) 页 · 共约 \(history.value.totalCount) 条")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
 
             if items.isEmpty {

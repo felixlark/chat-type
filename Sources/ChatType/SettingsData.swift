@@ -8,6 +8,7 @@ final class SettingsResource<Value: Sendable>: ObservableObject {
     @Published private(set) var value: Value
     @Published private(set) var isLoading = false
     @Published private(set) var error: String?
+    @Published private(set) var hasLoaded = false
     private let load: @Sendable () throws -> Value
     private var task: Task<Void, Never>?
     private var pending = false
@@ -20,6 +21,10 @@ final class SettingsResource<Value: Sendable>: ObservableObject {
     }
 
     func refresh() {
+        refresh(using: load)
+    }
+
+    func refresh(using loader: @escaping @Sendable () throws -> Value) {
         guard task == nil else { pending = true; return }
         let id = UUID()
         generation = id
@@ -29,7 +34,6 @@ final class SettingsResource<Value: Sendable>: ObservableObject {
             repeat {
                 pending = false
                 overlays = []
-                let loader = load
                 let result = await Task.detached(priority: .utility) { Result { try loader() } }.value
                 guard generation == id, !Task.isCancelled else { return }
                 switch result {
@@ -40,6 +44,7 @@ final class SettingsResource<Value: Sendable>: ObservableObject {
                     // Keep the last successful result, including live updates.
                     error = failure.localizedDescription
                 }
+                hasLoaded = true
             } while pending
             overlays = []
             isLoading = false
@@ -47,10 +52,16 @@ final class SettingsResource<Value: Sendable>: ObservableObject {
         }
     }
 
+    func refreshIfIdle(using loader: @escaping @Sendable () throws -> Value) {
+        guard task == nil else { return }
+        refresh(using: loader)
+    }
+
     /// A recording notification or successful credential save wins over a read
     /// that started before it. A subsequent refresh reads the durable result.
     func update(_ transform: @escaping (Value) -> Value) {
         value = transform(value)
+        hasLoaded = true
         if isLoading { overlays.append(transform) }
     }
 

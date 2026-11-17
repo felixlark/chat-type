@@ -84,6 +84,28 @@ func recoveryStoreDisplayLimitNeverPrunesOldAudio() throws {
 }
 
 @Test
+func recoveryHistoryPagesKeepTenRowsAndExposeNavigation() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = root.appendingPathComponent("source.wav")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("wav".utf8).write(to: source)
+    let store = RecoveryStore(directoryURL: root.appendingPathComponent("Recovery", isDirectory: true))
+    for index in 0..<21 {
+        try store.record(RecoveryRecordInput(timestamp: Date(timeIntervalSince1970: TimeInterval(index)), sourceAudioURL: source,
+            durationMs: 1_000, asrText: "asr \(index)", polishText: nil, appName: nil, appBundleIdentifier: nil,
+            outcome: "clipboard", errorMessage: nil))
+    }
+    let first = try store.loadPage(offset: 0, limit: 10)
+    let second = try store.loadPage(offset: 10, limit: 10)
+    let last = try store.loadPage(offset: 20, limit: 10)
+    #expect(first.records.count == 10 && first.hasNext && !first.hasPrevious)
+    #expect(second.records.count == 10 && second.hasNext && second.hasPrevious)
+    #expect(last.records.count == 1 && !last.hasNext && last.hasPrevious)
+    #expect(Set(first.records.map(\.id)).isDisjoint(with: second.records.map(\.id)))
+}
+
+@Test
 func recoveryPreviewSkipsMissingTextForTextKinds() {
     let record = RecoveryRecord(
         id: UUID(),

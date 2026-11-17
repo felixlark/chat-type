@@ -772,10 +772,10 @@ final class AppCoordinator {
                     } catch { return .failure(error) }
                 },
                 onLoadRecentHistory: { [historyReader] in
-                    try historyReader.loadRecent(limit: 200)
+                    try historyReader.loadPage(offset: $0, limit: $1)
                 },
                 onLoadRecoveryHistory: { [recoveryReader] in
-                    try recoveryReader.loadRecent(limit: 10)
+                    try recoveryReader.loadPage(offset: $0, limit: $1)
                 },
                 recoveryDirectoryURL: recoveryRecorder.directoryURL,
                 onRetryRecoveryRecord: { [weak self] record in self?.retryRecoveryRecord(record) },
