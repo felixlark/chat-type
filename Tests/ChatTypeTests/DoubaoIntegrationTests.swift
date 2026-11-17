@@ -43,14 +43,34 @@ private func doubaoJSON(_ object: Any) throws -> Data { try JSONSerialization.da
     func result(_ index: Int, _ text: String, _ final: Bool) throws -> Data {
         try doubaoJSON(["results": [["index": index, "text": text, "is_interim": !final, "is_vad_finished": final]]])
     }
-    try transcript.consume(result(0, "第一段。", true))
-    try transcript.consume(result(0, "迟到的预览", false))
-    try transcript.consume(result(1, "第一段。", false))
+    try transcript.consume(result(0, "第一段。", true), responseOrdinal: 0)
+    try transcript.consume(result(0, "迟到的预览", false), responseOrdinal: 1)
+    try transcript.consume(result(1, "第一段。", false), responseOrdinal: 2)
     #expect(!transcript.complete)
-    try transcript.consume(result(1, "第一段。", true))
-    try transcript.consume(result(1, "第一段。", true))
+    try transcript.consume(result(1, "第一段。", true), responseOrdinal: 3)
+    try transcript.consume(result(1, "第一段。", true), responseOrdinal: 4)
     #expect(transcript.finalText == "第一段。第一段。")
     #expect(transcript.complete)
+    let audit = transcript.auditSnapshot()
+    #expect(audit.responseCount == 5)
+    #expect(audit.uniqueSegmentCount == 2)
+    #expect(audit.finalSegmentCount == 2)
+    #expect(audit.segments.map(\.action) == ["acceptedNew", "ignoredLateInterim", "acceptedNew", "replacedInterim", "replacedFinal"])
+    #expect(audit.finalTextLength == "第一段。第一段。".count)
+    #expect(audit.finalTextSHA256.count == 64)
+    #expect(audit.segments.allSatisfy { $0.textSHA256.count == 64 })
+}
+
+@Test func singleFinalSegmentIsAuditedAsCompleteWithoutClaimingAudioCoverage() throws {
+    var transcript = DoubaoTranscript()
+    try transcript.consume(doubaoJSON(["results": [["index": 7, "text": "只有末句", "is_interim": false, "is_vad_finished": true]]]), responseOrdinal: 0)
+    let audit = transcript.auditSnapshot()
+    #expect(audit.complete)
+    #expect(audit.uniqueSegmentCount == 1)
+    #expect(audit.finalSegmentCount == 1)
+    #expect(audit.finalTextLength == "只有末句".count)
+    #expect(audit.segments[0].key == "index:7")
+    #expect(audit.segments[0].action == "acceptedNew")
 }
 
 @Test func unindexedNewFinalCannotSilentlyReplaceAnEarlierSegment() throws {
