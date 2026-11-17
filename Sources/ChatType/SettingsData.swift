@@ -8,6 +8,7 @@ final class SettingsResource<Value: Sendable>: ObservableObject {
     @Published private(set) var value: Value
     @Published private(set) var isLoading = false
     @Published private(set) var error: String?
+    @Published private(set) var hasLoaded = false
     private let load: @Sendable () throws -> Value
     private var task: Task<Void, Never>?
     private var pending = false
@@ -43,6 +44,7 @@ final class SettingsResource<Value: Sendable>: ObservableObject {
                     // Keep the last successful result, including live updates.
                     error = failure.localizedDescription
                 }
+                hasLoaded = true
             } while pending
             overlays = []
             isLoading = false
@@ -59,6 +61,7 @@ final class SettingsResource<Value: Sendable>: ObservableObject {
     /// that started before it. A subsequent refresh reads the durable result.
     func update(_ transform: @escaping (Value) -> Value) {
         value = transform(value)
+        hasLoaded = true
         if isLoading { overlays.append(transform) }
     }
 

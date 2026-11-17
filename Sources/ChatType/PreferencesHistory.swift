@@ -22,8 +22,8 @@ extension PreferencesView {
     }
     func refreshVisibleSection() {
         guard selectedSection == .recovery else { return }
-        if recentHistoryRecords.isEmpty && !history.isLoading { refreshRecentHistory() }
-        if recentRecoveryRecords.isEmpty && !recovery.isLoading { refreshRecoveryHistory() }
+        if !history.hasLoaded && !history.isLoading { refreshRecentHistory() }
+        if !recovery.hasLoaded && !recovery.isLoading { refreshRecoveryHistory() }
     }
 
     func loadPreviousHistoryPage() {
@@ -91,6 +91,7 @@ extension PreferencesView {
                         refreshRecoveryHistory()
                     }
                     .buttonStyle(.bordered)
+                    .disabled(recovery.isLoading)
                 }
 
                 HStack(spacing: 8) {
@@ -287,6 +288,7 @@ extension PreferencesView {
                     refreshRecentHistory()
                 }
                 .buttonStyle(.bordered)
+                .disabled(history.isLoading)
             }
 
             HStack(spacing: 8) {
