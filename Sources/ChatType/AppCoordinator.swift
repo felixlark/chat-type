@@ -847,8 +847,14 @@ final class AppCoordinator {
             return
         }
         let selectedOutcome = selectedAttempt?.outcome ?? record.outcome
-        if ["readyToInject", "outputUnknown"].contains(selectedOutcome), !replayDecision(.possiblePreviousOutput) { return }
-        let partial = ["interrupted", "cancelled"].contains(selectedOutcome)
+        let outcomesToGuard = useCurrentFlow
+            ? [record.outcome, selectedOutcome]
+            : [selectedOutcome]
+        if outcomesToGuard.contains(where: { ["readyToInject", "outputUnknown"].contains($0) }),
+           !replayDecision(.possiblePreviousOutput) {
+            return
+        }
+        let partial = outcomesToGuard.contains(where: { ["interrupted", "cancelled"].contains($0) })
             || (selectedAttempt ?? record.attempts?.last)?.stages.partialAudio == true
             || { if case .interruptedInput = PCMRecordingIntegrityAnalyzer().analyze(wavData: (try? Data(contentsOf: audioURL)) ?? Data()) { return true }; return false }()
         if partial, !replayDecision(.partialAudio) { return }
