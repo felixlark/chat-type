@@ -263,6 +263,13 @@ func diagnosticAttemptPreservesPrimaryVoiceStateAndSelection() throws {
     )
     #expect(diagnostic.status.label == "仅转写完成")
     #expect(diagnostic.selectedAttempt?.resolvedKind == .asrOnly)
+    #expect(diagnostic.stages.first(where: { $0.position == .alignment })?.state == .skipped)
+    #expect(diagnostic.stages.first(where: { $0.position == .polish })?.state == .skipped)
+    #expect(diagnostic.stages.first(where: { $0.position == .finalization })?.state == .skipped)
+    #expect(diagnostic.stages.first(where: { $0.position == .output })?.state == .skipped)
+    #expect(diagnostic.artifacts.first(where: { $0.kind == .aligned })?.note == "仅转写尝试")
+    #expect(diagnostic.artifacts.first(where: { $0.kind == .polish })?.note == "未执行")
+    #expect(diagnostic.artifacts.first(where: { $0.kind == .final })?.note == "仅诊断")
 }
 
 @Test
@@ -322,4 +329,76 @@ func failedAttemptPresentationExposesNoFakeTextArtifacts() throws {
     #expect(presentation.stages.first(where: { $0.position == .polish })?.state == .failed)
     #expect(presentation.canRerunTranscription)
     #expect(!presentation.canRerunPolish)
+}
+
+@Test
+func outputFailureAfterFinalizationDoesNotMarkEarlierStagesFailed() throws {
+    let recordID = UUID()
+    let attemptID = UUID()
+    let record = RecoveryRecord(
+        id: recordID,
+        timestamp: Date(timeIntervalSince1970: 3),
+        audioFileName: "\(recordID.uuidString).wav",
+        audioDurationMs: 1_000,
+        asrText: "raw",
+        polishText: "polished",
+        appName: "Notes",
+        appBundleIdentifier: "com.apple.Notes",
+        outcome: "error",
+        errorMessage: "inject failed",
+        attempts: [
+            DictationAttempt(
+                id: attemptID,
+                startedAt: Date(timeIntervalSince1970: 3),
+                snapshot: TranscriptionConfig(),
+                stages: DictationStageAudit(
+                    asrText: "raw",
+                    polishInput: "raw",
+                    polishOutput: "polished",
+                    finalText: "polished",
+                    error: "inject failed"
+                ),
+                outcome: "error"
+            )
+        ]
+    )
+    let presentation = HistoryRecordPresentation(
+        record: record,
+        selectedAttemptID: attemptID,
+        audioAvailable: true
+    )
+    #expect(presentation.stages.first(where: { $0.position == .polish })?.state == .complete)
+    #expect(presentation.stages.first(where: { $0.position == .finalization })?.state == .complete)
+    #expect(presentation.stages.first(where: { $0.position == .output })?.state == .failed)
+}
+
+@Test
+func legacyIndexOnlyRecordRemainsOpenableFromHistory() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recovery = root.appendingPathComponent("Recovery", isDirectory: true)
+    try FileManager.default.createDirectory(at: recovery, withIntermediateDirectories: true)
+    let id = UUID()
+    let record = RecoveryRecord(
+        id: id,
+        timestamp: Date(timeIntervalSince1970: 4),
+        audioFileName: "\(id.uuidString).wav",
+        audioDurationMs: 2_000,
+        asrText: "legacy asr",
+        polishText: "legacy polish",
+        appName: "Notes",
+        appBundleIdentifier: "com.apple.Notes",
+        outcome: "pasted",
+        errorMessage: nil
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try (encoder.encode(record) + Data([0x0A]))
+        .write(to: recovery.appendingPathComponent("recovery-history.jsonl"))
+
+    let store = RecoveryStore(directoryURL: recovery)
+    #expect(try store.loadHistoryIndex().records.contains { $0.id == id })
+    let loaded = try #require(try store.loadRecord(id: id))
+    #expect(loaded.asrText == "legacy asr")
+    #expect(loaded.polishText == "legacy polish")
 }

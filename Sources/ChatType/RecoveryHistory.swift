@@ -423,8 +423,15 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
     func loadRecord(id: UUID) throws -> RecoveryRecord? {
         lock.lock(); defer { lock.unlock() }
         let url = journalDirectoryURL.appendingPathComponent("\(id.uuidString).json")
-        guard fileManager.fileExists(atPath: url.path) else { return nil }
-        return try readJournal(url, expectedID: id)
+        if fileManager.fileExists(atPath: url.path) {
+            return try readJournal(url, expectedID: id)
+        }
+        // Legacy index-only records have no per-record journal yet were
+        // readable in the previous history page. Keep opening them read-only.
+        if let legacy = try loadAllUnlocked(hydrateSnapshots: false).first(where: { $0.id == id }) {
+            return try hydrate(legacy)
+        }
+        return nil
     }
 
     /// Called once on normal launch, never while a recorder owns an open WAV.

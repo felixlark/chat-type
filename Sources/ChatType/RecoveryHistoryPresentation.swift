@@ -160,13 +160,21 @@ struct HistoryRecordPresentation: Sendable, Equatable {
         } else {
             polish = "润色路线未记录"
         }
-        self.routeSummary = "\(recognition) · \(polish)"
+        switch selected?.resolvedKind {
+        case .asrOnly:
+            self.routeSummary = "仅转写 · \(recognition)"
+        case .polishOnly:
+            self.routeSummary = "仅润色 · \(polish)"
+        default:
+            self.routeSummary = "\(recognition) · \(polish)"
+        }
 
         let asrText = selected?.stages.asrText
             ?? selected?.stages.asrPartialText
             ?? record.asrText
         self.canRerunTranscription = audioAvailable
-        self.canRerunPolish = asrText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        self.canRerunPolish = audioAvailable
+            && asrText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     var formattedDuration: String {
@@ -215,8 +223,8 @@ struct HistoryRecordPresentation: Sendable, Equatable {
         let hasFinal = stages.finalText?.isEmpty == false
 
         let audioState: HistoryStageState = audioAvailable ? .complete : .attention
-        let asrState: HistoryStageState
-        let asrDetail: String
+        var asrState: HistoryStageState
+        var asrDetail: String
         if hasASR {
             asrState = .complete
             asrDetail = "\(stages.asrText?.count ?? 0) 字"
@@ -231,8 +239,8 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             asrDetail = "未生成"
         }
 
-        let alignmentState: HistoryStageState
-        let alignmentDetail: String
+        var alignmentState: HistoryStageState
+        var alignmentDetail: String
         if !snapshot.terminologyAlignmentEnabled {
             alignmentState = .skipped
             alignmentDetail = "已关闭"
@@ -247,17 +255,20 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             alignmentDetail = "未执行"
         }
 
-        let polishState: HistoryStageState
-        let polishDetail: String
+        var polishState: HistoryStageState
+        var polishDetail: String
         if !snapshot.textPolish.isEnabled {
             polishState = .skipped
             polishDetail = "已关闭"
-        } else if stages.error != nil && hasPolish {
-            polishState = .failed
-            polishDetail = "部分输出 · 未采用"
-        } else if hasPolish {
+        } else if hasPolish, stages.polishProtectionReason != nil {
+            polishState = .complete
+            polishDetail = "保留原文"
+        } else if hasPolish, hasFinal || stages.error == nil {
             polishState = .complete
             polishDetail = snapshot.textPolish.provider.title
+        } else if hasPolish {
+            polishState = .failed
+            polishDetail = "部分输出 · 未采用"
         } else if stages.error != nil {
             polishState = .failed
             polishDetail = "未完成"
@@ -266,9 +277,9 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             polishDetail = "未生成"
         }
 
-        let finalState: HistoryStageState
-        let finalDetail: String
-        if hasFinal && stages.error == nil {
+        var finalState: HistoryStageState
+        var finalDetail: String
+        if hasFinal {
             finalState = .complete
             finalDetail = "\(stages.finalText?.count ?? 0) 字"
         } else if stages.error != nil {
@@ -277,6 +288,18 @@ struct HistoryRecordPresentation: Sendable, Equatable {
         } else {
             finalState = .unavailable
             finalDetail = "未生成"
+        }
+
+        if attempt.resolvedKind == .asrOnly {
+            alignmentState = .skipped
+            alignmentDetail = "仅转写尝试"
+            polishState = .skipped
+            polishDetail = "未执行"
+            finalState = .skipped
+            finalDetail = "仅诊断"
+        } else if attempt.resolvedKind == .polishOnly {
+            asrState = .skipped
+            asrDetail = "复用已有转写"
         }
 
         let outputState: HistoryStageState
@@ -326,8 +349,19 @@ struct HistoryRecordPresentation: Sendable, Equatable {
         }
 
         let stages = attempt.stages
-        let alignmentNote: String?
-        if stages.polishInput?.isEmpty != false && attempt.snapshot.terminologyAlignmentEnabled && stages.asrText?.isEmpty == false {
+        let asrNote: String?
+        if attempt.resolvedKind == .polishOnly {
+            asrNote = "复用已有转写"
+        } else if stages.asrText == nil && stages.asrPartialText != nil {
+            asrNote = "部分转写"
+        } else {
+            asrNote = nil
+        }
+
+        var alignmentNote: String?
+        if attempt.resolvedKind == .asrOnly {
+            alignmentNote = "仅转写尝试"
+        } else if stages.polishInput?.isEmpty != false && attempt.snapshot.terminologyAlignmentEnabled && stages.asrText?.isEmpty == false {
             alignmentNote = "对齐已执行，中间文本未单独归档"
         } else if !attempt.snapshot.terminologyAlignmentEnabled {
             alignmentNote = "术语对齐已关闭"
@@ -335,24 +369,25 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             alignmentNote = nil
         }
 
-        let polishNote: String?
-        let polishFailure: Bool
-        if !attempt.snapshot.textPolish.isEnabled {
+        var polishNote: String?
+        var polishFailure = false
+        if attempt.resolvedKind == .asrOnly {
+            polishNote = "未执行"
+        } else if !attempt.snapshot.textPolish.isEnabled {
             polishNote = "润色已关闭"
-            polishFailure = false
         } else if stages.error != nil && stages.polishOutput?.isEmpty == false {
             polishNote = "失败前部分输出 · 未采用"
             polishFailure = true
         } else if let reason = stages.polishProtectionReason {
             polishNote = "安全保护：\(reason)"
-            polishFailure = false
         } else {
             polishNote = nil
-            polishFailure = false
         }
 
-        let finalNote: String?
-        if stages.finalText?.isEmpty == false {
+        var finalNote: String?
+        if attempt.resolvedKind == .asrOnly {
+            finalNote = "仅诊断"
+        } else if stages.finalText?.isEmpty == false {
             if stages.polishOutput == stages.finalText {
                 finalNote = "终稿未再改写"
             } else {
@@ -363,7 +398,7 @@ struct HistoryRecordPresentation: Sendable, Equatable {
         }
 
         return [
-            HistoryTextArtifact(kind: .asr, text: stages.asrText ?? stages.asrPartialText, note: stages.asrText == nil && stages.asrPartialText != nil ? "部分转写" : nil, isFailurePartial: false),
+            HistoryTextArtifact(kind: .asr, text: stages.asrText ?? stages.asrPartialText, note: asrNote, isFailurePartial: false),
             HistoryTextArtifact(kind: .aligned, text: stages.polishInput, note: alignmentNote, isFailurePartial: false),
             HistoryTextArtifact(kind: .polish, text: stages.polishOutput, note: polishNote, isFailurePartial: polishFailure),
             HistoryTextArtifact(kind: .final, text: stages.finalText, note: finalNote, isFailurePartial: false)
@@ -462,7 +497,12 @@ struct RecoveryHistorySummary: Identifiable, Sendable, Equatable {
         stageStates = presentation.stages.isEmpty
             ? Array(repeating: .unavailable, count: HistoryStagePosition.allCases.count)
             : presentation.stages.map(\.state)
-        searchableText = [
+        let dateText = [
+            timestamp.formatted(date: .numeric, time: .shortened),
+            timestamp.formatted(date: .abbreviated, time: .omitted),
+            timestamp.formatted(date: .numeric, time: .omitted)
+        ]
+        searchableText = ([
             record.asrText,
             record.polishText,
             record.errorMessage,
@@ -475,7 +515,7 @@ struct RecoveryHistorySummary: Identifiable, Sendable, Equatable {
                     attempt.stages.finalText
                 ].compactMap { $0 }
             }.joined(separator: "\n")
-        ]
+        ] + dateText)
         .compactMap { $0 }
         .joined(separator: "\n")
         .lowercased()

@@ -839,11 +839,16 @@ final class AppCoordinator {
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
             overlay.showError("Saved recovery audio is missing."); return
         }
-        if ["readyToInject", "outputUnknown"].contains(record.outcome), !replayDecision(.possiblePreviousOutput) { return }
         let selectedAttempt = attemptID.flatMap { id in
             record.attempts?.first(where: { $0.id == id })
         }
-        let partial = ["interrupted", "cancelled"].contains(record.outcome)
+        if !useCurrentFlow, let selectedAttempt, selectedAttempt.resolvedKind != .full {
+            overlay.showError("诊断尝试不能整条重试；请使用阶段重跑，或选择完整流程尝试。")
+            return
+        }
+        let selectedOutcome = selectedAttempt?.outcome ?? record.outcome
+        if ["readyToInject", "outputUnknown"].contains(selectedOutcome), !replayDecision(.possiblePreviousOutput) { return }
+        let partial = ["interrupted", "cancelled"].contains(selectedOutcome)
             || (selectedAttempt ?? record.attempts?.last)?.stages.partialAudio == true
             || { if case .interruptedInput = PCMRecordingIntegrityAnalyzer().analyze(wavData: (try? Data(contentsOf: audioURL)) ?? Data()) { return true }; return false }()
         if partial, !replayDecision(.partialAudio) { return }
@@ -933,8 +938,20 @@ final class AppCoordinator {
         }
 
         let newAttemptID = UUID()
-        Task { [weak self] in
+        let replayContext = launchAppContextProvider()
+        overlay.beginSession(context: replayContext, captionsEnabled: false)
+        overlay.showProcessing()
+        processingTask?.cancel()
+        processingTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if self.activeSessionID == sessionID || self.activeSessionID == nil {
+                        self.processingTask = nil
+                    }
+                }
+            }
             do {
                 let stages: DictationStageAudit
                 let outcome: String
@@ -948,6 +965,7 @@ final class AppCoordinator {
                     )
                     outcome = "polishComplete"
                 }
+                guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
                 try self.recoveryRecorder.record(RecoveryRecordInput(
                     timestamp: Date(),
                     sourceAudioURL: audioURL,
@@ -964,6 +982,8 @@ final class AppCoordinator {
                     injectionSnapshot: injectionConfig,
                     attemptKind: kind
                 ))
+                guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
+                self.overlay.hide()
                 self.state = .idle
                 self.activeSessionID = nil
                 self.statusMenu?.update(state: .ready, detail: kind == .asrOnly ? "重新转写完成" : "重新润色完成")
@@ -971,7 +991,10 @@ final class AppCoordinator {
                     title: "ChatType",
                     body: kind == .asrOnly ? "重新转写完成；原结果仍保留。" : "重新润色完成；原结果仍保留。"
                 )
+            } catch is CancellationError {
+                return
             } catch {
+                guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
                 var fallbackStages = DictationStageAudit()
                 fallbackStages.error = error.localizedDescription
                 let stages = (error as? DictationPipelineFailure)?.stages ?? fallbackStages
@@ -991,6 +1014,7 @@ final class AppCoordinator {
                     injectionSnapshot: injectionConfig,
                     attemptKind: kind
                 ))
+                self.overlay.showError("阶段重跑失败：\(error.localizedDescription)")
                 self.state = .idle
                 self.activeSessionID = nil
                 self.statusMenu?.update(state: .error, detail: "阶段重跑失败")

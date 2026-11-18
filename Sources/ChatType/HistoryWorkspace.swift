@@ -55,6 +55,7 @@ final class HistoryWorkspaceModel: ObservableObject {
     private var recordTask: Task<Void, Never>?
     private var indexGeneration = UUID()
     private var recordGeneration = UUID()
+    private var pendingRecordUpdates: [UUID: RecoveryHistorySummary] = [:]
     private var hasActivated = false
 
     init(
@@ -121,16 +122,25 @@ final class HistoryWorkspaceModel: ObservableObject {
             self.isLoadingIndex = false
             switch result {
             case .success(let loaded):
-                self.index = loaded
+                var records = loaded.records
+                for (id, summary) in self.pendingRecordUpdates {
+                    records.removeAll { $0.id == id }
+                    records.append(summary)
+                }
+                records.sort { $0.timestamp > $1.timestamp }
+                self.pendingRecordUpdates.removeAll()
+                self.index = RecoveryHistoryIndex(records: records, unreadableCount: loaded.unreadableCount)
                 self.indexError = nil
-                let selectedStillExists = loaded.records.contains { $0.id == self.selectedRecordID }
+                let selectedStillExists = records.contains { $0.id == self.selectedRecordID }
                 if !selectedStillExists {
                     self.selectedRecord = nil
                     self.selectedAttemptID = nil
-                    self.selectedRecordID = loaded.records.first?.id
+                    self.selectedRecordID = records.first?.id
                     if let id = self.selectedRecordID {
                         self.loadRecord(id: id)
                     }
+                } else {
+                    self.reconcileSelection()
                 }
             case .failure(let error):
                 self.indexError = error.localizedDescription
@@ -201,6 +211,7 @@ final class HistoryWorkspaceModel: ObservableObject {
     func recordDidChange(_ record: RecoveryRecord, directory: String) {
         guard directory == recoveryDirectoryURL.path else { return }
         let summary = RecoveryHistorySummary(record: record, recoveryDirectoryURL: recoveryDirectoryURL)
+        pendingRecordUpdates[record.id] = summary
         var records = index.records.filter { $0.id != record.id }
         records.append(summary)
         records.sort { $0.timestamp > $1.timestamp }
@@ -277,6 +288,15 @@ struct HistoryWorkspaceView: View {
                 if model.isLoadingIndex {
                     ProgressView().controlSize(.small)
                 }
+                Button {
+                    model.refreshIndex()
+                } label: {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.isLoadingIndex)
+                .help("重新读取本地语音索引")
                 Text("\(model.index.records.count) 条语音")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -563,6 +583,7 @@ private struct HistoryDetailView: View {
         } else {
             copyLabel = "无文本"
         }
+        let canRetryOriginal = audioAvailable && !view.selectedAttemptIsDiagnostic
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 16) {
                 Text(view.title)
@@ -585,12 +606,16 @@ private struct HistoryDetailView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .disabled(!canRetryOriginal)
+                    .help(canRetryOriginal ? "使用所选完整流程尝试的原路线重试。" : "复制并保留本次记录；诊断尝试请使用阶段重跑。")
 
                     Button(action: onReprocess) {
                         Label("按当前流程重跑", systemImage: "arrow.triangle.2.circlepath")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .disabled(!audioAvailable)
+                    .help(audioAvailable ? "使用当前 Workflow 设置重新完成整条流程。" : "原始音频缺失，不能重跑整条流程。")
                 }
                 .fixedSize()
             }
@@ -698,7 +723,7 @@ private struct HistoryDetailView: View {
                                         Text(option.title)
                                         if option.isDiagnostic {
                                             Text("诊断")
-                                                .font(.system(size: 9, weight: .semibold))
+                                                .font(.system(size: 11, weight: .semibold))
                                                 .padding(.horizontal, 4)
                                                 .padding(.vertical, 1)
                                                 .background(Color.secondary.opacity(0.12))
@@ -753,10 +778,9 @@ private struct HistoryDetailView: View {
                 Text(stage.position.title)
                     .font(.system(size: 11.5, weight: .semibold))
                 Text(stage.detail)
-                    .font(.system(size: 10.5))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .lineLimit(2)
             }
             .frame(maxWidth: .infinity)
 
@@ -873,14 +897,20 @@ private struct HistoryDetailView: View {
         let polish = view.artifacts.first(where: { $0.kind == .polish })
 
         let asrDetail: String
+        let asrValue: String
+        if let attempt = view.selectedAttempt, attempt.resolvedKind == .polishOnly {
+            asrValue = "复用已有转写"
+        } else {
+            asrValue = view.selectedAttempt?.snapshot.provider.title ?? "旧记录"
+        }
         if let text = asr?.text, !text.isEmpty {
             asrDetail = "\(text.count) 字"
         } else {
             asrDetail = asr?.note ?? "未生成"
         }
 
-        let alignmentValue: String
-        let alignmentDetail: String
+        var alignmentValue: String
+        var alignmentDetail: String
         if let attempt = view.selectedAttempt {
             if !attempt.snapshot.terminologyAlignmentEnabled {
                 alignmentValue = "关闭"
@@ -900,8 +930,8 @@ private struct HistoryDetailView: View {
             alignmentDetail = "无分阶段明细"
         }
 
-        let polishValue: String
-        let polishDetail: String
+        var polishValue: String
+        var polishDetail: String
         if let attempt = view.selectedAttempt {
             if !attempt.snapshot.textPolish.isEnabled {
                 polishValue = "关闭"
@@ -921,6 +951,19 @@ private struct HistoryDetailView: View {
             polishDetail = "未区分最终化"
         }
 
+        if let attempt = view.selectedAttempt, attempt.resolvedKind == .asrOnly {
+            alignmentValue = "未执行"
+            alignmentDetail = "仅转写尝试"
+            polishValue = "未执行"
+            polishDetail = "仅转写尝试"
+        }
+        let outputValue = view.selectedAttempt?.resolvedKind == .full || view.selectedAttempt == nil
+            ? view.status.label
+            : "仅诊断"
+        let outputDetail = view.selectedAttempt?.resolvedKind == .full || view.selectedAttempt == nil
+            ? (record.appName ?? "目标未记录")
+            : "未执行输出"
+
         return VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Text("处理证据")
@@ -931,10 +974,10 @@ private struct HistoryDetailView: View {
                     .foregroundStyle(.secondary)
             }
             HStack(spacing: 0) {
-                evidenceCell("转写", value: view.selectedAttempt?.snapshot.provider.title ?? "旧记录", detail: asrDetail)
+                evidenceCell("转写", value: asrValue, detail: asrDetail)
                 evidenceCell("对齐", value: alignmentValue, detail: alignmentDetail)
                 evidenceCell("润色", value: polishValue, detail: polishDetail)
-                evidenceCell("输出", value: view.status.label, detail: record.appName ?? "目标未记录", isLast: true)
+                evidenceCell("输出", value: outputValue, detail: outputDetail, isLast: true)
             }
             .background(Color(nsColor: .controlBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -1013,7 +1056,7 @@ private struct HistoryAudioPlayerView: View {
                     .font(.system(size: 11.5, weight: .medium, design: .rounded))
                     .monospacedDigit()
                 Text("原始 WAV")
-                    .font(.system(size: 10.5))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
             .frame(width: 98, alignment: .trailing)
@@ -1156,6 +1199,19 @@ private struct HistoryWaveformView: View {
                         onSeek(value.location.x / max(geometry.size.width, 1))
                     }
             )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("原始语音波形")
+            .accessibilityValue("已播放 \(Int(progress * 100))%")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment:
+                    onSeek(min(1, progress + 0.05))
+                case .decrement:
+                    onSeek(max(0, progress - 0.05))
+                @unknown default:
+                    break
+                }
+            }
         }
     }
 }
