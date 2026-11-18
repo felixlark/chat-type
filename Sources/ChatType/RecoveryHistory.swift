@@ -202,7 +202,7 @@ extension RecoveryRecording {
     }
 
     func loadHistoryIndex() throws -> RecoveryHistoryIndex {
-        let records = try loadRecent(limit: 10_000)
+        let records = try loadRecent(limit: Int.max)
         return RecoveryHistoryIndex(
             records: records
                 .map { RecoveryHistorySummary(record: $0, recoveryDirectoryURL: directoryURL) }
@@ -212,7 +212,7 @@ extension RecoveryRecording {
     }
 
     func loadRecord(id: UUID) throws -> RecoveryRecord? {
-        try loadRecent(limit: 10_000).first { $0.id == id }
+        try loadRecent(limit: Int.max).first { $0.id == id }
     }
 }
 
