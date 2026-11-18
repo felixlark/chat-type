@@ -15,11 +15,13 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         onSave: @escaping (AppConfig) -> Result<Void, any Error>,
         onImportAppleContactRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
         onImportWeixinRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
-        onLoadRecentHistory: @escaping @Sendable (Int, Int) throws -> TranscriptionHistoryPage,
-        onLoadRecoveryHistory: @escaping @Sendable (Int, Int) throws -> RecoveryRecordPage,
+        onLoadHistoryIndex: @escaping @Sendable () throws -> RecoveryHistoryIndex,
+        onLoadHistoryRecord: @escaping @Sendable (UUID) throws -> RecoveryRecord?,
         recoveryDirectoryURL: URL,
-        onRetryRecoveryRecord: @escaping (RecoveryRecord) -> Void,
-        onReprocessRecoveryRecord: @escaping (RecoveryRecord) -> Void,
+        onRetryRecoveryRecord: @escaping (RecoveryRecord, UUID?) -> Void,
+        onReprocessRecoveryRecord: @escaping (RecoveryRecord, UUID?) -> Void,
+        onRerunRecoveryTranscription: @escaping (RecoveryRecord, UUID?) -> Void,
+        onRerunRecoveryPolish: @escaping (RecoveryRecord, UUID?) -> Void,
         onOpenConfigFolder: @escaping () -> Void,
         focusRecoveryHistory: Bool = false,
         onClose: @escaping () -> Void = {}
@@ -32,24 +34,26 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
             onSave: onSave,
             onImportAppleContactRemarks: onImportAppleContactRemarks,
             onImportWeixinRemarks: onImportWeixinRemarks,
-            onLoadRecentHistory: onLoadRecentHistory,
-            onLoadRecoveryHistory: onLoadRecoveryHistory,
+            onLoadHistoryIndex: onLoadHistoryIndex,
+            onLoadHistoryRecord: onLoadHistoryRecord,
             recoveryDirectoryURL: recoveryDirectoryURL,
             onRetryRecoveryRecord: onRetryRecoveryRecord,
             onReprocessRecoveryRecord: onReprocessRecoveryRecord,
+            onRerunRecoveryTranscription: onRerunRecoveryTranscription,
+            onRerunRecoveryPolish: onRerunRecoveryPolish,
             onOpenConfigFolder: onOpenConfigFolder,
             focusRecoveryHistory: focusRecoveryHistory
         )
         let hostingController = NSHostingController(rootView: view)
 
         let window = CommandClosingWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 980, height: 720),
+            contentRect: NSRect(x: 0, y: 0, width: 1320, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false,
             onQuit: { NSApp.terminate(nil) }
         )
-        window.minSize = NSSize(width: 940, height: 680)
+        window.minSize = NSSize(width: 1200, height: 720)
         window.title = "ChatType Settings"
         window.isReleasedWhenClosed = false
         window.isRestorable = false

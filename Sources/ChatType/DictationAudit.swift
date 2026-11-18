@@ -51,6 +51,15 @@ struct DictationAttempt: Codable, Sendable, Equatable, Identifiable {
     var outcome: String
     var injectionSnapshot: InjectionConfig? = nil
     var schemaVersion: Int? = 1
+    var kind: DictationAttemptKind? = nil
+
+    var resolvedKind: DictationAttemptKind { kind ?? .full }
+}
+
+enum DictationAttemptKind: String, Codable, Sendable, Equatable {
+    case full
+    case asrOnly
+    case polishOnly
 }
 
 struct DictationPipelineFailure: LocalizedError, Sendable {

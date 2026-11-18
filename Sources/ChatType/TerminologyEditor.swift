@@ -100,7 +100,7 @@ struct TerminologyEditor: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text(type == .term ? "Custom phrases · \(browser.termCount)" : "Replacement · \(browser.correctionCount)")
-                    .font(.headline)
+                    .font(.system(size: 16, weight: .semibold))
                 Spacer()
                 if type == .term { Menu(importing ? "Reading names…" : "Import names") {
                     Button("From Contacts") { startImport(weChat: false) }
@@ -112,19 +112,23 @@ struct TerminologyEditor: View {
             Text(type == .term
                 ? "Standard spellings for names and technical words. English keeps your casing; Chinese terms guide recognition and relevant text alignment."
                 : "Explicit text corrections after AI Polish: slips of the tongue, preferred wording and casing. Rules run once; English matches whole words. macOS keyboard shortcuts stay in macOS.")
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(SettingsTypography.body).foregroundStyle(.secondary).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
 
             HStack(alignment: .bottom, spacing: 10) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(type == .term ? "Standard spelling" : "Find this text").font(.caption)
+                    Text(type == .term ? "Standard spelling" : "Find this text").font(SettingsTypography.detail)
                     TextField(type == .term ? "e.g. ChatType or 普适计算" : "e.g. chat type", text: $original)
+                        .textFieldStyle(.roundedBorder)
+                        .font(SettingsTypography.control)
                         .accessibilityIdentifier("terminology-original")
                 }
                 if type == .correction {
                     Image(systemName: "arrow.right").padding(.bottom, 5).foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("Replace with").font(.caption)
+                        Text("Replace with").font(SettingsTypography.detail)
                         TextField("e.g. ChatType", text: $replacement)
+                            .textFieldStyle(.roundedBorder)
+                            .font(SettingsTypography.control)
                             .accessibilityIdentifier("terminology-replacement")
                     }
                 }
@@ -138,51 +142,55 @@ struct TerminologyEditor: View {
             HStack {
                 TextField("Search words, names or aliases", text: $query)
                     .textFieldStyle(.roundedBorder)
+                    .font(SettingsTypography.control)
                     .accessibilityIdentifier("terminology-search")
-                Picker("Source", selection: $source) {
-                    Text("All sources").tag("")
+                Picker("来源", selection: $source) {
+                    Text("全部来源").tag("")
                     ForEach(browser.sources, id: \.self) { Text(VocabularyBrowser.sourceTitle($0)).tag($0) }
-                }.labelsHidden().frame(width: 180)
+                }.labelsHidden().frame(width: 210)
             }
             HStack {
-                Text("\(rows.count) matching \(type == .term ? "terms" : "rules")").font(.caption).foregroundStyle(.secondary)
+                Text("\(rows.count) matching \(type == .term ? "terms" : "rules")").font(SettingsTypography.detail).foregroundStyle(.secondary)
                 Spacer()
                 if !rows.isEmpty {
                     Text("\(page * rowsPerPage + 1)–\(min((page + 1) * rowsPerPage, rows.count))")
-                        .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                        .font(SettingsTypography.detail).monospacedDigit().foregroundStyle(.secondary)
                     Button { page -= 1 } label: { Image(systemName: "chevron.left") }
                         .disabled(page == 0).accessibilityLabel("Previous entries")
+                        .font(.system(size: 12, weight: .semibold))
                     Button { page += 1 } label: { Image(systemName: "chevron.right") }
                         .disabled((page + 1) * rowsPerPage >= rows.count).accessibilityLabel("Next entries")
+                        .font(.system(size: 12, weight: .semibold))
                 }
                 if importing || indexing { ProgressView().controlSize(.small) }
-                if let message { Text(message).font(.caption).foregroundStyle(error ? .red : .secondary).lineLimit(2) }
+                if let message { Text(message).font(SettingsTypography.detail).foregroundStyle(error ? .red : .secondary).lineLimit(2) }
             }
             if rows.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "text.magnifyingglass").font(.title2).foregroundStyle(.secondary)
                     Text(query.isEmpty ? (type == .term ? "Add a standard spelling to begin." : "Add a correction only when you need one.") : "No matching entries. Try another search.")
+                        .font(SettingsTypography.body)
                         .foregroundStyle(.secondary)
-                }.frame(maxWidth: .infinity, minHeight: 190)
+                }.frame(maxWidth: .infinity, minHeight: 220)
             } else {
                 List(pageRows) { row in
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(row.entry.type == .term ? row.entry.original : "\(row.entry.original) → \(row.entry.replacement ?? "")")
-                                .font(.system(size: 13, weight: .medium)).textSelection(.enabled)
-                            Text(VocabularyBrowser.sourceTitle(row.entry.source)).font(.caption).foregroundStyle(.secondary)
+                                .font(.system(size: 13.5, weight: .medium)).textSelection(.enabled)
+                            Text(VocabularyBrowser.sourceTitle(row.entry.source)).font(SettingsTypography.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("Edit") { edit(row) }.buttonStyle(.borderless)
-                        Button("Delete") { delete(row) }.buttonStyle(.borderless)
-                    }.padding(.vertical, 5)
+                        Button("Edit") { edit(row) }.buttonStyle(.borderless).font(SettingsTypography.control)
+                        Button("Delete") { delete(row) }.buttonStyle(.borderless).font(SettingsTypography.control)
+                    }.padding(.vertical, 7)
                 }
                 .listStyle(.inset)
-                .frame(minHeight: 280, idealHeight: 360, maxHeight: 420)
+                .frame(minHeight: 380, idealHeight: 460, maxHeight: 560)
                 .accessibilityIdentifier("terminology-list")
             }
             Text("The library is stored on this Mac; relevant terms, including names, may be sent as recognition hints or text-polish context to the services you select.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(SettingsTypography.detail).foregroundStyle(.secondary)
         }
         .task(id: VocabularyQuery(entries: terminology.entries, type: type, query: query, source: source)) {
             indexing = true

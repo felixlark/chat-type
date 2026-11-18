@@ -20,7 +20,7 @@ Recording uses a centered status HUD below the screen's menu-bar/camera safe are
 
 Output targets the captured editable control and uses the existing application-specific bridge when available. Report successful output only after its receipt; preserve uncertain output for reconciliation. Without a suitable target, retain the final text in the clipboard.
 
-Settings has four destinations: Account, Workflow, History and Settings. Account reports service installation, credential readiness and local preview support separately from request success. Workflow selects recognition, terminology alignment, text polish and correction behavior. PreferencesDraft owns unsaved edits; asynchronous imports must preserve current edits. History exposes recordings, attempts and stage evidence. Settings owns login items, permissions, sounds and clipboard behavior. Keyboard shortcuts also depend on macOS and the enrolled local keyboard policy.
+Settings has four destinations: Account, Workflow, History and Settings. Account reports service installation, credential readiness and local preview support separately from request success. Workflow selects recognition, terminology alignment, text polish and correction behavior. PreferencesDraft owns unsaved edits; asynchronous imports must preserve current edits. History exposes a per-voice workspace with original audio, attempts, intermediate text, output status and recovery actions. Settings owns login items, permissions, sounds and clipboard behavior. Keyboard shortcuts also depend on macOS and the enrolled local keyboard policy.
 
 ## Data and service boundaries
 

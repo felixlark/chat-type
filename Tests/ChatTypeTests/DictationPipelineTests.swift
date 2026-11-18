@@ -98,6 +98,73 @@ private actor SequencedTextPolisher: TextPolishing {
 }
 
 @Test
+func transcribeOnlyStopsAfterASRAndCarriesNoPolishState() async throws {
+    let pipeline = DictationPipeline(
+        transcriber: FakeTranscriber(result: TranscriptionResult(
+            text: "只做转写",
+            metrics: .init(
+                provider: .chatGPTManagedAuth,
+                audioDurationMs: 1_000,
+                audioBytes: 32_000,
+                authMs: 1,
+                transcribeMs: 2,
+                promptIncluded: false
+            )
+        )),
+        normalizer: TerminologyNormalizer(),
+        importedEntries: [],
+        hintTerms: [],
+        textPolisher: FakeTextPolisher(result: .success(TextPolishResult(
+            text: "不应出现",
+            provider: .doubaoIME,
+            applied: true,
+            estimatedInputTokens: 0,
+            estimatedOutputTokens: 0
+        )))
+    )
+    let stages = try await pipeline.transcribeOnly(audio: RecordedAudio(
+        fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("fake.wav"),
+        durationMs: 1_000
+    ))
+    #expect(stages.asrText == "只做转写")
+    #expect(stages.polishInput == nil)
+    #expect(stages.polishOutput == nil)
+    #expect(stages.finalText == nil)
+}
+
+@Test
+func polishOnlyReusesASRAndProducesIndependentFinalization() async throws {
+    let pipeline = DictationPipeline(
+        transcriber: FakeTranscriber(result: TranscriptionResult(
+            text: "不应重新转写",
+            metrics: .init(
+                provider: .chatGPTManagedAuth,
+                audioDurationMs: 1_000,
+                audioBytes: 32_000,
+                authMs: 1,
+                transcribeMs: 2,
+                promptIncluded: false
+            )
+        )),
+        normalizer: TerminologyNormalizer(),
+        importedEntries: [TerminologyEntry(canonical: "ChatType", aliases: ["chattype"])],
+        hintTerms: [],
+        textPolisher: FakeTextPolisher(result: .success(TextPolishResult(
+            text: "ChatType 可以单独重新润色。",
+            provider: .doubaoIME,
+            applied: true,
+            estimatedInputTokens: 10,
+            estimatedOutputTokens: 12
+        )))
+    )
+    let stages = try await pipeline.polishOnly(asrText: "chattype 可以单独重新润色", partialAudio: false)
+    #expect(stages.asrText == "chattype 可以单独重新润色")
+    #expect(stages.polishInput == "ChatType 可以单独重新润色")
+    #expect(stages.polishOutput == "ChatType 可以单独重新润色。")
+    #expect(stages.finalText == "ChatType 可以单独重新润色。")
+}
+
+@Test
 func terminologyNormalizerPreservesHintTermsWithoutModelRewrite() {
     let result = TerminologyNormalizer().normalize(
         text: "请帮我把 Budget V2.XLSX 发给大家 review 一下，顺便提一下 chattype 已经能用了。",

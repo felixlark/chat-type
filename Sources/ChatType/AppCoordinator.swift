@@ -750,8 +750,6 @@ final class AppCoordinator {
             preferencesDraft?.onEndShortcutCapture = { [weak self] in try self?.hotkeyRegistration.resume() }
             // Separate production readers from the live recorder lock. Preserve
             // injected implementations and their data sources in tests/embedders.
-            let historyReader: any TranscriptionHistoryRecording = (historyRecorder as? TranscriptionHistoryRecorder)
-                .map { TranscriptionHistoryRecorder(directoryURL: $0.directoryURL) } ?? historyRecorder
             let recoveryReader: any RecoveryRecording = (recoveryRecorder as? RecoveryStore)
                 .map { RecoveryStore(directoryURL: $0.directoryURL) } ?? recoveryRecorder
             preferencesWindowController = PreferencesWindowController(
@@ -771,15 +769,25 @@ final class AppCoordinator {
                         return .success(imported)
                     } catch { return .failure(error) }
                 },
-                onLoadRecentHistory: { [historyReader] in
-                    try historyReader.loadPage(offset: $0, limit: $1)
+                onLoadHistoryIndex: { [recoveryReader] in
+                    try recoveryReader.loadHistoryIndex()
                 },
-                onLoadRecoveryHistory: { [recoveryReader] in
-                    try recoveryReader.loadPage(offset: $0, limit: $1)
+                onLoadHistoryRecord: { [recoveryReader] id in
+                    try recoveryReader.loadRecord(id: id)
                 },
                 recoveryDirectoryURL: recoveryRecorder.directoryURL,
-                onRetryRecoveryRecord: { [weak self] record in self?.retryRecoveryRecord(record) },
-                onReprocessRecoveryRecord: { [weak self] record in self?.reprocessRecoveryRecord(record) },
+                onRetryRecoveryRecord: { [weak self] record, attemptID in
+                    self?.retryRecoveryRecord(record, attemptID: attemptID)
+                },
+                onReprocessRecoveryRecord: { [weak self] record, attemptID in
+                    self?.reprocessRecoveryRecord(record, attemptID: attemptID)
+                },
+                onRerunRecoveryTranscription: { [weak self] record, attemptID in
+                    self?.rerunRecoveryTranscription(record, attemptID: attemptID)
+                },
+                onRerunRecoveryPolish: { [weak self] record, attemptID in
+                    self?.rerunRecoveryPolish(record, attemptID: attemptID)
+                },
                 onOpenConfigFolder: { [weak self] in
                     self?.openConfigFolder()
                 },
@@ -813,23 +821,41 @@ final class AppCoordinator {
         )
     }
 
-    private func retryRecoveryRecord(_ record: RecoveryRecord) {
-        replayRecoveryRecord(record, useCurrentFlow: false)
+    private func retryRecoveryRecord(_ record: RecoveryRecord, attemptID: UUID?) {
+        replayRecoveryRecord(record, attemptID: attemptID, useCurrentFlow: false)
+    }
+
+    func reprocessRecoveryRecord(_ record: RecoveryRecord, attemptID: UUID?) {
+        replayRecoveryRecord(record, attemptID: attemptID, useCurrentFlow: true)
     }
 
     func reprocessRecoveryRecord(_ record: RecoveryRecord) {
-        replayRecoveryRecord(record, useCurrentFlow: true)
+        reprocessRecoveryRecord(record, attemptID: nil)
     }
 
-    private func replayRecoveryRecord(_ record: RecoveryRecord, useCurrentFlow: Bool) {
+    private func replayRecoveryRecord(_ record: RecoveryRecord, attemptID: UUID?, useCurrentFlow: Bool) {
         guard state == .idle else { NSSound.beep(); return }
         let audioURL = record.audioURL(baseDirectory: recoveryRecorder.directoryURL)
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
             overlay.showError("Saved recovery audio is missing."); return
         }
-        if ["readyToInject", "outputUnknown"].contains(record.outcome), !replayDecision(.possiblePreviousOutput) { return }
-        let partial = ["interrupted", "cancelled"].contains(record.outcome)
-            || record.attempts?.last?.stages.partialAudio == true
+        let selectedAttempt = attemptID.flatMap { id in
+            record.attempts?.first(where: { $0.id == id })
+        }
+        if !useCurrentFlow, let selectedAttempt, selectedAttempt.resolvedKind != .full {
+            overlay.showError("诊断尝试不能整条重试；请使用阶段重跑，或选择完整流程尝试。")
+            return
+        }
+        let selectedOutcome = selectedAttempt?.outcome ?? record.outcome
+        let outcomesToGuard = useCurrentFlow
+            ? [record.outcome, selectedOutcome]
+            : [selectedOutcome]
+        if outcomesToGuard.contains(where: { ["readyToInject", "outputUnknown"].contains($0) }),
+           !replayDecision(.possiblePreviousOutput) {
+            return
+        }
+        let partial = outcomesToGuard.contains(where: { ["interrupted", "cancelled"].contains($0) })
+            || (selectedAttempt ?? record.attempts?.last)?.stages.partialAudio == true
             || { if case .interruptedInput = PCMRecordingIntegrityAnalyzer().analyze(wavData: (try? Data(contentsOf: audioURL)) ?? Data()) { return true }; return false }()
         if partial, !replayDecision(.partialAudio) { return }
         let replay: TranscriptionConfig
@@ -837,9 +863,9 @@ final class AppCoordinator {
         if useCurrentFlow {
             guard applyPendingPreferences() else { return }
             replay = config.transcription; injection = config.injection
-        } else if let original = record.attempts?.last?.snapshot ?? record.snapshot {
+        } else if let original = selectedAttempt?.snapshot ?? record.snapshot {
             replay = original
-            injection = record.attempts?.last?.injectionSnapshot ?? record.injectionSnapshot ?? config.injection
+            injection = selectedAttempt?.injectionSnapshot ?? record.injectionSnapshot ?? config.injection
         } else {
             let selected = preferencesDraft?.config.transcription ?? config.transcription
             let title = "ASR: \(selected.provider.title)；润色: \(selected.textPolish.isEnabled ? selected.textPolish.provider.title : "关闭")"
@@ -857,6 +883,150 @@ final class AppCoordinator {
         overlay.showProcessing()
         startProcessing(audio: audio, sessionID: sessionID, transcriptionConfig: replay,
             injectionConfig: injection, launchAppContext: replayContext, attemptPolicy: .manualRetry)
+    }
+
+    private func rerunRecoveryTranscription(_ record: RecoveryRecord, attemptID: UUID?) {
+        rerunRecoveryStage(record, attemptID: attemptID, kind: .asrOnly)
+    }
+
+    private func rerunRecoveryPolish(_ record: RecoveryRecord, attemptID: UUID?) {
+        rerunRecoveryStage(record, attemptID: attemptID, kind: .polishOnly)
+    }
+
+    private func rerunRecoveryStage(
+        _ record: RecoveryRecord,
+        attemptID: UUID?,
+        kind: DictationAttemptKind
+    ) {
+        guard state == .idle else { NSSound.beep(); return }
+        let audioURL = record.audioURL(baseDirectory: recoveryRecorder.directoryURL)
+        guard FileManager.default.fileExists(atPath: audioURL.path) else {
+            overlay.showError("Saved recovery audio is missing.")
+            return
+        }
+        let selectedAttempt = attemptID.flatMap { id in
+            record.attempts?.first(where: { $0.id == id })
+        } ?? record.attempts?.last(where: { $0.resolvedKind == .full })
+            ?? record.attempts?.last
+        guard applyPendingPreferences() else { return }
+
+        let transcriptionConfig = config.transcription
+        let injectionConfig = config.injection
+        let stageASRText = selectedAttempt?.stages.asrText
+            ?? selectedAttempt?.stages.asrPartialText
+            ?? record.asrText
+        if kind == .polishOnly, stageASRText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            overlay.showError("这次尝试没有可复用的转写文本，不能单独重新润色。")
+            return
+        }
+
+        let partial = selectedAttempt?.stages.partialAudio == true
+            || ["interrupted", "cancelled"].contains(record.outcome)
+            || { if case .interruptedInput = PCMRecordingIntegrityAnalyzer().analyze(wavData: (try? Data(contentsOf: audioURL)) ?? Data()) { return true }; return false }()
+        if partial, !replayDecision(.partialAudio) { return }
+
+        let sessionID = UUID()
+        activeSessionID = sessionID
+        state = .processing
+        statusMenu?.update(state: .processing, detail: kind == .asrOnly ? "重新转写" : "重新润色")
+        let audio = RecordedAudio(
+            fileURL: audioURL,
+            durationMs: record.audioDurationMs,
+            previewText: stageASRText ?? "",
+            isPartialReplay: partial
+        )
+        let pipeline = pipelineFactory(transcriptionConfig, authManager, .manualRetry)
+        guard let stagePipeline = pipeline as? any DictationStageRerunning else {
+            state = .idle
+            activeSessionID = nil
+            overlay.showError("当前处理路线不支持单独重跑这个阶段。")
+            return
+        }
+
+        let newAttemptID = UUID()
+        let replayContext = launchAppContextProvider()
+        overlay.beginSession(context: replayContext, captionsEnabled: false)
+        overlay.showProcessing()
+        processingTask?.cancel()
+        processingTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if self.activeSessionID == sessionID || self.activeSessionID == nil {
+                        self.processingTask = nil
+                    }
+                }
+            }
+            do {
+                let stages: DictationStageAudit
+                let outcome: String
+                if kind == .asrOnly {
+                    stages = try await stagePipeline.transcribeOnly(audio: audio)
+                    outcome = "asrComplete"
+                } else {
+                    stages = try await stagePipeline.polishOnly(
+                        asrText: stageASRText ?? "",
+                        partialAudio: partial
+                    )
+                    outcome = "polishComplete"
+                }
+                guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
+                try self.recoveryRecorder.record(RecoveryRecordInput(
+                    timestamp: Date(),
+                    sourceAudioURL: audioURL,
+                    durationMs: record.audioDurationMs,
+                    asrText: stages.asrText,
+                    polishText: stages.polishOutput,
+                    appName: record.appName,
+                    appBundleIdentifier: record.appBundleIdentifier,
+                    outcome: outcome,
+                    errorMessage: nil,
+                    snapshot: transcriptionConfig,
+                    attemptID: newAttemptID,
+                    stages: stages,
+                    injectionSnapshot: injectionConfig,
+                    attemptKind: kind
+                ))
+                guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
+                self.overlay.hide()
+                self.state = .idle
+                self.activeSessionID = nil
+                self.statusMenu?.update(state: .ready, detail: kind == .asrOnly ? "重新转写完成" : "重新润色完成")
+                self.notifier.notify(
+                    title: "ChatType",
+                    body: kind == .asrOnly ? "重新转写完成；原结果仍保留。" : "重新润色完成；原结果仍保留。"
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
+                var fallbackStages = DictationStageAudit()
+                fallbackStages.error = error.localizedDescription
+                let stages = (error as? DictationPipelineFailure)?.stages ?? fallbackStages
+                try? self.recoveryRecorder.record(RecoveryRecordInput(
+                    timestamp: Date(),
+                    sourceAudioURL: audioURL,
+                    durationMs: record.audioDurationMs,
+                    asrText: stages.asrText,
+                    polishText: stages.polishOutput,
+                    appName: record.appName,
+                    appBundleIdentifier: record.appBundleIdentifier,
+                    outcome: "error",
+                    errorMessage: error.localizedDescription,
+                    snapshot: transcriptionConfig,
+                    attemptID: newAttemptID,
+                    stages: stages,
+                    injectionSnapshot: injectionConfig,
+                    attemptKind: kind
+                ))
+                self.overlay.showError("阶段重跑失败：\(error.localizedDescription)")
+                self.state = .idle
+                self.activeSessionID = nil
+                self.statusMenu?.update(state: .error, detail: "阶段重跑失败")
+                self.notifier.notify(title: "ChatType", body: "阶段重跑失败：\(error.localizedDescription)")
+            }
+        }
     }
 
     private func openConfigFolder() {

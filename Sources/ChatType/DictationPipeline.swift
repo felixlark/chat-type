@@ -8,6 +8,11 @@ protocol DictationPreparing: Sendable {
     func prepare(audio: RecordedAudio) async throws -> PreparedDictation
 }
 
+protocol DictationStageRerunning: Sendable {
+    func transcribeOnly(audio: RecordedAudio) async throws -> DictationStageAudit
+    func polishOnly(asrText: String, partialAudio: Bool) async throws -> DictationStageAudit
+}
+
 protocol TranscriptNormalizing: Sendable {
     func normalize(
         text: String,
@@ -60,7 +65,7 @@ struct PreparedDictation: Sendable, Equatable {
     var stages: DictationStageAudit? = nil
 }
 
-struct DictationPipeline: DictationPreparing {
+struct DictationPipeline: DictationPreparing, DictationStageRerunning {
     let transcriber: any Transcriber
     let normalizer: any TranscriptNormalizing
     let importedEntries: [TerminologyEntry]
@@ -74,6 +79,102 @@ struct DictationPipeline: DictationPreparing {
         let trace = ProcessingTiming()
         return try await ProcessingTrace.$current.withValue(trace) {
             try await prepareMeasured(audio: audio, trace: trace)
+        }
+    }
+
+    func transcribeOnly(audio: RecordedAudio) async throws -> DictationStageAudit {
+        let trace = ProcessingTiming()
+        return try await ProcessingTrace.$current.withValue(trace) {
+            let transcription = try await transcriber.transcribe(audio)
+            try Task.checkCancellation()
+            var stages = DictationStageAudit(asrText: transcription.text)
+            stages.asrRequestID = transcription.metrics.protocolRequestID
+            stages.asrSessions = transcription.metrics.protocolSessions
+            stages.partialAudio = audio.isPartialReplay
+            if transcription.metrics.provider == .doubaoIME {
+                stages.protocolVersion = "DoubaoIME-1.1.0/v2/Opus-16000"
+            }
+            try audit?(stages)
+            return stages
+        }
+    }
+
+    func polishOnly(asrText: String, partialAudio: Bool) async throws -> DictationStageAudit {
+        let trace = ProcessingTiming()
+        return try await ProcessingTrace.$current.withValue(trace) {
+            var stages = DictationStageAudit(asrText: asrText)
+            stages.partialAudio = partialAudio
+            try audit?(stages)
+
+            let alignmentEntries = AlignmentVocabularyCache.shared.vocabulary(for: importedEntries)
+                .entries(correctionsEnabled: correctionsEnabled)
+            let relatedHints = hintTerms + PersonalNameHints.relatedTerms(in: asrText, entries: importedEntries)
+            let prePolish = (alignmentEnabled ? normalizer : PassthroughNormalizer()).normalize(
+                text: asrText,
+                importedEntries: alignmentEntries,
+                hintTerms: hintTerms
+            )
+            stages.polishInput = prePolish.text
+            try audit?(stages)
+
+            var finalText = prePolish.text
+            if let textPolisher {
+                do {
+                    var polished = try await textPolisher.polish(
+                        text: prePolish.text,
+                        terminologyEntries: alignmentEntries,
+                        hintTerms: relatedHints
+                    )
+                    stages.polishOutput = polished.providerText ?? polished.text
+                    stages.polishOutputs = [polished.providerText ?? polished.text]
+                    stages.polishProtectionReason = polished.protectionReason
+                    try audit?(stages)
+
+                    if isSuspiciousPolishTruncation(original: prePolish.text, polished: polished.text) {
+                        polished = try await textPolisher.polish(
+                            text: prePolish.text,
+                            terminologyEntries: alignmentEntries,
+                            hintTerms: relatedHints
+                        )
+                        stages.polishOutput = polished.providerText ?? polished.text
+                        stages.polishOutputs?.append(polished.providerText ?? polished.text)
+                        stages.polishProtectionReason = polished.protectionReason
+                        try audit?(stages)
+                    }
+
+                    if isSuspiciousPolishTruncation(original: prePolish.text, polished: polished.text) {
+                        throw TextPolishError.invalidResponse
+                    }
+                    let postPolish = (alignmentEnabled ? normalizer : PassthroughNormalizer()).normalize(
+                        text: polished.text,
+                        importedEntries: alignmentEntries,
+                        hintTerms: relatedHints
+                    )
+                    finalText = postPolish.text
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch let error as RecorderError {
+                    throw error
+                } catch {
+                    stages.error = error.localizedDescription
+                    if let partial = error as? DoubaoOrganizationFailure {
+                        stages.polishOutput = partial.partialText
+                        stages.polishOutputs = (stages.polishOutputs ?? []) + [partial.partialText]
+                    }
+                    try audit?(stages)
+                    throw DictationPipelineFailure(stages: stages, detail: error.localizedDescription)
+                }
+            }
+
+            let corrections = TerminologyNormalizer().applyCorrections(
+                text: finalText,
+                entries: correctionsEnabled ? importedEntries : []
+            )
+            finalText = corrections.text
+            stages.finalText = formatted(finalText, trace: trace)
+            try Task.checkCancellation()
+            try audit?(stages)
+            return stages
         }
     }
 

@@ -14,31 +14,39 @@ colors:
 typography:
   product-title:
     fontFamily: "macOS system"
-    fontSize: "24pt"
+    fontSize: "26pt"
     fontWeight: 600
   page-title:
     fontFamily: "macOS system"
-    fontSize: "22pt"
+    fontSize: "28pt"
     fontWeight: 600
   section-title:
     fontFamily: "macOS system"
-    fontSize: "13pt"
+    fontSize: "16pt"
     fontWeight: 600
   body:
     fontFamily: "macOS system"
-    fontSize: "12pt"
+    fontSize: "13pt"
     fontWeight: 400
   row-title:
     fontFamily: "macOS system"
-    fontSize: "12pt"
+    fontSize: "14pt"
     fontWeight: 600
   detail:
     fontFamily: "macOS system"
+    fontSize: "12pt"
+    fontWeight: 400
+  caption:
+    fontFamily: "macOS system"
     fontSize: "11pt"
     fontWeight: 400
+  navigation:
+    fontFamily: "macOS system"
+    fontSize: "14pt"
+    fontWeight: 500
 rounded:
   row: "8pt"
-  group: "12pt"
+  group: "14pt"
 spacing:
   text-tight: "2pt"
   text-stack: "3pt"
@@ -47,11 +55,11 @@ spacing:
   inline: "8pt"
   row-gap: "10pt"
   group-gap: "12pt"
-  card-padding: "14pt"
+  card-padding: "18pt"
   editor-gap: "16pt"
   flow-padding: "18pt"
   section-gap: "20pt"
-  page-padding: "22pt"
+  page-padding: "28pt"
 components:
   settings-card:
     backgroundColor: "{colors.surface-group}"
@@ -68,7 +76,7 @@ components:
     padding: "{spacing.flow-padding}"
   sidebar:
     backgroundColor: "{colors.surface-group}"
-    width: "180pt"
+    width: "212pt"
   save-bar:
     backgroundColor: "{colors.surface-footer}"
     padding: "{spacing.editor-gap}"
@@ -82,7 +90,7 @@ components:
 
 ChatType’s control panel is a useful, candid personal studio: readable service facts, restrained navigation and native macOS controls. Its AppKit window hosts SwiftUI content. System typography, dynamic system colors and SF Symbols (Apple’s system icon library) support everyday operation while the existing product name and brand assets remain owner-controlled.
 
-This document records the implemented settings surface of 0.6.0 (134), using `PreferencesWindowController.swift`, `TerminologyEditor.swift` and `ProcessingFlowView.swift`. It covers the reusable control-panel language, not the recording overlay or a new visual direction. Page strategy remains in `docs/control-panel-surface.md`; product commitments remain in `PRODUCT.md`.
+This document records the implemented settings surface of 0.6.0 (148), using `PreferencesWindowController.swift`, `PreferencesView.swift`, `HistoryWorkspace.swift`, `TerminologyEditor.swift` and `ProcessingFlowView.swift`. It covers the reusable control-panel language, not the recording overlay or a new visual direction. Page strategy remains in `docs/control-panel-surface.md`; product commitments remain in `PRODUCT.md`.
 
 **Key Characteristics:**
 - Dynamic macOS semantic surfaces and one system accent.
@@ -115,20 +123,23 @@ The macOS system font supplies titles, controls and body text. Semibold and medi
 
 ### Hierarchy
 
-- **Product / page title:** the two large semibold roles identify the app and current destination.
-- **Section title:** semibold card headings, with a compact regular body below.
-- **Row title:** medium or semibold facts, statuses and labels; terminology entry text uses system medium (13pt).
-- **Detail:** secondary descriptions; history timestamps, outcomes and usage metadata use compact system text (10pt) within those specialized rows. This small metadata is not a general body-text size.
-- **Semantic roles:** captions for breadcrumb, footer, field labels and counts; callout for explanations; headline for the selected processing stage. Native defaults are retained where no override exists.
+- **Product / page title:** the product title and 28pt page title identify the app and current destination. The page subtitle uses 14pt secondary text.
+- **Section title:** 16pt semibold card headings, with a 12pt secondary description below.
+- **Row title:** 14pt semibold facts, statuses and labels; terminology entry text uses system medium (13.5pt).
+- **Body:** 13pt is the standard readable body size for settings copy, stage explanations and history text. Do not fall back to 11–12pt for substantive text.
+- **Detail:** 12pt secondary descriptions; 11pt is reserved for captions, timestamps, counts and compact metadata. Nothing functional should render below 11pt.
+- **Semantic roles:** navigation uses 14pt medium; controls use 13pt. Native defaults are retained where no override exists.
 - **Numeric information:** pagination uses monospaced digits. The device-code value alone uses system monospaced semibold (20pt) for copying a code.
 
 **The Native Type Rule.** Use the macOS system font and the observed semantic or point-size roles; preserve the native title hierarchy.
 
 ## Layout
 
-The resizable native window opens at (980 × 720pt) with window minimum (940 × 680pt); the hosted root has its own lower minimum (920 × 640pt). A fixed-width sidebar sits beside a divider and flexible content column. There are no web breakpoints or mobile layouts.
+The resizable native window opens at (1320 × 820pt) with window minimum (1200 × 720pt); the hosted root uses the same minimum. A 212pt fixed sidebar sits beside a divider and flexible content column. There are no web breakpoints or mobile layouts.
 
-The content column has a scrollable page above a persistent divider and save bar. Page padding, card spacing and compact row spacing use the frontmatter roles. The page header stacks a native caption breadcrumb, page title and secondary subtitle. Sidebar destinations are Account, Workflow, History and Settings. Account uses matching provider rows with a status dot and explicit state labels. Green Doubao means installed, not a successful cloud probe. Apple preview support does not imply a prepared model or a local final transcription provider. Changing destination recreates the ScrollView via `.id(selectedSection)` so the next page starts at the top.
+The content column has a scrollable page above a persistent divider and save bar. Page padding is 28pt; cards use 18pt inner padding, 14pt corners and a low-contrast native border. The page header stacks a native caption breadcrumb, 28pt page title and 14pt secondary subtitle. Sidebar destinations are Account, Workflow, History and Settings. Account uses icon-led service rows with status capsules and explicit state labels. Green Doubao means installed, not a successful cloud probe. Apple preview support does not imply a prepared model or a local final transcription provider.
+
+History is a full-height master-detail workspace rather than a scrolling settings page. Its list and detail panes scroll independently; the persistent save bar stays outside both. Other destinations recreate the ScrollView via `.id(selectedSection)` so the next page starts at the top.
 
 Information rows align labels and values horizontally with flexible trailing space. Service facts use a fixed label column (90pt); processing details use (64pt). Related text stacks remain close together; actions stay beside the facts they affect. The bottom bar keeps Open Config Folder at the leading edge and save status plus Save Settings at the trailing edge.
 
@@ -146,7 +157,7 @@ Groups use the larger rounded role; nested rows and selected navigation/stage it
 
 ### Buttons
 
-Use native default or bordered buttons for ordinary actions, bordered-prominent for the relevant connection or device-code action, and borderless text actions inside vocabulary rows. Save Settings is the window’s default keyboard action. Sidebar and processing selectors use plain buttons with explicit selected fills. Focus, hover, pressed and disabled appearances are supplied by macOS; no custom states are implied by this document. Icon-only history and pagination actions have accessible labels and history actions have help text.
+Use native default or bordered buttons for ordinary actions, bordered-prominent for the relevant connection, save, or device-code action, and borderless text actions inside vocabulary rows and history stage controls. Save Settings is the window’s default keyboard action. Sidebar and processing selectors use plain buttons with explicit selected fills. Focus, hover, pressed and disabled appearances are supplied by macOS; no custom states are implied by this document. Icon-only history and pagination actions have accessible labels and history actions have help text.
 
 ### Cards / Containers
 
@@ -160,17 +171,17 @@ Native TextField, SecureField, Picker and Toggle remain the form vocabulary. Sea
 
 The narrow sidebar has an app heading, four icon-and-label destinations and an F5 reminder at its foot. Each row uses horizontal padding (12pt), vertical padding (9pt) and a small rounded selected background. Symbols use a fixed icon column (18pt). Text retains its native foreground; selection is a restrained accent tint.
 
-### Processing trail and inspector
+### Processing map and inspector
 
-Six equally flexible stage buttons—Voice, Recognize, Align, Polish, Correct and Paste—form one horizontal trail with secondary chevrons between stages. Stage icons (17pt) sit above medium labels (11pt); row padding is vertical (12pt). Selecting a stage changes the Input, Runs on, Output and explanation below; Recognize is the initial selection. The inspector makes model, service and destination facts readable and selectable. It documents the currently displayed configuration; a caption explains when saved changes take effect.
+Six equally flexible stage buttons—录音, 识别, 对齐, 润色, 修正 and 输出—form one horizontal process map inside a grouped card, with secondary chevrons between stages. Stage icons (20pt) sit above 13pt medium labels; selected stages use a restrained accent fill. Selecting a stage changes the 输入, 运行于, 输出 and explanation below; 识别 is the initial selection. The inspector makes model, service and destination facts readable and selectable. A 12pt caption explains when saved changes take effect.
 
 ### Vocabulary editor
 
-The Align stage contains Custom phrases; Correct contains Replacement. Each editor has a fixed entry type, keeping canonical spelling and explicit corrections in their workflow positions. Search indexing runs off the UI thread. Add/update fields precede a divider, search and source filtering. The source picker is fixed (180pt); the segmented selector has a maximum (390pt). A native inset list pages at (50 entries); its height ranges (280–420pt), ideal (360pt). Entry text and provenance sit beside borderless Edit/Delete actions. Empty state, import progress and bounded local feedback occupy their own slots. “Read X names” reports the read operation; the bottom bar owns configuration save state.
+The 对齐 stage contains Custom phrases; 修正 contains Replacement. Each editor has a fixed entry type, keeping canonical spelling and explicit corrections in their workflow positions. Search indexing runs off the UI thread. Add/update fields precede a divider, search and source filtering. The source picker is fixed (210pt). A native inset list pages at (50 entries); its height ranges (380–560pt), ideal (460pt). Entry text uses 13.5pt and provenance uses 11pt, beside borderless Edit/Delete actions. Empty state, import progress and bounded local feedback occupy their own slots. “Read X names” reports the read operation; the bottom bar owns configuration save state.
 
-### History rows and feedback
+### History workspace
 
-A native segmented picker chooses record type. Compact rows put metadata above a selectable, two-line text preview with adjacent Copy/Retry actions. Error text is explicitly labeled by its content and uses the error color. Copy feedback fades in with ease-out (0.12s), stays about (1.6s) and fades out (0.18s); this is local confirmation, not a global motion system.
+A 320pt voice list sits beside a flexible detail pane. Each voice appears once, with status, time, target, duration, a two-line preview and a six-segment stage rail. Selecting a voice loads its full record on demand; list search and filters use lightweight metadata. The detail pane shows the original audio, a six-stage process rail, four distinct text artifacts—ASR 原文, 对齐后, 润色输出, 最终化结果—and processing evidence. Each artifact is independently copyable. Stage-level reruns and whole-flow retries are visible actions, not hidden menus. Error text is explicitly labeled by its content and uses the error color. Copy feedback fades in with ease-out (0.12s), stays about (1.5s) and fades out (0.18s); this is local confirmation, not a global motion system.
 
 ### Save bar
 
