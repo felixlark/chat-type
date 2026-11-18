@@ -6,10 +6,13 @@ import SwiftUI
 
 extension PreferencesView {
     var accountOverviewCard: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            settingsCard(title: "Providers") {
+        VStack(alignment: .leading, spacing: 22) {
+            settingsCard(
+                title: "服务",
+                subtitle: "连接 ChatGPT、豆包和可选的润色服务；密钥保存在 macOS Keychain。"
+            ) {
                 providerRow("ChatGPT", status: chatGPTAccountStatus.title,
-                    ready: providers.value.checked ? authSnapshot.state == .ready : nil,
+                    ready: providers.value.checked ? chatGPTAccountStatus.isReady : nil,
                     detail: authSnapshot.userEmail ?? authSnapshot.detail)
                 chatGPTSetupActions
                 Divider()
@@ -24,33 +27,51 @@ extension PreferencesView {
                 providerRow("GLM", status: providers.value.checked ? (glmKeySaved ? "Key saved" : "Key not saved") : "Checking…",
                     ready: providers.value.checked ? glmKeySaved : nil,
                     detail: "文字润色 · GLM-4.7-Flash · 密钥保存状态，尚未验证请求。")
-                HStack {
-                    SecureField("GLM API Key", text: $glmKeyInput).accessibilityIdentifier("glm-api-key")
-                    Button("Save GLM Key") { saveGLMKey() }.disabled(glmKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                HStack(spacing: 10) {
+                    SecureField("GLM API Key", text: $glmKeyInput)
+                        .textFieldStyle(.roundedBorder)
+                        .font(SettingsTypography.control)
+                        .accessibilityIdentifier("glm-api-key")
+                    Button("保存 GLM 密钥") { saveGLMKey() }
+                        .buttonStyle(.bordered)
+                        .font(SettingsTypography.control)
+                        .disabled(glmKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 Divider()
                 providerRow("Qwen", status: providers.value.checked ? (qwenKeySaved ? "Key saved" : "Key not saved") : "Checking…",
                     ready: providers.value.checked ? qwenKeySaved : nil,
                     detail: "文字润色 · Qwen Flash · 密钥保存状态，尚未验证请求。")
-                HStack {
-                    SecureField("Qwen API Key", text: $qwenKeyInput).accessibilityIdentifier("qwen-api-key")
-                    Button("Save Qwen Key") { saveQwenKey() }.disabled(qwenKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                HStack(spacing: 10) {
+                    SecureField("Qwen API Key", text: $qwenKeyInput)
+                        .textFieldStyle(.roundedBorder)
+                        .font(SettingsTypography.control)
+                        .accessibilityIdentifier("qwen-api-key")
+                    Button("保存 Qwen 密钥") { saveQwenKey() }
+                        .buttonStyle(.bordered)
+                        .font(SettingsTypography.control)
+                        .disabled(qwenKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 Divider()
                 providerRow("OpenAI-Compatible", status: "Advanced recovery", ready: nil,
-                    detail: "使用独立端点与 API Key，可能按量收费；在 Workflow 的 Recognize 阶段配置，未验证可用性。")
+                    detail: "使用独立端点与 API Key，可能按量收费；在 Workflow 的“识别”步骤配置，未验证可用性。")
                 if let terminologyImportMessage {
-                    Text(terminologyImportMessage).font(.caption).foregroundStyle(terminologyImportIsError ? .red : .secondary)
+                    Text(terminologyImportMessage).font(SettingsTypography.detail).foregroundStyle(terminologyImportIsError ? .red : .secondary)
                 }
                 if let textPolishMessage {
-                    Text(textPolishMessage).font(.caption).foregroundStyle(textPolishMessageIsError ? .red : .secondary)
+                    Text(textPolishMessage).font(SettingsTypography.detail).foregroundStyle(textPolishMessageIsError ? .red : .secondary)
                 }
-                Button("Refresh Provider Status") { providers.refresh() }.disabled(providers.isLoading)
+                Button("刷新服务状态") { providers.refresh() }
+                    .buttonStyle(.bordered)
+                    .font(SettingsTypography.control)
+                    .disabled(providers.isLoading)
             }
-            settingsCard(title: "Permissions") {
-                HStack(spacing: 10) {
-                    compactSetupTile(title: "Microphone", status: microphoneStatus)
-                    compactSetupTile(title: "Accessibility", status: accessibilityStatus)
+            settingsCard(
+                title: "权限",
+                subtitle: "麦克风和辅助功能权限决定能否录音与自动粘贴。"
+            ) {
+                HStack(spacing: 12) {
+                    compactSetupTile(title: "麦克风", status: microphoneStatus)
+                    compactSetupTile(title: "辅助功能", status: accessibilityStatus)
                 }
                 ForEach(microphoneRepairActions + accessibilityRepairActions) { repairActionButton($0) }
             }
@@ -58,33 +79,64 @@ extension PreferencesView {
     }
 
     func providerRow(_ title: String, status: String, ready: Bool?, detail: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Circle().fill(ready == true ? Color.green : ready == false ? Color.orange : Color.secondary)
-                .frame(width: 8, height: 8).padding(.top, 5)
+        let tone: SettingsStatusTone = ready == true ? .ready : ready == false ? .attention : .neutral
+        return HStack(alignment: .top, spacing: 12) {
+            SettingsIconBadge(symbol: providerSymbol(title), tone: tone, size: 32)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(title).fontWeight(.semibold)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(title)
+                        .font(SettingsTypography.rowTitle)
                     Spacer()
-                    Text(status).foregroundStyle(.secondary)
+                    SettingsStatusPill(text: localizedProviderStatus(status), tone: tone)
                 }
-                Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(detail)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .padding(.vertical, 3)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("provider-" + title)
+    }
+
+    private func providerSymbol(_ title: String) -> String {
+        if title.hasPrefix("ChatGPT") { return "bubble.left.and.bubble.right" }
+        if title.hasPrefix("Doubao") { return "waveform" }
+        if title.hasPrefix("Apple") { return "waveform.badge.mic" }
+        if title.hasPrefix("GLM") || title.hasPrefix("Qwen") { return "key" }
+        return "terminal"
+    }
+
+    private func localizedProviderStatus(_ status: String) -> String {
+        switch status {
+        case "Ready": return "已连接"
+        case "Needs attention": return "需要处理"
+        case "Not connected": return "未连接"
+        case "Checking…": return "检查中…"
+        case "Installed": return "已安装"
+        case "Not installed": return "未安装"
+        case "Key saved": return "密钥已保存"
+        case "Key not saved": return "未保存密钥"
+        case "Available on this macOS": return "此 macOS 可用"
+        case "Requires macOS 26": return "需要 macOS 26"
+        case "Advanced recovery": return "高级恢复"
+        default: return status
+        }
     }
 
     func routeRow(title: String, value: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .frame(width: 90, alignment: .leading)
+                .font(SettingsTypography.bodyEmphasis)
+                .frame(width: 96, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text(value)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(SettingsTypography.value)
                 Text(detail)
-                    .font(.system(size: 11))
+                    .font(SettingsTypography.detail)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -173,13 +225,13 @@ extension PreferencesView {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("ChatGPT Account")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(SettingsTypography.bodyEmphasis)
                         .foregroundStyle(.secondary)
                     Text(authSnapshot.userEmail ?? authSnapshot.detail)
-                        .font(.system(size: 12))
+                        .font(SettingsTypography.body)
                         .foregroundStyle(.secondary)
                     Text(browserBridgeSnapshot.detail)
-                        .font(.system(size: 11))
+                        .font(SettingsTypography.detail)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -277,7 +329,7 @@ extension PreferencesView {
         }
 
         return Text(label)
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: 11.5, weight: .semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -304,7 +356,7 @@ extension PreferencesView {
         }
 
         return Text(label)
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: 11.5, weight: .semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -316,20 +368,20 @@ extension PreferencesView {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 if authSnapshot.state == .ready {
-                    Button(browserLoginIsInProgress ? "Waiting for Authorization" : "Connect ChatGPT") {
+                    Button(browserLoginIsInProgress ? "等待授权" : "连接 ChatGPT") {
                         connectViaBrowser()
                     }
                     .buttonStyle(.bordered)
                     .disabled(browserLoginIsInProgress)
                 } else {
-                    Button(browserLoginIsInProgress ? "Waiting for Authorization" : "Connect ChatGPT") {
+                    Button(browserLoginIsInProgress ? "等待授权" : "连接 ChatGPT") {
                         connectViaBrowser()
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(browserLoginIsInProgress)
                 }
 
-                Button("Refresh") {
+                Button("刷新") {
                     Task {
                         _ = try? await authManager.refreshAccessToken()
                         await MainActor.run {
@@ -340,7 +392,7 @@ extension PreferencesView {
                 .buttonStyle(.bordered)
 
                 if authSnapshot.state == .ready || authSnapshot.state == .expired {
-                    Button("Sign out") {
+                    Button("退出登录") {
                         do {
                             try authManager.signOut()
                             authSnapshot = authManager.authSnapshot()
@@ -362,11 +414,11 @@ extension PreferencesView {
 
     func deviceAuthorizationCard(userCode: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Finish sign-in in the OpenAI page", systemImage: "rectangle.and.hand.point.up.left")
+            Label("在 OpenAI 页面完成登录", systemImage: "rectangle.and.hand.point.up.left")
                 .font(.system(size: 13, weight: .semibold))
 
-            Text("1. Copy this one-time code.")
-                .font(.system(size: 12))
+            Text("1. 复制一次性验证码。")
+                .font(SettingsTypography.body)
 
             HStack(spacing: 12) {
                 Text(userCode)
@@ -377,24 +429,24 @@ extension PreferencesView {
                     .background(Color(nsColor: .textBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 7))
 
-                Button(copiedDeviceCode == userCode ? "Copied" : "Copy Device Code") {
+                Button(copiedDeviceCode == userCode ? "已复制" : "复制验证码") {
                     copyDeviceCode(userCode)
                 }
                 .buttonStyle(.borderedProminent)
 
-                Button(chromeApplicationURL == nil ? "Open Login Page" : "Open in Chrome") {
+                Button(chromeApplicationURL == nil ? "打开登录页" : "在 Chrome 中打开") {
                     openDeviceAuthorizationPage()
                 }
                 .buttonStyle(.bordered)
             }
 
-            Text("2. Paste all 9 characters into the browser.  3. Click Continue.  4. Return here; ChatType will finish automatically.")
-                .font(.system(size: 12))
+            Text("2. 将 9 个字符粘贴到浏览器。3. 点击继续。4. 回到这里，ChatType 会自动完成。")
+                .font(SettingsTypography.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("The code expires after 15 minutes. If it fails, click Connect ChatGPT again to generate a new code.")
-                .font(.system(size: 11))
+            Text("验证码 15 分钟后过期。失败时再次点击“连接 ChatGPT”生成新验证码。")
+                .font(SettingsTypography.detail)
                 .foregroundStyle(.secondary)
         }
         .padding(12)

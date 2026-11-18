@@ -191,3 +191,135 @@ func reservationFailsWhenArchiveCannotBeCreated() throws {
     try Data("not a directory".utf8).write(to: root)
     #expect(throws: (any Error).self) { try RecoveryStore(directoryURL: root).beginRecording() }
 }
+
+@Test
+func diagnosticAttemptPreservesPrimaryVoiceStateAndSelection() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = root.appendingPathComponent("source.wav")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("wav".utf8).write(to: source)
+    let store = RecoveryStore(directoryURL: root.appendingPathComponent("Recovery", isDirectory: true))
+    let fullAttemptID = UUID()
+    let diagnosticAttemptID = UUID()
+    let config = TranscriptionConfig()
+
+    try store.record(RecoveryRecordInput(
+        timestamp: Date(timeIntervalSince1970: 10),
+        sourceAudioURL: source,
+        durationMs: 3_000,
+        asrText: "primary asr",
+        polishText: "primary polish",
+        appName: "Notes",
+        appBundleIdentifier: "com.apple.Notes",
+        outcome: "pasted",
+        errorMessage: nil,
+        snapshot: config,
+        attemptID: fullAttemptID,
+        stages: DictationStageAudit(
+            asrText: "primary asr",
+            polishInput: "primary asr",
+            polishOutput: "primary polish",
+            finalText: "primary final"
+        )
+    ))
+    let firstRecord = try #require(try store.loadRecent(limit: 1).first)
+    let ownedAudioURL = firstRecord.audioURL(baseDirectory: store.directoryURL)
+
+    try store.record(RecoveryRecordInput(
+        timestamp: Date(timeIntervalSince1970: 20),
+        sourceAudioURL: ownedAudioURL,
+        durationMs: 3_000,
+        asrText: "diagnostic asr",
+        polishText: nil,
+        appName: "Notes",
+        appBundleIdentifier: "com.apple.Notes",
+        outcome: "asrComplete",
+        errorMessage: nil,
+        snapshot: config,
+        attemptID: diagnosticAttemptID,
+        stages: DictationStageAudit(asrText: "diagnostic asr"),
+        attemptKind: .asrOnly
+    ))
+
+    let record = try #require(try store.loadRecent(limit: 1).first)
+    #expect(record.outcome == "pasted")
+    #expect(record.asrText == "primary asr")
+    #expect(record.polishText == "primary polish")
+    #expect(record.attempts?.count == 2)
+    #expect(record.attempts?.last?.kind == .asrOnly)
+
+    let index = try store.loadHistoryIndex()
+    let summary = try #require(index.records.first)
+    #expect(summary.outcome == "pasted")
+    #expect(summary.primaryAttemptID == fullAttemptID)
+    #expect(summary.attemptCount == 2)
+    #expect(summary.stageStates.count == HistoryStagePosition.allCases.count)
+
+    let diagnostic = HistoryRecordPresentation(
+        record: record,
+        selectedAttemptID: diagnosticAttemptID,
+        audioAvailable: true
+    )
+    #expect(diagnostic.status.label == "仅转写完成")
+    #expect(diagnostic.selectedAttempt?.resolvedKind == .asrOnly)
+}
+
+@Test
+func legacyRecordPresentationKeepsOldPolishLabelAndOmitsFakeStages() {
+    let record = RecoveryRecord(
+        id: UUID(),
+        timestamp: Date(timeIntervalSince1970: 1),
+        audioFileName: "old.wav",
+        audioDurationMs: 2_000,
+        asrText: "old asr",
+        polishText: "old polish",
+        appName: "Notes",
+        appBundleIdentifier: "com.apple.Notes",
+        outcome: "pasted",
+        errorMessage: nil
+    )
+    let presentation = HistoryRecordPresentation(record: record, selectedAttemptID: nil, audioAvailable: true)
+    #expect(presentation.legacy)
+    #expect(presentation.stages.isEmpty)
+    #expect(presentation.artifacts.first(where: { $0.kind == .polish })?.note == "旧版润色文本，未区分最终化")
+}
+
+@Test
+func failedAttemptPresentationExposesNoFakeTextArtifacts() throws {
+    let recordID = UUID()
+    let attemptID = UUID()
+    let record = RecoveryRecord(
+        id: recordID,
+        timestamp: Date(timeIntervalSince1970: 2),
+        audioFileName: "\(recordID.uuidString).wav",
+        audioDurationMs: 1_000,
+        asrText: nil,
+        polishText: nil,
+        appName: "Notes",
+        appBundleIdentifier: "com.apple.Notes",
+        outcome: "error",
+        errorMessage: "ASR failed",
+        attempts: [
+            DictationAttempt(
+                id: attemptID,
+                startedAt: Date(timeIntervalSince1970: 2),
+                snapshot: TranscriptionConfig(),
+                stages: DictationStageAudit(error: "ASR failed"),
+                outcome: "error"
+            )
+        ]
+    )
+    let presentation = HistoryRecordPresentation(
+        record: record,
+        selectedAttemptID: attemptID,
+        audioAvailable: true
+    )
+    #expect(presentation.status.label == "处理失败")
+    #expect(presentation.artifacts.allSatisfy { $0.text == nil })
+    #expect(presentation.stages.first(where: { $0.position == .asr })?.state == .failed)
+    #expect(presentation.stages.first(where: { $0.position == .alignment })?.state == .unavailable)
+    #expect(presentation.stages.first(where: { $0.position == .polish })?.state == .failed)
+    #expect(presentation.canRerunTranscription)
+    #expect(!presentation.canRerunPolish)
+}

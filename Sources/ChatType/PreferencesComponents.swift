@@ -7,18 +7,31 @@ import SwiftUI
 extension PreferencesView {
     func settingsCard<Content: View>(
         title: String,
+        subtitle: String? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
+        VStack(alignment: .leading, spacing: SettingsLayout.cardSpacing) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(SettingsTypography.sectionTitle)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(SettingsTypography.detail)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             content()
         }
-        .font(.system(size: 12))
-        .padding(14)
+        .font(SettingsTypography.body)
+        .padding(SettingsLayout.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.32), lineWidth: 1)
+        )
     }
 
     func setupRow(title: String, status: SetupStatus) -> some View {
@@ -28,23 +41,30 @@ extension PreferencesView {
     }
 
     func compactSetupTile(title: String, status: SetupStatus) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: status.isReady ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(status.isReady ? .green : .orange)
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: 11) {
+            SettingsIconBadge(
+                symbol: status.isReady ? "checkmark" : "exclamationmark",
+                tone: status.isReady ? .ready : .attention,
+                size: 30
+            )
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(SettingsTypography.rowTitle)
                 Text(status.title)
-                    .font(.system(size: 11))
+                    .font(SettingsTypography.detail)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.25), lineWidth: 1)
+        )
     }
 
     func setupRow<Actions: View>(
@@ -59,11 +79,11 @@ extension PreferencesView {
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(SettingsTypography.rowTitle)
                 Text(status.title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(SettingsTypography.bodyEmphasis)
                 Text(status.subtitle)
-                    .font(.system(size: 11))
+                    .font(SettingsTypography.detail)
                     .foregroundStyle(.secondary)
                 actions()
             }
@@ -81,7 +101,7 @@ extension PreferencesView {
 
             if let detail, !detail.isEmpty, status.isReady == false {
                 Text(detail)
-                    .font(.system(size: 11))
+                    .font(SettingsTypography.detail)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

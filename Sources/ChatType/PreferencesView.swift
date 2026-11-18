@@ -38,8 +38,7 @@ struct PreferencesView: View {
     @State var terminologyImportIsError = false
     @StateObject var providers: SettingsResource<SettingsProviderEnvironment>
     @StateObject var usage: SettingsResource<SettingsPolishUsage>
-    @StateObject var history: SettingsResource<TranscriptionHistoryPage>
-    @StateObject var recovery: SettingsResource<RecoveryRecordPage>
+    @StateObject var historyWorkspace: HistoryWorkspaceModel
     var authSnapshot: ChatGPTAuthSnapshot {
         get { providers.value.auth }
         nonmutating set { let value = newValue; providers.update { var copy = $0; copy.auth = value; return copy } }
@@ -69,22 +68,17 @@ struct PreferencesView: View {
     let glmKeyStore: any GLMKeyStoring
     @State var textPolishMessage: String?
     @State var textPolishMessageIsError = false
-    var recentHistoryRecords: [TranscriptionHistoryRecord] { history.value.records }
-    var recentRecoveryRecords: [RecoveryRecord] { recovery.value.records }
-    @State var selectedRecoveryKind: RecoveryHistoryKind = .audio
-    @State var historyOffset = 0
-    @State var recoveryOffset = 0
-    @State var copiedHistoryItemID: String?
-
     let authManager: ChatGPTAuthManager
     let onSave: (AppConfig) -> Result<Void, any Error>
     let onImportAppleContactRemarks: () async -> Result<TerminologyImportResult, any Error>
     let onImportWeixinRemarks: () async -> Result<TerminologyImportResult, any Error>
-    let onLoadRecentHistory: @Sendable (Int, Int) throws -> TranscriptionHistoryPage
-    let onLoadRecoveryHistory: @Sendable (Int, Int) throws -> RecoveryRecordPage
+    let onLoadHistoryIndex: @Sendable () throws -> RecoveryHistoryIndex
+    let onLoadHistoryRecord: @Sendable (UUID) throws -> RecoveryRecord?
     let recoveryDirectoryURL: URL
-    let onRetryRecoveryRecord: (RecoveryRecord) -> Void
-    let onReprocessRecoveryRecord: (RecoveryRecord) -> Void
+    let onRetryRecoveryRecord: (RecoveryRecord, UUID?) -> Void
+    let onReprocessRecoveryRecord: (RecoveryRecord, UUID?) -> Void
+    let onRerunRecoveryTranscription: (RecoveryRecord, UUID?) -> Void
+    let onRerunRecoveryPolish: (RecoveryRecord, UUID?) -> Void
     let onOpenConfigFolder: () -> Void
 
     init(
@@ -94,11 +88,13 @@ struct PreferencesView: View {
         onSave: @escaping (AppConfig) -> Result<Void, any Error>,
         onImportAppleContactRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
         onImportWeixinRemarks: @escaping () async -> Result<TerminologyImportResult, any Error>,
-        onLoadRecentHistory: @escaping @Sendable (Int, Int) throws -> TranscriptionHistoryPage,
-        onLoadRecoveryHistory: @escaping @Sendable (Int, Int) throws -> RecoveryRecordPage,
+        onLoadHistoryIndex: @escaping @Sendable () throws -> RecoveryHistoryIndex,
+        onLoadHistoryRecord: @escaping @Sendable (UUID) throws -> RecoveryRecord?,
         recoveryDirectoryURL: URL,
-        onRetryRecoveryRecord: @escaping (RecoveryRecord) -> Void,
-        onReprocessRecoveryRecord: @escaping (RecoveryRecord) -> Void,
+        onRetryRecoveryRecord: @escaping (RecoveryRecord, UUID?) -> Void,
+        onReprocessRecoveryRecord: @escaping (RecoveryRecord, UUID?) -> Void,
+        onRerunRecoveryTranscription: @escaping (RecoveryRecord, UUID?) -> Void,
+        onRerunRecoveryPolish: @escaping (RecoveryRecord, UUID?) -> Void,
         onOpenConfigFolder: @escaping () -> Void,
         focusRecoveryHistory: Bool = false,
         glmKeyStore: any GLMKeyStoring = KeychainGLMKeyStore(),
@@ -113,23 +109,24 @@ struct PreferencesView: View {
                 doubaoInstalled: SettingsProviderEnvironment.doubaoIsInstalled(), checked: true)
         })
         _usage = StateObject(wrappedValue: SettingsResource(SettingsPolishUsage()) { try SettingsPolishUsage.read() })
-        _history = StateObject(wrappedValue: SettingsResource(TranscriptionHistoryPage(records: [], offset: 0, totalCount: 0)) {
-            try onLoadRecentHistory(0, 10)
-        })
-        _recovery = StateObject(wrappedValue: SettingsResource(RecoveryRecordPage(records: [], offset: 0, totalCount: 0)) {
-            try onLoadRecoveryHistory(0, 10)
-        })
+        _historyWorkspace = StateObject(wrappedValue: HistoryWorkspaceModel(
+            recoveryDirectoryURL: recoveryDirectoryURL,
+            onLoadIndex: onLoadHistoryIndex,
+            onLoadRecord: onLoadHistoryRecord
+        ))
         _copiedDeviceCode = State(initialValue: nil)
         _selectedSection = State(initialValue: focusRecoveryHistory ? .recovery : .account)
         self.authManager = authManager
         self.onSave = onSave
         self.onImportAppleContactRemarks = onImportAppleContactRemarks
         self.onImportWeixinRemarks = onImportWeixinRemarks
-        self.onLoadRecentHistory = onLoadRecentHistory
-        self.onLoadRecoveryHistory = onLoadRecoveryHistory
+        self.onLoadHistoryIndex = onLoadHistoryIndex
+        self.onLoadHistoryRecord = onLoadHistoryRecord
         self.recoveryDirectoryURL = recoveryDirectoryURL
         self.onRetryRecoveryRecord = onRetryRecoveryRecord
         self.onReprocessRecoveryRecord = onReprocessRecoveryRecord
+        self.onRerunRecoveryTranscription = onRerunRecoveryTranscription
+        self.onRerunRecoveryPolish = onRerunRecoveryPolish
         self.onOpenConfigFolder = onOpenConfigFolder
     }
 
@@ -142,9 +139,9 @@ struct PreferencesView: View {
     }
 
     var chatGPTAccountStatus: SetupStatus {
-        guard providers.value.checked else { return SetupStatus(title: "Checking…", subtitle: "Reading saved account status.", isReady: false) }
+        guard providers.value.checked else { return SetupStatus(title: "检查中…", subtitle: "正在读取已保存的账户状态。", isReady: false) }
         guard authSnapshot.state == .ready else {
-            return SetupStatus(title: authSnapshot.state == .signedOut ? "Not connected" : "Needs attention", subtitle: authSnapshot.detail, isReady: false)
+            return SetupStatus(title: authSnapshot.state == .signedOut ? "未连接" : "需要处理", subtitle: authSnapshot.detail, isReady: false)
         }
 
         if let issue = runtimeIssues.first(where: {
@@ -155,11 +152,11 @@ struct PreferencesView: View {
                 return false
             }
         }) {
-            return SetupStatus(title: "Needs attention", subtitle: issue.message, isReady: false)
+            return SetupStatus(title: "需要处理", subtitle: issue.message, isReady: false)
         }
 
         return SetupStatus(
-            title: "Ready",
+            title: "已连接",
             subtitle: authSnapshot.detail
         )
     }
@@ -168,13 +165,13 @@ struct PreferencesView: View {
         _ = permissionRefreshNonce
         switch AudioRecorder.microphonePermissionState() {
         case .granted:
-            return SetupStatus(title: "Granted", subtitle: "Microphone access is ready.")
+            return SetupStatus(title: "已授权", subtitle: "麦克风权限已就绪。")
         case .undetermined:
-            return SetupStatus(title: "Not requested yet", subtitle: "Press \(draft.activeShortcut.title) once and macOS will ask for microphone access.", isReady: false)
+            return SetupStatus(title: "尚未请求", subtitle: "按一次 \(draft.activeShortcut.title)，macOS 会请求麦克风权限。", isReady: false)
         case .denied:
             return SetupStatus(
-                title: "Needs permission",
-                subtitle: "Microphone access was previously denied. Open Privacy & Security > Microphone to re-enable it.",
+                title: "需要权限",
+                subtitle: "麦克风权限曾被拒绝。请在系统设置 > 隐私与安全性 > 麦克风中重新启用。",
                 isReady: false
             )
         }
@@ -185,11 +182,11 @@ struct PreferencesView: View {
         let guidance = AccessibilityPermission.repairGuidance()
 
         if AccessibilityPermission.isTrusted() {
-            return SetupStatus(title: "Granted", subtitle: "Auto-paste is ready.")
+            return SetupStatus(title: "已授权", subtitle: "自动粘贴已就绪。")
         }
 
         return SetupStatus(
-            title: "Optional but recommended",
+            title: "可选但建议开启",
             subtitle: guidance.subtitle,
             isReady: false
         )
@@ -214,35 +211,57 @@ struct PreferencesView: View {
             Divider()
 
             VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        sectionHeader
-                        selectedSectionView
+                if selectedSection == .recovery {
+                    HistoryWorkspaceView(
+                        model: historyWorkspace,
+                        recoveryDirectoryURL: recoveryDirectoryURL,
+                        onRetryRecoveryRecord: onRetryRecoveryRecord,
+                        onReprocessRecoveryRecord: onReprocessRecoveryRecord,
+                        onRerunRecoveryTranscription: onRerunRecoveryTranscription,
+                        onRerunRecoveryPolish: onRerunRecoveryPolish
+                    )
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
+                            sectionHeader
+                            selectedSectionView
+                        }
+                        .padding(SettingsLayout.pagePadding)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
-                    .padding(22)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .id(selectedSection)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .id(selectedSection)
 
                 Divider()
 
                 HStack {
-                    Button("Open Config Folder", action: onOpenConfigFolder)
+                    Button("打开配置文件夹", action: onOpenConfigFolder)
+                        .buttonStyle(.bordered)
+                        .font(SettingsTypography.body)
                     Spacer()
-                    Text(saveMessage).font(.caption).foregroundStyle(saveIsError ? .red : .secondary)
+                    Text(saveMessage)
+                        .font(SettingsTypography.detail)
+                        .foregroundStyle(saveIsError ? .red : .secondary)
                         .lineLimit(2)
-                    Button("Save Settings") {
+                    Button("保存设置") {
                         _ = draft.apply(using: onSave)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .font(SettingsTypography.bodyEmphasis)
                     .keyboardShortcut(.defaultAction)
                     .disabled(draft.isRecordingShortcut)
                 }
-                .padding(16)
+                .padding(.horizontal, 22)
+                .padding(.vertical, 14)
                 .background(Color(nsColor: .windowBackgroundColor))
+                .frame(minHeight: 58)
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
             }
+            .background(Color(nsColor: .windowBackgroundColor))
         }
-        .frame(minWidth: 920, minHeight: 640)
+        .frame(minWidth: 1200, minHeight: 680)
         .onChange(of: config) { _ in
             saveMessage = "尚未应用 · 保存设置后使用新快捷键；新录音或按当前流程重跑时应用流程选择。"
             saveIsError = false
@@ -256,17 +275,7 @@ struct PreferencesView: View {
         .onReceive(NotificationCenter.default.publisher(for: .recoveryRecordDidChange).receive(on: RunLoop.main)) { update in
             guard update.userInfo?["directory"] as? String == recoveryDirectoryURL.path,
                   let record = update.object as? RecoveryRecord else { return }
-            // Update the touched row directly: no synchronous scan/decode of
-            // the entire original-audio archive on the UI or processing path.
-            recovery.update { page in
-                guard page.offset == 0 else { return page }
-                let existed = page.records.contains { $0.id == record.id }
-                var updated = page.records.filter { $0.id != record.id }
-                updated.append(record)
-                let sorted = Array(updated.sorted { $0.timestamp > $1.timestamp }.prefix(10).reversed())
-                let total = existed ? page.totalCount : max(page.totalCount + 1, sorted.count)
-                return RecoveryRecordPage(records: sorted, offset: 0, totalCount: total)
-            }
+            historyWorkspace.recordDidChange(record, directory: recoveryDirectoryURL.path)
         }
         .onReceive(
             NotificationCenter.default.publisher(for: .chatGPTAuthStateDidChange)
@@ -274,23 +283,26 @@ struct PreferencesView: View {
         ) { _ in
             providers.refresh()
         }
-        .onAppear { providers.refresh(); refreshVisibleSection() }
-        .onChange(of: selectedSection) { _ in draft.endShortcutCapture(); refreshVisibleSection() }
-        .onDisappear { draft.endShortcutCapture(); providers.cancel(); usage.cancel(); history.cancel(); recovery.cancel() }
+        .onAppear { providers.refresh(); if selectedSection == .recovery { historyWorkspace.activate() } }
+        .onChange(of: selectedSection) { section in
+            draft.endShortcutCapture()
+            if section == .recovery { historyWorkspace.activate() }
+        }
+        .onDisappear { draft.endShortcutCapture(); providers.cancel(); usage.cancel(); historyWorkspace.cancel() }
     }
 
     var sidebar: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text("ChatType")
-                    .font(.system(size: 24, weight: .semibold))
+                    .font(.system(size: 26, weight: .semibold))
                 Text("Speak. Make it clear.")
-                    .font(.system(size: 12))
+                    .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 20)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 18)
+            .padding(.top, 24)
+            .padding(.bottom, 10)
 
             ForEach(SettingsSection.allCases) { section in
                 Button {
@@ -298,51 +310,60 @@ struct PreferencesView: View {
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: section.icon)
-                            .frame(width: 18)
+                            .font(.system(size: 16, weight: .medium))
+                            .frame(width: 20)
                         Text(section.rawValue)
                         Spacer()
                     }
+                    .font(SettingsTypography.nav)
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
+                    .padding(.vertical, 10)
                     .background(
                         selectedSection == section
-                            ? Color.accentColor.opacity(0.14)
+                            ? Color.accentColor.opacity(0.12)
                             : Color.clear
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
+                .padding(.horizontal, 8)
             }
 
             Spacer()
-            Label("\(draft.activeShortcut.title)  start / stop", systemImage: "mic")
-                .font(.caption).foregroundStyle(.secondary).padding(16)
+            Label("\(draft.activeShortcut.title) 开始 / 停止", systemImage: "mic")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 18)
+                .padding(.bottom, 18)
         }
-        .frame(width: 180)
+        .frame(width: SettingsLayout.sidebarWidth)
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
     var sectionHeader: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
                 Text("ChatType")
                 Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
                 Text(selectedSection.rawValue)
-            }.font(.caption).foregroundStyle(.secondary)
+            }
+            .font(SettingsTypography.caption)
+            .foregroundStyle(.secondary)
             Text(selectedSection.rawValue)
-                .font(.system(size: 22, weight: .semibold))
+                .font(SettingsTypography.pageTitle)
             Text(sectionSubtitle)
-                .font(.system(size: 13))
+                .font(SettingsTypography.pageSubtitle)
                 .foregroundStyle(.secondary)
         }
+        .padding(.bottom, 2)
     }
 
     var sectionSubtitle: String {
         switch selectedSection {
-        case .account: return "查看各个服务的账户、安装与密钥状态；在 Workflow 中组合处理流程。"
-        case .workflow: return "From your voice to finished text. See what each step receives and sends."
-        case .recovery: return "Review original recognition, finished text and saved audio."
-        case .settings: return "Local preferences, login items and paste behavior."
+        case .account: return "管理服务连接、密钥和系统权限。"
+        case .workflow: return "看清每一步用什么、输入什么、输出什么。"
+        case .recovery: return "逐条检查原声、转写、润色与最终输出。"
+        case .settings: return "快捷键、启动项、权限和本地数据。"
         }
     }
 
@@ -356,7 +377,7 @@ struct PreferencesView: View {
                 glmReady: glmKeySaved, qwenReady: qwenKeySaved,
                 recognitionOptions: transcriptionAccountCard, polishOptions: aiPolishCard,
                 termsOptions: terminologyEditor(.term), correctionOptions: terminologyEditor(.correction))
-        case .recovery: recoveryHistoryCard
+        case .recovery: EmptyView()
         case .settings: localSettingsCard
         }
     }

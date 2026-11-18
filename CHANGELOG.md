@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 (148)
+
+- Rebuilt Account, Workflow, Settings and History with a shared modern macOS layout: larger type, clearer section hierarchy, native status pills, grouped cards and a persistent, uncompressed save bar.
+- Added a per-voice History workspace with lightweight metadata indexing, on-demand full-record loading, status filters, original-audio playback and four independently copyable text artifacts.
+- Added stage-level re-transcription and re-polish attempts that preserve the primary full-flow result; retry now uses the selected attempt's original route.
+- Reduced launch work by hydrating only interrupted recordings instead of every saved history snapshot.
+
 ## 0.6.0 (134)
 
 - Combine Dictation and Terminology into Workflow, with custom phrases in Align and Replacement in Correct. Recognition, polish and output remain independently configurable.

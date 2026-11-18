@@ -36,6 +36,7 @@ struct RecoveryRecordInput: Sendable {
     var stages: DictationStageAudit? = nil
     var injectionSnapshot: InjectionConfig? = nil
     var parentRecordID: UUID? = nil
+    var attemptKind: DictationAttemptKind = .full
 }
 
 struct RecoveryRecord: Codable, Sendable, Equatable, Identifiable {
@@ -187,6 +188,8 @@ protocol RecoveryRecording: Sendable {
     func record(_ input: RecoveryRecordInput) throws
     func loadRecent(limit: Int) throws -> [RecoveryRecord]
     func loadPage(offset: Int, limit: Int) throws -> RecoveryRecordPage
+    func loadHistoryIndex() throws -> RecoveryHistoryIndex
+    func loadRecord(id: UUID) throws -> RecoveryRecord?
 }
 
 extension RecoveryRecording {
@@ -196,6 +199,20 @@ extension RecoveryRecording {
         let end = max(0, total - offset)
         let start = max(0, end - limit)
         return RecoveryRecordPage(records: Array(records[start..<end]), offset: offset, totalCount: total)
+    }
+
+    func loadHistoryIndex() throws -> RecoveryHistoryIndex {
+        let records = try loadRecent(limit: 10_000)
+        return RecoveryHistoryIndex(
+            records: records
+                .map { RecoveryHistorySummary(record: $0, recoveryDirectoryURL: directoryURL) }
+                .sorted { $0.timestamp > $1.timestamp },
+            unreadableCount: 0
+        )
+    }
+
+    func loadRecord(id: UUID) throws -> RecoveryRecord? {
+        try loadRecent(limit: 10_000).first { $0.id == id }
     }
 }
 
@@ -282,13 +299,15 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
             let old = position.map { attempts[$0] }
             let attempt = DictationAttempt(id: attemptID, startedAt: old?.startedAt ?? input.timestamp,
                 snapshot: snapshot, stages: (old?.stages ?? .init()).merging(input.stages ?? .init()), outcome: input.outcome,
-                injectionSnapshot: old?.injectionSnapshot ?? input.injectionSnapshot)
+                injectionSnapshot: old?.injectionSnapshot ?? input.injectionSnapshot,
+                kind: input.attemptKind)
             if let position { attempts[position] = attempt } else { attempts.append(attempt) }
         }
         if input.attemptID == nil, input.outcome == "cancelled", let last = attempts.indices.last {
             attempts[last].outcome = "cancelled"
         }
         let sameAttempt = input.attemptID == nil || previous?.attempts?.last?.id == input.attemptID
+        let updatesPrimaryRecord = input.attemptKind == .full
         var audioSHA = previous?.audioSHA256
         if input.outcome != "recording", audioSHA == nil || !sameAttempt {
             let actual = try Self.checksum(destinationURL)
@@ -300,13 +319,15 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
         try writeJournal(RecoveryRecord(
             id: id, timestamp: previous?.timestamp ?? input.timestamp,
             audioFileName: audioFileName, audioDurationMs: input.durationMs,
-            asrText: input.asrText ?? (sameAttempt ? previous?.asrText : nil),
-            polishText: input.polishText ?? (sameAttempt ? previous?.polishText : nil),
+            asrText: updatesPrimaryRecord ? (input.asrText ?? (sameAttempt ? previous?.asrText : nil)) : previous?.asrText,
+            polishText: updatesPrimaryRecord ? (input.polishText ?? (sameAttempt ? previous?.polishText : nil)) : previous?.polishText,
             appName: input.appName ?? previous?.appName,
             appBundleIdentifier: input.appBundleIdentifier ?? previous?.appBundleIdentifier,
-            outcome: input.outcome, errorMessage: input.errorMessage,
-            snapshot: input.snapshot ?? previous?.snapshot, attempts: attempts.isEmpty ? nil : attempts,
-            injectionSnapshot: input.injectionSnapshot ?? previous?.injectionSnapshot,
+            outcome: updatesPrimaryRecord ? input.outcome : (previous?.outcome ?? input.outcome),
+            errorMessage: updatesPrimaryRecord ? input.errorMessage : (previous?.errorMessage ?? input.errorMessage),
+            snapshot: updatesPrimaryRecord ? (input.snapshot ?? previous?.snapshot) : previous?.snapshot,
+            attempts: attempts.isEmpty ? nil : attempts,
+            injectionSnapshot: updatesPrimaryRecord ? (input.injectionSnapshot ?? previous?.injectionSnapshot) : previous?.injectionSnapshot,
             audioSHA256: audioSHA, parentRecordID: input.parentRecordID ?? previous?.parentRecordID
         ))
     }
@@ -387,12 +408,31 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
         return RecoveryRecordPage(records: recent.reversed(), offset: offset, totalCount: candidates.count)
     }
 
+    func loadHistoryIndex() throws -> RecoveryHistoryIndex {
+        lock.lock(); defer { lock.unlock() }
+        let (records, unreadable) = try loadHistorySummaryRecordsUnlocked()
+        unreadableJournals = unreadable
+        return RecoveryHistoryIndex(
+            records: records
+                .map { RecoveryHistorySummary(record: $0, recoveryDirectoryURL: directoryURL) }
+                .sorted { $0.timestamp > $1.timestamp },
+            unreadableCount: unreadable
+        )
+    }
+
+    func loadRecord(id: UUID) throws -> RecoveryRecord? {
+        lock.lock(); defer { lock.unlock() }
+        let url = journalDirectoryURL.appendingPathComponent("\(id.uuidString).json")
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        return try readJournal(url, expectedID: id)
+    }
+
     /// Called once on normal launch, never while a recorder owns an open WAV.
     func recoverInterruptedRecordings() throws {
         lock.lock()
         defer { lock.unlock() }
         try prepareDirectories()
-        let records = try loadAllUnlocked()
+        let records = try loadAllUnlocked(hydrateSnapshots: false)
         // A present but damaged journal is authoritative. Never mistake its WAV
         // for an orphan or overwrite the original audit with a synthetic record.
         let journalIDs = try Set(fileManager.contentsOfDirectory(at: journalDirectoryURL, includingPropertiesForKeys: nil)
@@ -408,7 +448,8 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
                 audioDurationMs: 0, asrText: nil, polishText: nil, appName: nil, appBundleIdentifier: nil,
                 outcome: "recording", errorMessage: nil))
         }
-        for record in interrupted {
+        for compactRecord in interrupted {
+            guard let record = try? hydrate(compactRecord) else { continue }
             let url = record.audioURL(baseDirectory: directoryURL)
             guard fileManager.fileExists(atPath: url.path) else { continue }
             let duration = try InterruptedWAVRecovery.repair(url: url) ?? record.audioDurationMs
@@ -463,6 +504,133 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
             if unreadable > 0 { logger.error("\(unreadable, privacy: .public) recovery journal(s) could not be read; original files retained, no fallback or orphan replacement.") }
         }
         return Array(records.values)
+    }
+
+    private func loadHistorySummaryRecordsUnlocked() throws -> ([RecoveryRecord], Int) {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        var byID: [UUID: RecoveryRecord] = [:]
+
+        let indexURL = directoryURL.appendingPathComponent("recovery-history.jsonl")
+        if fileManager.fileExists(atPath: indexURL.path),
+           let contents = try? String(contentsOf: indexURL, encoding: .utf8) {
+            for line in contents.split(separator: "\n") {
+                guard let data = line.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let record = historySummaryRecord(from: object) else { continue }
+                byID[record.id] = record
+            }
+        }
+
+        var unreadable = 0
+        if fileManager.fileExists(atPath: journalDirectoryURL.path) {
+            for url in try fileManager.contentsOfDirectory(at: journalDirectoryURL, includingPropertiesForKeys: nil)
+                where url.pathExtension == "json" {
+                guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else { continue }
+                byID.removeValue(forKey: id)
+                guard let data = try? Data(contentsOf: url),
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let record = historySummaryRecord(from: object),
+                      record.id == id else {
+                    unreadable += 1
+                    continue
+                }
+                byID[record.id] = record
+            }
+        }
+        return (Array(byID.values), unreadable)
+    }
+
+    private func historySummaryRecord(from object: [String: Any]) -> RecoveryRecord? {
+        guard let idString = object["id"] as? String,
+              let id = UUID(uuidString: idString),
+              let audioFileName = object["audioFileName"] as? String else { return nil }
+        let timestamp = historyDate(object["timestamp"]) ?? Date(timeIntervalSince1970: 0)
+        let attempts = (object["attempts"] as? [[String: Any]] ?? []).compactMap(historySummaryAttempt)
+        let snapshot = (object["snapshot"] as? [String: Any]).map(historySummaryConfig)
+            ?? attempts.last?.snapshot
+        return RecoveryRecord(
+            id: id,
+            timestamp: timestamp,
+            audioFileName: audioFileName,
+            audioDurationMs: object["audioDurationMs"] as? Int ?? 0,
+            asrText: object["asrText"] as? String,
+            polishText: object["polishText"] as? String,
+            appName: object["appName"] as? String,
+            appBundleIdentifier: object["appBundleIdentifier"] as? String,
+            outcome: object["outcome"] as? String ?? "unknown",
+            errorMessage: object["errorMessage"] as? String,
+            snapshot: snapshot,
+            attempts: attempts.isEmpty ? nil : attempts,
+            injectionSnapshot: nil,
+            audioSHA256: object["audioSHA256"] as? String,
+            parentRecordID: (object["parentRecordID"] as? String).flatMap(UUID.init(uuidString:))
+        )
+    }
+
+    private func historySummaryAttempt(from object: [String: Any]) -> DictationAttempt? {
+        guard let idString = object["id"] as? String,
+              let id = UUID(uuidString: idString),
+              let snapshotObject = object["snapshot"] as? [String: Any],
+              let stagesObject = object["stages"] as? [String: Any] else { return nil }
+        return DictationAttempt(
+            id: id,
+            startedAt: historyDate(object["startedAt"]) ?? Date(timeIntervalSince1970: 0),
+            snapshot: historySummaryConfig(snapshotObject),
+            stages: historySummaryStages(stagesObject),
+            outcome: object["outcome"] as? String ?? "unknown",
+            injectionSnapshot: nil,
+            schemaVersion: object["schemaVersion"] as? Int,
+            kind: (object["kind"] as? String).flatMap(DictationAttemptKind.init(rawValue:))
+        )
+    }
+
+    private func historySummaryConfig(_ object: [String: Any]) -> TranscriptionConfig {
+        var config = TranscriptionConfig()
+        if let raw = object["provider"] as? String,
+           let provider = TranscriptionProvider(rawValue: raw) {
+            config.provider = provider
+        }
+        config.terminologyAlignmentEnabled = object["terminologyAlignmentEnabled"] as? Bool ?? true
+        config.correctionRulesEnabled = object["correctionRulesEnabled"] as? Bool ?? true
+        if let polish = object["textPolish"] as? [String: Any] {
+            if let raw = polish["provider"] as? String,
+               let provider = TextPolishProviderID(rawValue: raw) {
+                config.textPolish.provider = provider
+            }
+            if let raw = polish["mode"] as? String,
+               let mode = TextPolishMode(rawValue: raw) {
+                config.textPolish.mode = mode
+            }
+            config.textPolish.chatGPTAuthEnabled = polish["chatGPTAuthEnabled"] as? Bool ?? true
+        }
+        return config
+    }
+
+    private func historySummaryStages(_ object: [String: Any]) -> DictationStageAudit {
+        DictationStageAudit(
+            asrText: object["asrText"] as? String,
+            polishInput: object["polishInput"] as? String,
+            polishOutput: object["polishOutput"] as? String,
+            finalText: object["finalText"] as? String,
+            error: object["error"] as? String,
+            polishOutputs: object["polishOutputs"] as? [String],
+            asrRequestID: object["asrRequestID"] as? String,
+            protocolVersion: object["protocolVersion"] as? String,
+            partialAudio: object["partialAudio"] as? Bool,
+            asrPartialText: object["asrPartialText"] as? String,
+            asrSessions: nil,
+            polishProtectionReason: object["polishProtectionReason"] as? String
+        )
+    }
+
+    private func historyDate(_ value: Any?) -> Date? {
+        guard let string = value as? String else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: string) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: string)
     }
 
     private func readJournal(_ url: URL, expectedID: UUID?, hydrateSnapshots: Bool = true) throws -> RecoveryRecord {
