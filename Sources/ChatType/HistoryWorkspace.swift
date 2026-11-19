@@ -240,8 +240,6 @@ struct HistoryWorkspaceView: View {
     let recoveryDirectoryURL: URL
     let onRetryRecoveryRecord: (RecoveryRecord, UUID?) -> Void
     let onReprocessRecoveryRecord: (RecoveryRecord, UUID?) -> Void
-    let onRerunRecoveryTranscription: (RecoveryRecord, UUID?) -> Void
-    let onRerunRecoveryPolish: (RecoveryRecord, UUID?) -> Void
 
     @State private var copiedKey: String?
 
@@ -279,7 +277,7 @@ struct HistoryWorkspaceView: View {
                 .foregroundStyle(.secondary)
                 Text("History")
                     .font(SettingsTypography.pageTitle)
-                Text("逐条检查原声、转写、润色与最终输出。")
+                Text("原声、转写、对齐、润色与校正，一屏查看。")
                     .font(SettingsTypography.pageSubtitle)
                     .foregroundStyle(.secondary)
             }
@@ -292,16 +290,17 @@ struct HistoryWorkspaceView: View {
                     model.refreshIndex()
                 } label: {
                     Label("刷新", systemImage: "arrow.clockwise")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
                 .disabled(model.isLoadingIndex)
                 .help("重新读取本地语音索引")
-                Text("\(model.index.records.count) 条语音")
+                Text("\(model.index.records.count) 条")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
                 Text("·").foregroundStyle(.tertiary)
-                Label("仅保存在本机", systemImage: "lock")
+                Label("本机保存", systemImage: "lock")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -319,13 +318,13 @@ struct HistoryWorkspaceView: View {
                         .foregroundStyle(.secondary)
                     TextField("搜索文字、应用或日期", text: $model.query)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 13))
+                        .font(.system(size: 13.5))
                         .onChange(of: model.query) { _ in
                             model.reconcileSelection()
                         }
                 }
-                .padding(.horizontal, 9)
-                .frame(height: 34)
+                .padding(.horizontal, 11)
+                .frame(height: 38)
                 .background(Color(nsColor: .controlBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(
@@ -340,9 +339,9 @@ struct HistoryWorkspaceView: View {
                             model.reconcileSelection()
                         } label: {
                             Text(filter.title)
-                                .font(.system(size: 12, weight: model.filter == filter ? .semibold : .regular))
+                                .font(.system(size: 12.5, weight: model.filter == filter ? .semibold : .regular))
                                 .frame(maxWidth: .infinity)
-                                .frame(height: 28)
+                                .frame(height: 32)
                                 .background(
                                     model.filter == filter
                                         ? Color(nsColor: .textBackgroundColor)
@@ -439,7 +438,7 @@ struct HistoryWorkspaceView: View {
                 }
 
                 Text(record.displayTitle)
-                    .font(.system(size: 13))
+                    .font(.system(size: 13.5))
                     .foregroundStyle(.primary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
@@ -463,7 +462,7 @@ struct HistoryWorkspaceView: View {
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.vertical, 13)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(selected ? Color.accentColor.opacity(0.11) : Color.clear)
             .overlay(alignment: .leading) {
@@ -494,12 +493,10 @@ struct HistoryWorkspaceView: View {
                 selectedAttemptID: $model.selectedAttemptID,
                 copiedKey: $copiedKey,
                 onRetry: { onRetryRecoveryRecord(record, model.selectedAttemptID) },
-                onReprocess: { onReprocessRecoveryRecord(record, model.selectedAttemptID) },
-                onRerunTranscription: { onRerunRecoveryTranscription(record, model.selectedAttemptID) },
-                onRerunPolish: { onRerunRecoveryPolish(record, model.selectedAttemptID) }
+                onReprocess: { onReprocessRecoveryRecord(record, model.selectedAttemptID) }
             )
         } else {
-            HistoryEmptyState(title: "选择一条语音", symbol: "waveform", detail: "查看原声、转写、润色和最终输出。")
+            HistoryEmptyState(title: "选择一条语音", symbol: "waveform", detail: "查看原声、转写、对齐、润色与校正。")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -535,8 +532,7 @@ private struct HistoryDetailView: View {
     @Binding var copiedKey: String?
     let onRetry: () -> Void
     let onReprocess: () -> Void
-    let onRerunTranscription: () -> Void
-    let onRerunPolish: () -> Void
+    @State private var selectedStage: HistoryStagePosition = .asr
 
     private var audioURL: URL {
         record.audioURL(baseDirectory: recoveryDirectoryURL)
@@ -556,102 +552,123 @@ private struct HistoryDetailView: View {
 
     var body: some View {
         let view = presentation
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                detailHeader(view)
-                audioPlayer
-                stages(view)
-                textChain(view)
-                evidence(view)
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 20)
+        VStack(alignment: .leading, spacing: 11) {
+            detailHeader(view)
+            stages(view)
+            stageSummary(view)
+            textChain(view)
         }
-        .scrollIndicators(.automatic)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onChange(of: selectedAttemptID) { _ in
+            selectedStage = .asr
+        }
     }
 
     private func detailHeader(_ view: HistoryRecordPresentation) -> some View {
-        let finalText = view.artifacts.first(where: { $0.kind == .final })?.text
-        let polishText = view.artifacts.first(where: { $0.kind == .polish })?.text
-        let asrText = view.artifacts.first(where: { $0.kind == .asr })?.text
-        let copyText = finalText ?? polishText ?? asrText
-        let copyLabel: String
-        if finalText != nil || polishText != nil {
-            copyLabel = view.legacy ? "复制旧版文本" : "复制终稿"
-        } else if asrText != nil {
-            copyLabel = "复制 ASR"
-        } else {
-            copyLabel = "无文本"
-        }
         let canRetryOriginal = audioAvailable && !view.selectedAttemptIsDiagnostic
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 16) {
-                Text(view.title)
-                    .font(.system(size: 19, weight: .semibold))
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        return VStack(alignment: .leading, spacing: 10) {
+            audioPlayer
 
-                HStack(spacing: 6) {
-                    Button {
-                        copy(copyText ?? "", key: "final-\(record.id)")
-                    } label: {
-                        Label(copyLabel, systemImage: copiedKey == "final-\(record.id)" ? "checkmark" : "doc.on.doc")
+            HStack(alignment: .center, spacing: 14) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 7) {
+                        Label(view.status.label, systemImage: view.status.tone.symbol)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(view.status.tone.color)
+                            .padding(.horizontal, 9)
+                            .frame(height: 24)
+                            .background(view.status.tone.color.opacity(0.12))
+                            .clipShape(Capsule())
+                            .fixedSize()
+                        Text(record.timestamp.formatted(date: .numeric, time: .shortened))
+                            .fixedSize()
+                        Text("·")
+                        Text(view.formattedDuration)
+                            .fixedSize()
+                        if let app = record.appName {
+                            Text("·")
+                            Text("目标：\(app)")
+                                .lineLimit(1)
+                        }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(copyText?.isEmpty != false)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
 
+                    HStack(spacing: 7) {
+                        Text(view.routeSummary)
+                            .lineLimit(1)
+                        if view.attemptOptions.count > 1 {
+                            Text("·")
+                            attemptMenu(view)
+                        }
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+
+                    if let detail = view.status.detail,
+                       view.status.tone == .attention || view.status.tone == .failure {
+                        Label(detail, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(view.status.tone.color)
+                            .lineLimit(1)
+                            .help(detail)
+                    }
+                }
+                .layoutPriority(1)
+
+                Spacer(minLength: 10)
+
+                HStack(spacing: 10) {
                     Button(action: onRetry) {
                         Label("重试原路线", systemImage: "arrow.clockwise")
+                            .frame(minWidth: 116)
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .controlSize(.large)
                     .disabled(!canRetryOriginal)
-                    .help(canRetryOriginal ? "使用所选完整流程尝试的原路线重试。" : "复制并保留本次记录；诊断尝试请使用阶段重跑。")
+                    .help(canRetryOriginal ? "使用所选完整流程尝试的原路线重试。" : "诊断尝试请先切换到完整流程尝试。")
 
                     Button(action: onReprocess) {
                         Label("按当前流程重跑", systemImage: "arrow.triangle.2.circlepath")
+                            .frame(minWidth: 150)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .disabled(!audioAvailable)
                     .help(audioAvailable ? "使用当前 Workflow 设置重新完成整条流程。" : "原始音频缺失，不能重跑整条流程。")
                 }
                 .fixedSize()
             }
+        }
+    }
 
-            HStack(spacing: 7) {
-                Label(view.status.label, systemImage: view.status.tone.symbol)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(view.status.tone.color)
-                    .padding(.horizontal, 8)
-                    .frame(height: 22)
-                    .background(view.status.tone.color.opacity(0.12))
-                    .clipShape(Capsule())
-                Text(record.timestamp.formatted(date: .abbreviated, time: .shortened))
-                Text("·")
-                Text(view.routeSummary)
-                Text("·")
-                Text(view.formattedDuration)
-                if let app = record.appName {
-                    Text("·")
-                    Text("目标：\(app)")
+    private func attemptMenu(_ view: HistoryRecordPresentation) -> some View {
+        Menu {
+            ForEach(view.attemptOptions) { option in
+                Button {
+                    selectedAttemptID = option.id
+                } label: {
+                    HStack {
+                        Label(option.title, systemImage: option.id == view.selectedAttemptID ? "checkmark" : option.status.tone.symbol)
+                    }
                 }
             }
-            .font(.system(size: 11.5))
-            .foregroundStyle(.secondary)
-
-            if let detail = view.status.detail, view.status.tone == .attention || view.status.tone == .failure {
-                Label(detail, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(view.status.tone.color)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(view.status.tone.color.opacity(0.09))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "clock.arrow.circlepath")
+                Text(view.attemptOptions.first(where: { $0.id == view.selectedAttemptID })?.title ?? "选择尝试")
             }
+            .font(.system(size: 12, weight: .medium))
+            .padding(.horizontal, 7)
+            .frame(height: 26)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(Capsule())
         }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("切换这次录音的历史尝试")
     }
 
     @ViewBuilder
@@ -674,333 +691,270 @@ private struct HistoryDetailView: View {
     }
 
     private func stages(_ view: HistoryRecordPresentation) -> some View {
-        return VStack(alignment: .leading, spacing: 9) {
+        return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("处理流程")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13.5, weight: .semibold))
                 Spacer()
                 if view.legacy {
                     Text("旧记录 · 无分阶段明细")
-                        .font(.system(size: 11))
+                        .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
                 } else if let attempt = view.selectedAttempt {
                     Text("尝试 \(attemptIndex(view, attempt) + 1) · \(attempt.resolvedKind.label)")
-                        .font(.system(size: 11))
+                        .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
                 }
             }
 
             if view.legacy {
                 Text("这条记录来自旧版档案。保留原声、ASR 和旧版润色文本，不推断未保存的中间阶段。")
-                    .font(.system(size: 12))
+                    .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color(nsColor: .controlBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 9))
             } else {
-                HStack(spacing: 0) {
+                HStack(spacing: 6) {
                     ForEach(view.stages) { stage in
-                        stageCell(stage, isLast: stage.id == view.stages.last?.id)
+                        stageButton(stage)
                     }
-                }
-                .padding(.vertical, 9)
-                .padding(.horizontal, 8)
-                .background(Color(nsColor: .controlBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-
-                HStack(spacing: 8) {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 6) {
-                            ForEach(view.attemptOptions) { option in
-                                Button {
-                                    selectedAttemptID = option.id
-                                } label: {
-                                    HStack(spacing: 5) {
-                                        Circle()
-                                            .fill(option.status.tone.color)
-                                            .frame(width: 5, height: 5)
-                                        Text(option.title)
-                                        if option.isDiagnostic {
-                                            Text("诊断")
-                                                .font(.system(size: 11, weight: .semibold))
-                                                .padding(.horizontal, 4)
-                                                .padding(.vertical, 1)
-                                                .background(Color.secondary.opacity(0.12))
-                                                .clipShape(Capsule())
-                                        }
-                                    }
-                                    .font(.system(size: 11, weight: selectedAttemptID == option.id ? .semibold : .regular))
-                                    .padding(.horizontal, 8)
-                                    .frame(height: 27)
-                                    .background(selectedAttemptID == option.id ? Color.accentColor.opacity(0.12) : Color(nsColor: .controlBackgroundColor))
-                                    .clipShape(Capsule())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                    .scrollIndicators(.hidden)
-
-                    Spacer(minLength: 6)
-
-                    Button(action: onRerunTranscription) {
-                        Label("重新转写", systemImage: "text.alignleft")
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 11))
-                    .disabled(!view.canRerunTranscription)
-                    .help(view.canRerunTranscription ? "使用原始音频和当前识别设置创建新尝试。" : "原始音频缺失，不能重新转写。")
-
-                    Button(action: onRerunPolish) {
-                        Label("重新润色", systemImage: "sparkles")
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 11))
-                    .disabled(!view.canRerunPolish)
-                    .help(view.canRerunPolish ? "复用这次尝试的转写，使用当前润色设置创建新尝试。" : "这次尝试没有可复用的转写文本。")
                 }
             }
         }
     }
 
-    private func stageCell(_ stage: HistoryStagePresentation, isLast: Bool) -> some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 4) {
-                ZStack {
-                    Circle()
-                        .fill(stage.state.color.opacity(0.13))
-                        .frame(width: 30, height: 30)
+    private func stageButton(_ stage: HistoryStagePresentation) -> some View {
+        let selected = selectedStage == stage.position
+        return Button {
+            selectedStage = stage.position
+        } label: {
+            VStack(spacing: 5) {
+                HStack(spacing: 6) {
                     Image(systemName: stage.position.systemImage)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(stage.state.color)
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(stage.position.title)
+                        .font(.system(size: 12.5, weight: selected ? .semibold : .medium))
                 }
-                Text(stage.position.title)
-                    .font(.system(size: 11.5, weight: .semibold))
                 Text(stage.detail)
-                    .font(.system(size: 11))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .foregroundStyle(selected ? Color.primary : stage.state.color)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 56)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 8)
+            .background(selected ? Color.accentColor.opacity(0.11) : Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(
+                        selected
+                            ? Color.accentColor.opacity(0.38)
+                            : Color(nsColor: .separatorColor).opacity(0.24),
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(stage.position.title)：\(stage.detail)")
+        .help("\(stage.position.title)：\(stage.detail)")
+    }
+
+    @ViewBuilder
+    private func stageSummary(_ view: HistoryRecordPresentation) -> some View {
+        if !view.legacy, let stage = view.stages.first(where: { $0.position == selectedStage }) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: stage.position.systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(stage.state.color)
+                    .frame(width: 18)
+                Text(stage.position.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                Text(stageNarrative(view, stage: stage.position))
+                    .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+            .accessibilityElement(children: .combine)
+        }
+    }
 
-            if !isLast {
-                Rectangle()
-                    .fill(stage.state == .complete ? Color.green.opacity(0.45) : Color(nsColor: .secondaryLabelColor).opacity(0.18))
-                    .frame(height: 1)
-                    .frame(maxWidth: 24)
+    private func stageNarrative(
+        _ view: HistoryRecordPresentation,
+        stage: HistoryStagePosition
+    ) -> String {
+        let snapshot = view.selectedAttempt?.snapshot ?? record.snapshot
+        switch stage {
+        case .audio:
+            return audioAvailable
+                ? "本机原始 WAV · \(view.formattedDuration) · 可播放"
+                : "原始 WAV 缺失；文本仍可查看和复制。"
+        case .asr:
+            guard let snapshot else { return "旧记录未保存识别路线。" }
+            let count = view.artifacts.first(where: { $0.kind == .asr })?.text?.count ?? 0
+            let partial = view.selectedAttempt?.stages.partialAudio == true ? " · 部分录音" : ""
+            let model = snapshot.provider == .openAICompatible
+                ? snapshot.provider.modelLabel(config: snapshot)
+                : "\(snapshot.provider.modelLabel(config: snapshot)) · 服务端选择模型"
+            return "\(model) · \(count) 字\(partial)"
+        case .alignment:
+            guard let attempt = view.selectedAttempt else { return "旧记录未保存对齐阶段。" }
+            guard attempt.snapshot.terminologyAlignmentEnabled else {
+                return "已关闭；转写文本直接进入下一阶段。"
             }
+            let aligned = view.artifacts.first(where: { $0.kind == .aligned })?.text
+            guard aligned?.isEmpty == false else {
+                return "已执行；这次尝试没有单独保存对齐文本。"
+            }
+            return "本地词库 · \(view.alignmentChanges.shortDetail)"
+        case .polish:
+            guard let snapshot else { return "旧记录未保存润色路线。" }
+            guard snapshot.textPolish.isEnabled else {
+                return "润色已关闭；对齐文本直接进入校正。"
+            }
+            let count = view.artifacts.first(where: { $0.kind == .output })?.text?.count ?? 0
+            let protection = view.selectedAttempt?.stages.polishProtectionReason.map { " · 安全保护：\($0)" } ?? ""
+            let model = snapshot.textPolish.provider.modelLabel(config: snapshot.textPolish)
+            let service = snapshot.textPolish.provider == .doubaoIME ? "\(model) · 服务端选择模型" : model
+            return "\(service) · \(count) 字\(protection)"
+        case .correction:
+            guard let snapshot else { return "旧记录未保存校正配置。" }
+            guard snapshot.correctionRulesEnabled else {
+                return "本地校正已关闭；输出保持润色文本。"
+            }
+            return view.correctionChanges.shortDetail
+        case .output:
+            if view.selectedAttempt?.resolvedKind != .full, view.selectedAttempt != nil {
+                return "仅诊断尝试，没有执行输出。"
+            }
+            return "\(view.status.label) · \(record.appName ?? "目标未记录")"
         }
     }
 
     private func textChain(_ view: HistoryRecordPresentation) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("文本链")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13.5, weight: .semibold))
                 Spacer()
-                if let aligned = view.artifacts.first(where: { $0.kind == .aligned })?.text,
-                   let polished = view.artifacts.first(where: { $0.kind == .polish })?.text,
-                   let summary = HistoryRecordPresentation.textDifferenceSummary(from: aligned, to: polished) {
-                    Text(summary)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
+                Text("ASR 原文 → 对齐 → 输出")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
             }
 
-            if view.legacy {
-                VStack(spacing: 8) {
-                    ForEach(view.artifacts) { artifact in
-                        artifactCard(artifact)
-                    }
-                }
-            } else {
-                HStack(alignment: .top, spacing: 0) {
-                    ForEach(Array(view.artifacts.prefix(2))) { artifact in
-                        artifactColumn(artifact)
+            HStack(spacing: 0) {
+                ForEach(Array(view.artifacts.enumerated()), id: \.element.id) { index, artifact in
+                    artifactColumn(artifact)
+                    if index < view.artifacts.count - 1 {
                         Divider()
                     }
-                    VStack(alignment: .leading, spacing: 10) {
-                        if let polish = view.artifacts.first(where: { $0.kind == .polish }) {
-                            artifactContent(polish)
-                        }
-                        if let final = view.artifacts.first(where: { $0.kind == .final }) {
-                            Divider()
-                            artifactContent(final)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
                 }
-                .background(Color(nsColor: .controlBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.65))
+            .clipShape(RoundedRectangle(cornerRadius: 11))
+            .overlay(
+                RoundedRectangle(cornerRadius: 11)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.3), lineWidth: 1)
+            )
         }
+        .frame(maxHeight: .infinity)
     }
 
     private func artifactColumn(_ artifact: HistoryTextArtifact) -> some View {
-        artifactContent(artifact)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-    }
-
-    private func artifactCard(_ artifact: HistoryTextArtifact) -> some View {
-        artifactContent(artifact)
-            .padding(12)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-
-    private func artifactContent(_ artifact: HistoryTextArtifact) -> some View {
-        let key = "\(record.id)-\(artifact.kind.rawValue)"
-        return VStack(alignment: .leading, spacing: 6) {
+        let isSelected = selectedArtifact == artifact.kind
+        return VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
                 Text(artifact.kind.title)
-                    .font(.system(size: 11.5, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    copy(artifact.text ?? "", key: key)
-                } label: {
-                    Image(systemName: copiedKey == key ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 11))
-                }
-                .buttonStyle(.borderless)
-                .disabled(artifact.text?.isEmpty != false)
-                .accessibilityLabel("复制\(artifact.kind.title)")
-            }
-
-            if let text = artifact.text, !text.isEmpty {
-                Text(text)
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(artifact.isFailurePartial ? .secondary : .primary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("未生成")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .italic()
+                Spacer(minLength: 4)
+                copyButton(for: artifact)
             }
 
             if let note = artifact.note, !note.isEmpty {
                 Text(note)
                     .font(.system(size: 11))
                     .foregroundStyle(artifact.isFailurePartial ? .orange : .secondary)
+                    .lineLimit(1)
+                    .help(note)
             }
+
+            ScrollView(.vertical) {
+                if let text = artifact.text, !text.isEmpty {
+                    Text(text)
+                        .font(.system(size: 13))
+                        .foregroundStyle(artifact.isFailurePartial ? .secondary : .primary)
+                        .lineSpacing(2)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                } else {
+                    Text("未生成")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.secondary)
+                        .italic()
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(isSelected ? Color.accentColor.opacity(0.045) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selectedStage = stagePosition(for: artifact.kind)
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(isSelected ? Color.accentColor.opacity(0.22) : Color.clear, lineWidth: 1)
+                .padding(3)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(artifact.kind.title)\(isSelected ? "，已选中" : "")")
+    }
+
+    private func copyButton(for artifact: HistoryTextArtifact) -> some View {
+        let key = "\(record.id)-\(artifact.kind.rawValue)"
+        return Button {
+            copy(artifact.text ?? "", key: key)
+        } label: {
+            Image(systemName: copiedKey == key ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .disabled(artifact.text?.isEmpty != false)
+        .accessibilityLabel("复制\(artifact.kind.title)")
+        .help("复制\(artifact.kind.title)")
+    }
+
+    private var selectedArtifact: HistoryTextArtifactKind? {
+        switch selectedStage {
+        case .asr: return .asr
+        case .alignment: return .aligned
+        case .polish, .correction, .output: return .output
+        case .audio: return nil
         }
     }
 
-    private func evidence(_ view: HistoryRecordPresentation) -> some View {
-        let asr = view.artifacts.first(where: { $0.kind == .asr })
-        let aligned = view.artifacts.first(where: { $0.kind == .aligned })
-        let polish = view.artifacts.first(where: { $0.kind == .polish })
-
-        let asrDetail: String
-        let asrValue: String
-        if let attempt = view.selectedAttempt, attempt.resolvedKind == .polishOnly {
-            asrValue = "复用已有转写"
-        } else {
-            asrValue = view.selectedAttempt?.snapshot.provider.title ?? "旧记录"
-        }
-        if let text = asr?.text, !text.isEmpty {
-            asrDetail = "\(text.count) 字"
-        } else {
-            asrDetail = asr?.note ?? "未生成"
-        }
-
-        var alignmentValue: String
-        var alignmentDetail: String
-        if let attempt = view.selectedAttempt {
-            if !attempt.snapshot.terminologyAlignmentEnabled {
-                alignmentValue = "关闭"
-                alignmentDetail = "配置关闭"
-            } else if aligned?.text?.isEmpty == false {
-                alignmentValue = "已应用"
-                alignmentDetail = "完整文本可见"
-            } else if asr?.text?.isEmpty == false {
-                alignmentValue = "已执行"
-                alignmentDetail = "中间文本未归档"
-            } else {
-                alignmentValue = "未执行"
-                alignmentDetail = "无转写文本"
-            }
-        } else {
-            alignmentValue = "旧记录"
-            alignmentDetail = "无分阶段明细"
-        }
-
-        var polishValue: String
-        var polishDetail: String
-        if let attempt = view.selectedAttempt {
-            if !attempt.snapshot.textPolish.isEnabled {
-                polishValue = "关闭"
-                polishDetail = "配置关闭"
-            } else if polish?.isFailurePartial == true {
-                polishValue = "未采用"
-                polishDetail = "失败前部分输出"
-            } else if polish?.text?.isEmpty == false {
-                polishValue = attempt.snapshot.textPolish.provider.title
-                polishDetail = "输出已保存"
-            } else {
-                polishValue = "未生成"
-                polishDetail = "无润色输出"
-            }
-        } else {
-            polishValue = "旧记录"
-            polishDetail = "未区分最终化"
-        }
-
-        if let attempt = view.selectedAttempt, attempt.resolvedKind == .asrOnly {
-            alignmentValue = "未执行"
-            alignmentDetail = "仅转写尝试"
-            polishValue = "未执行"
-            polishDetail = "仅转写尝试"
-        }
-        let outputValue = view.selectedAttempt?.resolvedKind == .full || view.selectedAttempt == nil
-            ? view.status.label
-            : "仅诊断"
-        let outputDetail = view.selectedAttempt?.resolvedKind == .full || view.selectedAttempt == nil
-            ? (record.appName ?? "目标未记录")
-            : "未执行输出"
-
-        return VStack(alignment: .leading, spacing: 9) {
-            HStack {
-                Text("处理证据")
-                    .font(.system(size: 14, weight: .semibold))
-                Spacer()
-                Text("原声与每次尝试分开保留")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            HStack(spacing: 0) {
-                evidenceCell("转写", value: asrValue, detail: asrDetail)
-                evidenceCell("对齐", value: alignmentValue, detail: alignmentDetail)
-                evidenceCell("润色", value: polishValue, detail: polishDetail)
-                evidenceCell("输出", value: outputValue, detail: outputDetail, isLast: true)
-            }
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-        }
-    }
-
-    private func evidenceCell(_ title: String, value: String, detail: String, isLast: Bool = false) -> some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                Text(value)
-                    .font(.system(size: 12, weight: .semibold))
-                    .lineLimit(1)
-                Text(detail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            if !isLast { Divider() }
+    private func stagePosition(for artifact: HistoryTextArtifactKind) -> HistoryStagePosition {
+        switch artifact {
+        case .asr: return .asr
+        case .aligned: return .alignment
+        case .output: return .polish
         }
     }
 
@@ -1032,13 +986,13 @@ private struct HistoryAudioPlayerView: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             Button {
                 model.toggle()
             } label: {
                 Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 36, height: 36)
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 40, height: 40)
                     .foregroundStyle(.white)
                     .background(Color.accentColor)
                     .clipShape(Circle())
@@ -1049,20 +1003,20 @@ private struct HistoryAudioPlayerView: View {
             HistoryWaveformView(peaks: model.peaks, progress: model.progress) { fraction in
                 model.seek(to: fraction)
             }
-            .frame(height: 36)
+            .frame(height: 40)
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text("\(format(model.currentTime)) / \(format(model.duration))")
-                    .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
                     .monospacedDigit()
-                Text("原始 WAV")
-                    .font(.system(size: 11))
+                Text("本机原声")
+                    .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
             }
-            .frame(width: 98, alignment: .trailing)
+            .frame(width: 104, alignment: .trailing)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 11)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .onDisappear { model.stop() }

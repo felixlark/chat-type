@@ -74,6 +74,65 @@ enum TranscriptionProvider: String, Codable, Sendable, CaseIterable, Identifiabl
     }
 }
 
+enum LivePreviewProvider: String, Codable, Sendable, Equatable, CaseIterable, Identifiable {
+    case automatic
+    case doubaoIME
+    case appleSpeech
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .automatic: return "跟随识别服务"
+        case .doubaoIME: return "豆包实时预览"
+        case .appleSpeech: return "Apple 本机预览"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .automatic:
+            return "豆包识别使用豆包预览；ChatGPT 识别在可用时使用 Apple 本机预览。"
+        case .doubaoIME:
+            return "录音同时送往豆包实时接口；最终转写仍使用识别服务中的选择。"
+        case .appleSpeech:
+            return "录音只在本机预览；最终转写仍使用 ChatGPT 账户的完整录音路线。"
+        }
+    }
+
+    func resolvedSource(
+        for provider: TranscriptionProvider,
+        applePreviewAvailable: Bool
+    ) -> LivePreviewSource? {
+        switch self {
+        case .automatic:
+            if provider == .doubaoIME { return .doubaoIME }
+            if provider == .chatGPTManagedAuth, applePreviewAvailable { return .appleSpeech }
+            return nil
+        case .doubaoIME:
+            return .doubaoIME
+        case .appleSpeech:
+            return provider == .chatGPTManagedAuth && applePreviewAvailable ? .appleSpeech : nil
+        }
+    }
+
+    func recorderSampleRate(
+        for provider: TranscriptionProvider,
+        previewEnabled: Bool,
+        configuredSampleRate: Int
+    ) -> Int {
+        guard provider == .doubaoIME || (previewEnabled && self == .doubaoIME) else {
+            return configuredSampleRate
+        }
+        return 16_000
+    }
+}
+
+enum LivePreviewSource: Sendable, Equatable {
+    case doubaoIME
+    case appleSpeech
+}
+
 enum TextPolishMode: String, Codable, Sendable, Equatable, CaseIterable {
     case automaticWhenKeyAvailable
     case disabled
@@ -175,6 +234,7 @@ struct TextPolishConfig: Codable, Sendable, Equatable {
 struct TranscriptionConfig: Codable, Sendable, Equatable {
     var provider: TranscriptionProvider = .chatGPTManagedAuth
     var livePreviewEnabled: Bool = true
+    var livePreviewProvider: LivePreviewProvider = .automatic
     var terminologyAlignmentEnabled: Bool = true
     var correctionRulesEnabled: Bool = true
     var hotkeyKeyCode: UInt32 = 96
@@ -206,6 +266,7 @@ struct TranscriptionConfig: Codable, Sendable, Equatable {
         hotkeyModifiers = try container.decodeIfPresent(UInt32.self, forKey: .hotkeyModifiers) ?? 0
         hotkeyIsCustomized = try container.decodeIfPresent(Bool.self, forKey: .hotkeyIsCustomized) ?? false
         livePreviewEnabled = try container.decodeIfPresent(Bool.self, forKey: .livePreviewEnabled) ?? true
+        livePreviewProvider = try container.decodeIfPresent(LivePreviewProvider.self, forKey: .livePreviewProvider) ?? .automatic
         terminologyAlignmentEnabled = try container.decodeIfPresent(Bool.self, forKey: .terminologyAlignmentEnabled) ?? true
         correctionRulesEnabled = try container.decodeIfPresent(Bool.self, forKey: .correctionRulesEnabled) ?? true
         chatGPTURL = try container.decodeIfPresent(String.self, forKey: .chatGPTURL) ?? "https://chatgpt.com/backend-api/transcribe"

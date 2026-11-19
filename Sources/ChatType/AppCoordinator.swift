@@ -128,10 +128,23 @@ final class AppCoordinator {
         self.soundFeedback = soundFeedback
         let recordingStore = self.recoveryRecorder as? RecoveryStore
         self.recorderFactory = recorderFactory ?? { current in
-            if #available(macOS 26.0, *), current.provider == .chatGPTManagedAuth, current.livePreviewEnabled {
+            let previewSource = current.livePreviewEnabled
+                ? current.livePreviewProvider.resolvedSource(
+                    for: current.provider,
+                    applePreviewAvailable: LocalSpeechPreviewAvailability.isAvailable
+                )
+                : nil
+            if #available(macOS 26.0, *), previewSource == .appleSpeech {
                 return LocalSpeechRecorder(sampleRateHz: current.sampleRateHz, store: recordingStore ?? RecoveryStore(), finalizationTimeoutSeconds: current.localFinalizationTimeoutSeconds, hintTerms: current.hintTerms)
             }
-            return AudioRecorder(sampleRateHz: current.provider == .doubaoIME ? 16_000 : current.sampleRateHz, recoveryStore: recordingStore)
+            return AudioRecorder(
+                sampleRateHz: current.livePreviewProvider.recorderSampleRate(
+                    for: current.provider,
+                    previewEnabled: current.livePreviewEnabled,
+                    configuredSampleRate: current.sampleRateHz
+                ),
+                recoveryStore: recordingStore
+            )
         }
         self.statusMenuFactory = statusMenuFactory
         self.pipelineFactory = pipelineFactory
@@ -356,12 +369,29 @@ final class AppCoordinator {
                         try? recorder.cancelRecording()
                         throw RecorderError.recordingStorageFailed(error.localizedDescription)
                     }
-                    if sessionConfig.transcription.provider == .doubaoIME, sessionConfig.transcription.livePreviewEnabled {
-                        let store = self.recoveryRecorder as? RecoveryStore
-                        self.liveDoubao = DoubaoLiveRecognition(url: url, sessionAudit: { sessions in
-                            do { try store?.recordASRSessions(audioURL: url, attemptID: recordingAttemptID, sessions: sessions) }
-                            catch { throw RecorderError.recordingStorageFailed(error.localizedDescription) }
-                        })
+                    let previewSource = sessionConfig.transcription.livePreviewEnabled
+                        ? sessionConfig.transcription.livePreviewProvider.resolvedSource(
+                            for: sessionConfig.transcription.provider,
+                            applePreviewAvailable: LocalSpeechPreviewAvailability.isAvailable
+                        )
+                        : nil
+                    if previewSource == .doubaoIME {
+                        var sessionAudit: (@Sendable ([DoubaoSessionAttempt]) throws -> Void)?
+                        if let store = self.recoveryRecorder as? RecoveryStore,
+                           sessionConfig.transcription.provider == .doubaoIME {
+                            sessionAudit = { sessions in
+                                do {
+                                    try store.recordASRSessions(
+                                        audioURL: url,
+                                        attemptID: recordingAttemptID,
+                                        sessions: sessions
+                                    )
+                                } catch {
+                                    throw RecorderError.recordingStorageFailed(error.localizedDescription)
+                                }
+                            }
+                        }
+                        self.liveDoubao = DoubaoLiveRecognition(url: url, sessionAudit: sessionAudit)
                     }
                 }
                 logger.info("Recording session started successfully")
@@ -410,7 +440,13 @@ final class AppCoordinator {
         do {
             stopRecordingLevelUpdates()
             var audio = try recorder.stopRecording()
-            if let live = liveDoubao { audio.cloudTranscript = live.finish(audio) }
+            if let live = liveDoubao {
+                if (recordingConfig ?? config).transcription.provider == .doubaoIME {
+                    audio.cloudTranscript = live.finish(audio)
+                } else {
+                    live.cancel()
+                }
+            }
             liveDoubao = nil
             recordingStartedAt = nil
             state = .processing
@@ -782,12 +818,6 @@ final class AppCoordinator {
                 onReprocessRecoveryRecord: { [weak self] record, attemptID in
                     self?.reprocessRecoveryRecord(record, attemptID: attemptID)
                 },
-                onRerunRecoveryTranscription: { [weak self] record, attemptID in
-                    self?.rerunRecoveryTranscription(record, attemptID: attemptID)
-                },
-                onRerunRecoveryPolish: { [weak self] record, attemptID in
-                    self?.rerunRecoveryPolish(record, attemptID: attemptID)
-                },
                 onOpenConfigFolder: { [weak self] in
                     self?.openConfigFolder()
                 },
@@ -883,150 +913,6 @@ final class AppCoordinator {
         overlay.showProcessing()
         startProcessing(audio: audio, sessionID: sessionID, transcriptionConfig: replay,
             injectionConfig: injection, launchAppContext: replayContext, attemptPolicy: .manualRetry)
-    }
-
-    private func rerunRecoveryTranscription(_ record: RecoveryRecord, attemptID: UUID?) {
-        rerunRecoveryStage(record, attemptID: attemptID, kind: .asrOnly)
-    }
-
-    private func rerunRecoveryPolish(_ record: RecoveryRecord, attemptID: UUID?) {
-        rerunRecoveryStage(record, attemptID: attemptID, kind: .polishOnly)
-    }
-
-    private func rerunRecoveryStage(
-        _ record: RecoveryRecord,
-        attemptID: UUID?,
-        kind: DictationAttemptKind
-    ) {
-        guard state == .idle else { NSSound.beep(); return }
-        let audioURL = record.audioURL(baseDirectory: recoveryRecorder.directoryURL)
-        guard FileManager.default.fileExists(atPath: audioURL.path) else {
-            overlay.showError("Saved recovery audio is missing.")
-            return
-        }
-        let selectedAttempt = attemptID.flatMap { id in
-            record.attempts?.first(where: { $0.id == id })
-        } ?? record.attempts?.last(where: { $0.resolvedKind == .full })
-            ?? record.attempts?.last
-        guard applyPendingPreferences() else { return }
-
-        let transcriptionConfig = config.transcription
-        let injectionConfig = config.injection
-        let stageASRText = selectedAttempt?.stages.asrText
-            ?? selectedAttempt?.stages.asrPartialText
-            ?? record.asrText
-        if kind == .polishOnly, stageASRText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
-            overlay.showError("这次尝试没有可复用的转写文本，不能单独重新润色。")
-            return
-        }
-
-        let partial = selectedAttempt?.stages.partialAudio == true
-            || ["interrupted", "cancelled"].contains(record.outcome)
-            || { if case .interruptedInput = PCMRecordingIntegrityAnalyzer().analyze(wavData: (try? Data(contentsOf: audioURL)) ?? Data()) { return true }; return false }()
-        if partial, !replayDecision(.partialAudio) { return }
-
-        let sessionID = UUID()
-        activeSessionID = sessionID
-        state = .processing
-        statusMenu?.update(state: .processing, detail: kind == .asrOnly ? "重新转写" : "重新润色")
-        let audio = RecordedAudio(
-            fileURL: audioURL,
-            durationMs: record.audioDurationMs,
-            previewText: stageASRText ?? "",
-            isPartialReplay: partial
-        )
-        let pipeline = pipelineFactory(transcriptionConfig, authManager, .manualRetry)
-        guard let stagePipeline = pipeline as? any DictationStageRerunning else {
-            state = .idle
-            activeSessionID = nil
-            overlay.showError("当前处理路线不支持单独重跑这个阶段。")
-            return
-        }
-
-        let newAttemptID = UUID()
-        let replayContext = launchAppContextProvider()
-        overlay.beginSession(context: replayContext, captionsEnabled: false)
-        overlay.showProcessing()
-        processingTask?.cancel()
-        processingTask = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    if self.activeSessionID == sessionID || self.activeSessionID == nil {
-                        self.processingTask = nil
-                    }
-                }
-            }
-            do {
-                let stages: DictationStageAudit
-                let outcome: String
-                if kind == .asrOnly {
-                    stages = try await stagePipeline.transcribeOnly(audio: audio)
-                    outcome = "asrComplete"
-                } else {
-                    stages = try await stagePipeline.polishOnly(
-                        asrText: stageASRText ?? "",
-                        partialAudio: partial
-                    )
-                    outcome = "polishComplete"
-                }
-                guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
-                try self.recoveryRecorder.record(RecoveryRecordInput(
-                    timestamp: Date(),
-                    sourceAudioURL: audioURL,
-                    durationMs: record.audioDurationMs,
-                    asrText: stages.asrText,
-                    polishText: stages.polishOutput,
-                    appName: record.appName,
-                    appBundleIdentifier: record.appBundleIdentifier,
-                    outcome: outcome,
-                    errorMessage: nil,
-                    snapshot: transcriptionConfig,
-                    attemptID: newAttemptID,
-                    stages: stages,
-                    injectionSnapshot: injectionConfig,
-                    attemptKind: kind
-                ))
-                guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
-                self.overlay.hide()
-                self.state = .idle
-                self.activeSessionID = nil
-                self.statusMenu?.update(state: .ready, detail: kind == .asrOnly ? "重新转写完成" : "重新润色完成")
-                self.notifier.notify(
-                    title: "ChatType",
-                    body: kind == .asrOnly ? "重新转写完成；原结果仍保留。" : "重新润色完成；原结果仍保留。"
-                )
-            } catch is CancellationError {
-                return
-            } catch {
-                guard !Task.isCancelled, self.shouldContinue(sessionID: sessionID) else { return }
-                var fallbackStages = DictationStageAudit()
-                fallbackStages.error = error.localizedDescription
-                let stages = (error as? DictationPipelineFailure)?.stages ?? fallbackStages
-                try? self.recoveryRecorder.record(RecoveryRecordInput(
-                    timestamp: Date(),
-                    sourceAudioURL: audioURL,
-                    durationMs: record.audioDurationMs,
-                    asrText: stages.asrText,
-                    polishText: stages.polishOutput,
-                    appName: record.appName,
-                    appBundleIdentifier: record.appBundleIdentifier,
-                    outcome: "error",
-                    errorMessage: error.localizedDescription,
-                    snapshot: transcriptionConfig,
-                    attemptID: newAttemptID,
-                    stages: stages,
-                    injectionSnapshot: injectionConfig,
-                    attemptKind: kind
-                ))
-                self.overlay.showError("阶段重跑失败：\(error.localizedDescription)")
-                self.state = .idle
-                self.activeSessionID = nil
-                self.statusMenu?.update(state: .error, detail: "阶段重跑失败")
-                self.notifier.notify(title: "ChatType", body: "阶段重跑失败：\(error.localizedDescription)")
-            }
-        }
     }
 
     private func openConfigFolder() {
@@ -1174,7 +1060,10 @@ final class AppCoordinator {
         switch demoState {
         case .recording:
             overlay.showRecording(elapsedText: "00:07")
-            overlay.updateRecording(level: 0.72, elapsedText: "00:07")
+            let levels: [CGFloat] = [0.38, 0.74, 0.52, 0.92, 0.61, 0.84, 0.47, 0.70]
+            for index in 0..<14 {
+                overlay.updateRecording(level: levels[index % levels.count], elapsedText: "00:07")
+            }
             // Explicit, local-only subtitle demo: no microphone or document access.
             overlay.updateTranscriptPreview("实时字幕在这里显示，自动换行。说话时可以切换焦点，录音继续。")
         case .processing:

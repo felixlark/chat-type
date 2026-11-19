@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0 (149)
+
+- Reworked History into one fixed-screen detail: waveform first, two whole-flow actions, clickable stages with model labels, a word-level 校正 summary and three independently copyable text columns (ASR 原文, 对齐后, 润色输出). Removed the duplicate finalization artifact, stage-rerun row and processing-evidence block.
+- Added an explicit live-preview source choice in the 录音 workflow stage: follow the recognizer, use Doubao streaming preview, or use Apple SpeechAnalyzer with ChatGPT recognition. The UI states when preview audio goes to Doubao.
+- Fixed Doubao preview when final recognition remains ChatGPT: this combination now records mono 16 kHz PCM for the Doubao growing-WAV reader instead of silently failing on the configured 24 kHz file.
+- Reworked the Listening HUD waveform from a center-mirrored glyph into a flat-bottom, nine-bar moving spectrum with independent bar heights and the existing ChatType palette.
+- Aligned the HUD leading visual, title/description block, timer and inline controls to one shared bottom edge across recording, processing, success, error and retryable-error states.
+- Made the Settings window open maximized to the built-in display’s visible frame, identified through `CGDisplayIsBuiltin`, with a first-screen fallback and minimum-size preservation.
+- Clarified Account service capabilities as 实时预览, 识别 and 润色; removed duplicate permissions and the advanced compatible entry from Account; Apple availability now shows a green check; missing GLM/Qwen keys show red 需要填写.
+- Clarified that ChatGPT Auth polish uses the ChatGPT account session at `chatgpt.com`, not an OpenAI Platform API key; displayed token values are local estimates, not billing.
+
 ## 0.6.0 (148)
 
 - Rebuilt Account, Workflow, Settings and History with a shared modern macOS layout: larger type, clearer section hierarchy, native status pills, grouped cards and a persistent, uncompressed save bar.

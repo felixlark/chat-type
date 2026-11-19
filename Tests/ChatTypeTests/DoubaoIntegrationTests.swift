@@ -169,6 +169,15 @@ private func doubaoTestWAV(samples: Int = 1280, rate: UInt32 = 16000, dataLength
     #expect(try reader.next(final: true) == nil)
 }
 
+@Test func doubaoGrowingWavRejectsNonSixteenKilohertzPreviewAudio() throws {
+    let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+    defer { try? FileManager.default.removeItem(at: path) }
+    try doubaoTestWAV(samples: 100, rate: 24_000, dataLength: 0).write(to: path)
+    #expect(throws: DoubaoError.audioFormat) {
+        _ = try DoubaoGrowingPCM(url: path)
+    }
+}
+
 private final class TestDoubaoSocket: DoubaoSocket, @unchecked Sendable {
     private let lock = NSLock()
     private var queue: [Data] = []

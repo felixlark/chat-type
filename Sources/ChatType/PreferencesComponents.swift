@@ -136,16 +136,19 @@ extension PreferencesView {
                 performRepairAction(action)
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.large)
         case .secondary:
             Button(action.title) {
                 performRepairAction(action)
             }
             .buttonStyle(.bordered)
+            .controlSize(.large)
         case .utility:
             Button(action.title) {
                 performRepairAction(action)
             }
             .buttonStyle(.borderless)
+            .controlSize(.regular)
         }
     }
 }

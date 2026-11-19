@@ -20,8 +20,6 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         recoveryDirectoryURL: URL,
         onRetryRecoveryRecord: @escaping (RecoveryRecord, UUID?) -> Void,
         onReprocessRecoveryRecord: @escaping (RecoveryRecord, UUID?) -> Void,
-        onRerunRecoveryTranscription: @escaping (RecoveryRecord, UUID?) -> Void,
-        onRerunRecoveryPolish: @escaping (RecoveryRecord, UUID?) -> Void,
         onOpenConfigFolder: @escaping () -> Void,
         focusRecoveryHistory: Bool = false,
         onClose: @escaping () -> Void = {}
@@ -39,8 +37,6 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
             recoveryDirectoryURL: recoveryDirectoryURL,
             onRetryRecoveryRecord: onRetryRecoveryRecord,
             onReprocessRecoveryRecord: onReprocessRecoveryRecord,
-            onRerunRecoveryTranscription: onRerunRecoveryTranscription,
-            onRerunRecoveryPolish: onRerunRecoveryPolish,
             onOpenConfigFolder: onOpenConfigFolder,
             focusRecoveryHistory: focusRecoveryHistory
         )
@@ -57,11 +53,11 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         window.title = "ChatType Settings"
         window.isReleasedWhenClosed = false
         window.isRestorable = false
-        window.center()
         window.contentViewController = hostingController
 
         super.init(window: window)
         window.delegate = self
+        applyDefaultPlacement(to: window)
     }
 
     @available(*, unavailable)
@@ -70,9 +66,23 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func show() {
+        if let window,
+           !window.isVisible || !PreferencesWindowPlacement.isBuiltIn(window.screen) {
+            applyDefaultPlacement(to: window)
+        }
         window?.makeKeyAndOrderFront(nil)
         window?.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func applyDefaultPlacement(to window: NSWindow) {
+        guard let frame = PreferencesWindowPlacement.maximizedFrame(
+            in: PreferencesWindowPlacement.screens()
+        ) else {
+            window.center()
+            return
+        }
+        window.setFrame(frame, display: false)
     }
 
     func windowWillClose(_ notification: Notification) {
