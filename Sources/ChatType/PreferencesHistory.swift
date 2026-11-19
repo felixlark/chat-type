@@ -22,7 +22,7 @@ extension PreferencesView {
             detail = "仅发送整理输入文本到 ime.doubao.com。无须账户登录，服务可用性与费用未作保证；未实测前不显示已连接。"
         case .chatGPTAuth:
             detail = ready
-                ? "账户已连接。所选模型：\(config.transcription.textPolish.chatGPTResponseModel)。"
+                ? "账户已连接。模型：\(config.transcription.textPolish.chatGPTResponseModel)。使用 ChatGPT 账户会话，不调用 OpenAI Platform API；实际额度由账户决定。"
                 : authSnapshot.detail
         case .glmFlash:
             detail = ready ? "GLM 密钥已保存；润色时会检查服务可用性。" : "请先保存 GLM API Key。"
@@ -45,7 +45,7 @@ extension PreferencesView {
                     .foregroundStyle(.secondary)
                 Text(provider == .doubaoIME
                     ? "记录：\(usage.attempts) 次尝试，\(usage.succeeded) 次完成；服务未提供 token 用量与费用。"
-                    : "Attributed usage: \(usage.attempts) attempts, \(usage.succeeded) succeeded, \(usage.inputTokens) input tokens, \(usage.outputTokens) output tokens.")
+                    : "本地估算：\(usage.attempts) 次尝试，\(usage.succeeded) 次完成，约 \(usage.inputTokens) 输入 / \(usage.outputTokens) 输出 token；不是服务账单。")
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
                 if unattributedPolishAttempts > 0 {

@@ -158,6 +158,76 @@ func configRoundTripPreservesFeedbackSoundSetting() throws {
 }
 
 @Test
+func livePreviewProviderResolvesPerRecognitionRoute() {
+    #expect(LivePreviewProvider.automatic.resolvedSource(
+        for: .doubaoIME,
+        applePreviewAvailable: true
+    ) == .doubaoIME)
+    #expect(LivePreviewProvider.automatic.resolvedSource(
+        for: .chatGPTManagedAuth,
+        applePreviewAvailable: true
+    ) == .appleSpeech)
+    #expect(LivePreviewProvider.doubaoIME.resolvedSource(
+        for: .chatGPTManagedAuth,
+        applePreviewAvailable: false
+    ) == .doubaoIME)
+    #expect(LivePreviewProvider.appleSpeech.resolvedSource(
+        for: .doubaoIME,
+        applePreviewAvailable: true
+    ) == nil)
+}
+
+@Test
+func doubaoPreviewUsesSixteenKilohertzRecording() {
+    #expect(LivePreviewProvider.doubaoIME.recorderSampleRate(
+        for: .chatGPTManagedAuth,
+        previewEnabled: true,
+        configuredSampleRate: 24_000
+    ) == 16_000)
+    #expect(LivePreviewProvider.doubaoIME.recorderSampleRate(
+        for: .chatGPTManagedAuth,
+        previewEnabled: false,
+        configuredSampleRate: 24_000
+    ) == 24_000)
+    #expect(LivePreviewProvider.automatic.recorderSampleRate(
+        for: .doubaoIME,
+        previewEnabled: true,
+        configuredSampleRate: 24_000
+    ) == 16_000)
+    #expect(LivePreviewProvider.appleSpeech.recorderSampleRate(
+        for: .chatGPTManagedAuth,
+        previewEnabled: true,
+        configuredSampleRate: 24_000
+    ) == 24_000)
+}
+
+@Test
+func configRoundTripPreservesLivePreviewProvider() throws {
+    var config = AppConfig()
+    config.transcription.livePreviewProvider = .doubaoIME
+
+    let data = try JSONEncoder().encode(config)
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
+
+    #expect(decoded.transcription.livePreviewProvider == .doubaoIME)
+}
+
+@Test
+func legacyConfigWithoutLivePreviewProviderDefaultsToAutomatic() throws {
+    let json = """
+    {
+      "transcription": {
+        "hotkeyKeyCode": 96
+      }
+    }
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: json)
+
+    #expect(decoded.transcription.livePreviewProvider == .automatic)
+}
+
+@Test
 func legacyConfigWithoutFeedbackSoundSettingDefaultsToEnabled() throws {
     let json = """
     {

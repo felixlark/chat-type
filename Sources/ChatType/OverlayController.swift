@@ -59,6 +59,7 @@ final class OverlayController: OverlayControlling {
     private var processingTimer: Timer?
     private var processingFrameIndex = 0
     private var displayedLevels: [CGFloat]
+    private var waveformPhase: CGFloat = 0
     private var currentState: OverlayVisualState
     private var escapeHotkeyMonitor: HotkeyMonitor?
     var onCancel: (@MainActor () -> Void)?
@@ -118,6 +119,7 @@ final class OverlayController: OverlayControlling {
 
     func showRecording(elapsedText: String) {
         stopProcessingAnimation()
+        waveformPhase = 0
         displayedLevels = Array(
             repeating: WaveformNormalizer.minimumVisibleLevel,
             count: style.waveformBarCount
@@ -132,8 +134,10 @@ final class OverlayController: OverlayControlling {
         displayedLevels = WaveformNormalizer.smoothedLevels(
             previous: displayedLevels,
             targetLevel: level,
-            barCount: style.waveformBarCount
+            barCount: style.waveformBarCount,
+            phase: waveformPhase
         )
+        waveformPhase += 0.10
         currentState = .recording(levels: displayedLevels, elapsedText: elapsedText)
         render()
         present()
@@ -476,7 +480,7 @@ final class OverlayController: OverlayControlling {
             backgroundView.bottomAnchor.constraint(equalTo: panelRootView.bottomAnchor),
 
             leadingContainer.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor, constant: style.contentPaddingH),
-            leadingContainer.centerYAnchor.constraint(equalTo: backgroundView.bottomAnchor, constant: -style.pillHeight / 2),
+            leadingContainer.bottomAnchor.constraint(equalTo: textStack.bottomAnchor),
             leadingContainer.widthAnchor.constraint(equalToConstant: style.leadingVisualWidth),
             leadingContainer.heightAnchor.constraint(equalToConstant: style.leadingVisualHeight),
 
@@ -500,7 +504,7 @@ final class OverlayController: OverlayControlling {
             textStack.centerYAnchor.constraint(equalTo: backgroundView.bottomAnchor, constant: -style.pillHeight / 2),
 
             trailingAccessoryStack.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -style.contentPaddingH),
-            trailingAccessoryStack.centerYAnchor.constraint(equalTo: backgroundView.bottomAnchor, constant: -style.pillHeight / 2),
+            trailingAccessoryStack.bottomAnchor.constraint(equalTo: textStack.bottomAnchor),
             trailingTimerLabel.widthAnchor.constraint(equalToConstant: style.timerWidth),
             retryButton.widthAnchor.constraint(equalToConstant: style.inlineCancelControlSize),
             retryButton.heightAnchor.constraint(equalToConstant: style.inlineCancelControlSize),
@@ -658,7 +662,10 @@ final class OverlayController: OverlayControlling {
             controlsInsidePanel: panelRootView.bounds.contains(panelRootView.convert(closeButton.bounds, from: closeButton)),
             previewInsidePanel: true,
             badgeFrame: panelRootView.convert(leadingBadgeView.bounds, from: leadingBadgeView),
-            iconFrame: panelRootView.convert(iconView.bounds, from: iconView)
+            iconFrame: panelRootView.convert(iconView.bounds, from: iconView),
+            leadingFrame: panelRootView.convert(leadingContainer.bounds, from: leadingContainer),
+            textFrame: panelRootView.convert(textStack.bounds, from: textStack),
+            trailingFrame: panelRootView.convert(trailingAccessoryStack.bounds, from: trailingAccessoryStack)
         )
     }
 }
@@ -688,6 +695,9 @@ struct OverlayDebugSnapshot: Sendable, Equatable {
     let previewInsidePanel: Bool
     let badgeFrame: CGRect
     let iconFrame: CGRect
+    let leadingFrame: CGRect
+    let textFrame: CGRect
+    let trailingFrame: CGRect
 }
 
 private final class OverlayPassthroughView: NSView {
@@ -765,30 +775,41 @@ private final class OverlayWaveformView: NSView {
         let barWidth = max(2, min(3, floor(rawBarWidth)))
         let contentWidth = (barWidth * CGFloat(activeLevels.count)) + totalSpacing
         var x = bounds.midX - (contentWidth / 2)
-        let center = CGFloat(max(0, activeLevels.count - 1)) / 2
 
-        for (index, level) in activeLevels.enumerated() {
-            let barHeight = max(style.waveformMinimumBarHeight, bounds.height * level)
-            let barRect = CGRect(
+        for level in activeLevels {
+            let barRect = WaveformNormalizer.barRect(
+                level: level,
                 x: x,
-                y: bounds.midY - (barHeight / 2),
                 width: barWidth,
-                height: barHeight
+                bounds: bounds,
+                minimumHeight: style.waveformMinimumBarHeight
             )
 
-            let distanceFromCenter = abs(CGFloat(index) - center) / max(1, center)
-            let accentMix = (1 - min(1, distanceFromCenter)) * min(1, 0.42 + (level * 0.68))
+            let accentMix = min(1, 0.22 + (level * 0.92))
             let barColor = NSColor.blend(
                 from: ChatTypePalette.mist.withAlphaComponent(0.68),
                 to: ChatTypePalette.iceBlue,
                 amount: accentMix
             )
             barColor.setFill()
-            NSBezierPath(
-                roundedRect: barRect,
-                xRadius: barWidth / 2,
-                yRadius: barWidth / 2
-            ).fill()
+            let radius = min(barWidth / 2, barRect.height / 2)
+            let path = NSBezierPath()
+            path.move(to: NSPoint(x: barRect.minX, y: barRect.minY))
+            path.line(to: NSPoint(x: barRect.minX, y: barRect.maxY - radius))
+            path.curve(
+                to: NSPoint(x: barRect.minX + radius, y: barRect.maxY),
+                controlPoint1: NSPoint(x: barRect.minX, y: barRect.maxY),
+                controlPoint2: NSPoint(x: barRect.minX, y: barRect.maxY)
+            )
+            path.line(to: NSPoint(x: barRect.maxX - radius, y: barRect.maxY))
+            path.curve(
+                to: NSPoint(x: barRect.maxX, y: barRect.maxY - radius),
+                controlPoint1: NSPoint(x: barRect.maxX, y: barRect.maxY),
+                controlPoint2: NSPoint(x: barRect.maxX, y: barRect.maxY)
+            )
+            path.line(to: NSPoint(x: barRect.maxX, y: barRect.minY))
+            path.close()
+            path.fill()
 
             x += barWidth + style.waveformBarSpacing
         }

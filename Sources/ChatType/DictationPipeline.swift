@@ -118,6 +118,7 @@ struct DictationPipeline: DictationPreparing, DictationStageRerunning {
             try audit?(stages)
 
             var finalText = prePolish.text
+            stages.correctionInput = finalText
             if let textPolisher {
                 do {
                     var polished = try await textPolisher.polish(
@@ -166,6 +167,7 @@ struct DictationPipeline: DictationPreparing, DictationStageRerunning {
                 }
             }
 
+            stages.correctionInput = finalText
             let corrections = TerminologyNormalizer().applyCorrections(
                 text: finalText,
                 entries: correctionsEnabled ? importedEntries : []
@@ -205,6 +207,8 @@ struct DictationPipeline: DictationPreparing, DictationStageRerunning {
         var normalizationMs = elapsedMilliseconds(since: normalizationStarted)
 
         var finalText = prePolish.text
+        stages.polishInput = prePolish.text
+        try audit?(stages)
         var textPolishAttempted = false
         var textPolishProvider: TextPolishProviderID?
         var textPolishErrorMessage: String?
@@ -213,8 +217,6 @@ struct DictationPipeline: DictationPreparing, DictationStageRerunning {
         var polishMs = 0
 
         if let textPolisher {
-            stages.polishInput = prePolish.text
-            try audit?(stages)
             textPolishAttempted = true
             let polishStarted = DispatchTime.now().uptimeNanoseconds
             do {
@@ -270,6 +272,7 @@ struct DictationPipeline: DictationPreparing, DictationStageRerunning {
             }
         }
 
+        stages.correctionInput = finalText
         let corrections = TerminologyNormalizer().applyCorrections(text: finalText, entries: correctionsEnabled ? importedEntries : [])
         finalText = corrections.text
         stages.finalText = formatted(finalText, trace: trace)

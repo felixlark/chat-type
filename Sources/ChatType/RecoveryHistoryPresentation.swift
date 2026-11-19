@@ -5,7 +5,7 @@ enum HistoryStagePosition: Int, CaseIterable, Sendable, Identifiable {
     case asr
     case alignment
     case polish
-    case finalization
+    case correction
     case output
 
     var id: Int { rawValue }
@@ -16,7 +16,7 @@ enum HistoryStagePosition: Int, CaseIterable, Sendable, Identifiable {
         case .asr: return "转写"
         case .alignment: return "对齐"
         case .polish: return "润色"
-        case .finalization: return "终稿"
+        case .correction: return "校正"
         case .output: return "输出"
         }
     }
@@ -27,7 +27,7 @@ enum HistoryStagePosition: Int, CaseIterable, Sendable, Identifiable {
         case .asr: return "text.alignleft"
         case .alignment: return "character.book.closed"
         case .polish: return "sparkles"
-        case .finalization: return "doc.text"
+        case .correction: return "text.badge.checkmark"
         case .output: return "arrow.right.to.line"
         }
     }
@@ -67,17 +67,15 @@ struct HistoryStatusPresentation: Sendable, Equatable {
 enum HistoryTextArtifactKind: String, Sendable, Identifiable {
     case asr
     case aligned
-    case polish
-    case final
+    case output
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .asr: return "ASR 原文"
-        case .aligned: return "对齐后 · 润色输入"
-        case .polish: return "润色输出"
-        case .final: return "最终化结果"
+        case .aligned: return "对齐后"
+        case .output: return "润色输出"
         }
     }
 }
@@ -99,6 +97,151 @@ struct HistoryAttemptOption: Identifiable, Sendable, Equatable {
     let isDiagnostic: Bool
 }
 
+struct HistoryTextChange: Identifiable, Sendable, Equatable {
+    let id: Int
+    let from: String
+    let to: String
+
+    var display: String {
+        if from.isEmpty { return "新增「\(to)」" }
+        if to.isEmpty { return "删除「\(from)」" }
+        return "\(from) → \(to)"
+    }
+}
+
+struct HistoryTextChangeSummary: Sendable, Equatable {
+    let changes: [HistoryTextChange]
+
+    var count: Int { changes.count }
+
+    var uniqueTermCount: Int {
+        Set(changes.map { "\($0.from)\u{1F}\($0.to)" }).count
+    }
+
+    var shortDetail: String {
+        guard !changes.isEmpty else { return "无词级变化" }
+        let countText = count == uniqueTermCount ? "\(count) 处" : "\(count) 处 · \(uniqueTermCount) 个词"
+        return "\(countText)：\(samples)"
+    }
+
+    var samples: String {
+        let sample = changes.prefix(3).map(\.display).joined(separator: "；")
+        return changes.count > 3 ? "\(sample)…" : sample
+    }
+}
+
+enum HistoryTextChangeAnalyzer {
+    static func summarize(from old: String?, to new: String?) -> HistoryTextChangeSummary {
+        guard let old, let new, old != new else {
+            return HistoryTextChangeSummary(changes: [])
+        }
+        let oldTokens = tokens(in: old)
+        let newTokens = tokens(in: new)
+        guard oldTokens != newTokens else {
+            return HistoryTextChangeSummary(changes: [])
+        }
+
+        let difference = newTokens.difference(from: oldTokens)
+        var removed = Set<Int>()
+        var inserted = Set<Int>()
+        for change in difference {
+            switch change {
+            case .remove(let offset, _, _):
+                removed.insert(offset)
+            case .insert(let offset, _, _):
+                inserted.insert(offset)
+            }
+        }
+
+        var groups: [(from: String, to: String)] = []
+        var oldIndex = 0
+        var newIndex = 0
+        while oldIndex < oldTokens.count || newIndex < newTokens.count {
+            if oldIndex < oldTokens.count, !removed.contains(oldIndex),
+               newIndex < newTokens.count, !inserted.contains(newIndex) {
+                oldIndex += 1
+                newIndex += 1
+                continue
+            }
+
+            let oldStart = oldIndex
+            let newStart = newIndex
+            while oldIndex < oldTokens.count, removed.contains(oldIndex) {
+                oldIndex += 1
+            }
+            while newIndex < newTokens.count, inserted.contains(newIndex) {
+                newIndex += 1
+            }
+
+            if oldIndex == oldStart, newIndex == newStart {
+                if oldIndex < oldTokens.count { oldIndex += 1 }
+                if newIndex < newTokens.count { newIndex += 1 }
+                continue
+            }
+
+            let from = render(Array(oldTokens[oldStart..<oldIndex]))
+            let to = render(Array(newTokens[newStart..<newIndex]))
+            groups.append((from, to))
+        }
+
+        return HistoryTextChangeSummary(changes: groups.enumerated().map {
+            HistoryTextChange(id: $0.offset, from: $0.element.from, to: $0.element.to)
+        })
+    }
+
+    private static func tokens(in text: String) -> [String] {
+        var result: [String] = []
+        var word = ""
+
+        func flush() {
+            guard !word.isEmpty else { return }
+            result.append(word)
+            word = ""
+        }
+
+        for character in text {
+            if isCJK(character) {
+                flush()
+                result.append(String(character))
+            } else if character.isLetter || character.isNumber || character == "_" {
+                word.append(character)
+            } else {
+                flush()
+            }
+        }
+        flush()
+        return result
+    }
+
+    private static func isCJK(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF,
+                 0x20000...0x2FA1F:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private static func render(_ tokens: [String]) -> String {
+        var result = ""
+        for token in tokens {
+            if needsSpace(between: result.last, and: token.first) {
+                result.append(" ")
+            }
+            result.append(token)
+        }
+        return result
+    }
+
+    private static func needsSpace(between lhs: Character?, and rhs: Character?) -> Bool {
+        guard let lhs, let rhs else { return false }
+        return lhs.isASCII && rhs.isASCII && (lhs.isLetter || lhs.isNumber) && (rhs.isLetter || rhs.isNumber)
+    }
+}
+
 struct HistoryRecordPresentation: Sendable, Equatable {
     let record: RecoveryRecord
     let selectedAttempt: DictationAttempt?
@@ -107,11 +250,11 @@ struct HistoryRecordPresentation: Sendable, Equatable {
     let status: HistoryStatusPresentation
     let stages: [HistoryStagePresentation]
     let artifacts: [HistoryTextArtifact]
+    let alignmentChanges: HistoryTextChangeSummary
+    let correctionChanges: HistoryTextChangeSummary
     let legacy: Bool
     let title: String
     let routeSummary: String
-    let canRerunTranscription: Bool
-    let canRerunPolish: Bool
 
     init(record: RecoveryRecord, selectedAttemptID: UUID?, audioAvailable: Bool) {
         self.record = record
@@ -142,6 +285,15 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             Self.makeStages(record: record, attempt: $0, audioAvailable: audioAvailable)
         } ?? []
         self.artifacts = Self.makeArtifacts(record: record, attempt: selected)
+        let selectedStages = selected?.stages
+        self.alignmentChanges = HistoryTextChangeAnalyzer.summarize(
+            from: selectedStages?.asrText ?? record.asrText,
+            to: selectedStages?.polishInput
+        )
+        self.correctionChanges = HistoryTextChangeAnalyzer.summarize(
+            from: selectedStages?.correctionInput ?? selectedStages?.polishOutput,
+            to: selectedStages?.finalText
+        )
 
         let summary = selected?.stages.finalText
             ?? selected?.stages.polishOutput
@@ -169,16 +321,114 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             self.routeSummary = "\(recognition) · \(polish)"
         }
 
-        let asrText = selected?.stages.asrText
-            ?? selected?.stages.asrPartialText
-            ?? record.asrText
-        self.canRerunTranscription = audioAvailable
-        self.canRerunPolish = audioAvailable
-            && asrText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     var formattedDuration: String {
         Self.formatDuration(record.audioDurationMs)
+    }
+
+    func stageNarrative(for position: HistoryStagePosition) -> String {
+        guard let stage = stages.first(where: { $0.position == position }) else {
+            return "旧记录未保存分阶段明细。"
+        }
+        let snapshot = selectedAttempt?.snapshot ?? record.snapshot
+        switch position {
+        case .audio:
+            return stage.state == .complete
+                ? "本机原始 WAV · \(formattedDuration) · 可播放"
+                : "原始 WAV 缺失；文本仍可查看和复制。"
+        case .asr:
+            if stage.state == .skipped {
+                let count = artifacts.first(where: { $0.kind == .asr })?.text?.count ?? 0
+                return "仅润色尝试；复用已有转写 · \(count) 字。"
+            }
+            if stage.state == .failed {
+                return "转写失败；原始录音已保留。"
+            }
+            if stage.state == .unavailable {
+                return "这次尝试没有生成转写文本。"
+            }
+            guard let snapshot else { return "旧记录未保存识别路线。" }
+            let count = artifacts.first(where: { $0.kind == .asr })?.text?.count ?? 0
+            let partial = selectedAttempt?.stages.partialAudio == true ? " · 部分录音" : ""
+            let model = snapshot.provider == .openAICompatible
+                ? snapshot.provider.modelLabel(config: snapshot)
+                : "\(snapshot.provider.modelLabel(config: snapshot)) · 服务端选择模型"
+            return "\(model) · \(count) 字\(partial)"
+        case .alignment:
+            if stage.state == .skipped {
+                return selectedAttempt?.resolvedKind == .asrOnly
+                    ? "仅转写尝试；未执行对齐。"
+                    : "已关闭；转写文本直接进入下一阶段。"
+            }
+            if stage.state == .unavailable {
+                return "未执行；没有可对齐的转写文本。"
+            }
+            guard let attempt = selectedAttempt else { return "旧记录未保存对齐阶段。" }
+            guard attempt.snapshot.terminologyAlignmentEnabled else {
+                return "已关闭；转写文本直接进入下一阶段。"
+            }
+            guard artifacts.first(where: { $0.kind == .aligned })?.text?.isEmpty == false else {
+                return "已执行；这次尝试没有单独保存对齐文本。"
+            }
+            return "本地词库 · \(alignmentChanges.shortDetail)"
+        case .polish:
+            if stage.state == .skipped {
+                return selectedAttempt?.resolvedKind == .asrOnly
+                    ? "仅转写尝试；未执行润色。"
+                    : "润色已关闭；对齐文本直接进入校正。"
+            }
+            if stage.state == .failed {
+                if let note = artifacts.first(where: { $0.kind == .output })?.note,
+                   note.contains("失败前部分") {
+                    return note
+                }
+                return "润色失败；没有生成可用输出。"
+            }
+            if stage.state == .unavailable {
+                return "这次尝试没有生成润色输出。"
+            }
+            guard let snapshot else { return "旧记录未保存润色路线。" }
+            guard snapshot.textPolish.isEnabled else {
+                return "润色已关闭；对齐文本直接进入校正。"
+            }
+            let count = artifacts.first(where: { $0.kind == .output })?.text?.count ?? 0
+            let protection = selectedAttempt?.stages.polishProtectionReason
+                .map { " · 安全保护：\($0)" } ?? ""
+            let model = snapshot.textPolish.provider.modelLabel(config: snapshot.textPolish)
+            let service = snapshot.textPolish.provider == .doubaoIME
+                ? "\(model) · 服务端选择模型"
+                : model
+            return "\(service) · \(count) 字\(protection)"
+        case .correction:
+            if stage.state == .skipped {
+                return selectedAttempt?.resolvedKind == .asrOnly
+                    ? "仅诊断尝试；未执行校正。"
+                    : "本地校正已关闭；输出保持校正前文本。"
+            }
+            if stage.state == .failed {
+                return "校正失败；没有生成最终文本。"
+            }
+            if stage.state == .unavailable {
+                return "这次尝试没有生成校正后的文本。"
+            }
+            guard let snapshot else { return "旧记录未保存校正配置。" }
+            guard snapshot.correctionRulesEnabled else {
+                return "本地校正已关闭；输出保持润色文本。"
+            }
+            return correctionChanges.shortDetail
+        case .output:
+            if stage.state == .skipped {
+                if selectedAttempt?.resolvedKind != .full, selectedAttempt != nil {
+                    return "仅诊断尝试，没有执行输出。"
+                }
+                return "\(stage.detail) · \(record.appName ?? "目标未记录")"
+            }
+            if stage.state == .failed {
+                return "输出失败；\(status.detail ?? status.label)"
+            }
+            return "\(status.label) · \(record.appName ?? "目标未记录")"
+        }
     }
 
     var selectedAttemptIsDiagnostic: Bool {
@@ -200,15 +450,6 @@ struct HistoryRecordPresentation: Sendable, Equatable {
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
     }
 
-    static func textDifferenceSummary(from old: String?, to new: String?) -> String? {
-        guard let old, let new, old != new else { return nil }
-        let difference = Array(new).difference(from: Array(old))
-        let insertions = difference.insertions.count
-        let removals = difference.removals.count
-        guard insertions + removals > 0 else { return "文本未变化" }
-        return "新增 \(insertions) 字符 · 删除 \(removals) 字符"
-    }
-
     private static func makeStages(
         record: RecoveryRecord,
         attempt: DictationAttempt,
@@ -227,7 +468,7 @@ struct HistoryRecordPresentation: Sendable, Equatable {
         var asrDetail: String
         if hasASR {
             asrState = .complete
-            asrDetail = "\(stages.asrText?.count ?? 0) 字"
+            asrDetail = snapshot.provider.modelLabel(config: snapshot)
         } else if hasPartialASR {
             asrState = .attention
             asrDetail = "部分转写"
@@ -246,7 +487,11 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             alignmentDetail = "已关闭"
         } else if hasAligned {
             alignmentState = .complete
-            alignmentDetail = "已对齐"
+            let changes = HistoryTextChangeAnalyzer.summarize(
+                from: stages.asrText,
+                to: stages.polishInput
+            )
+            alignmentDetail = changes.count == 0 ? "无词级变化" : "对齐 \(changes.count) 处"
         } else if hasASR {
             alignmentState = .complete
             alignmentDetail = "已执行 · 未归档中间文本"
@@ -265,7 +510,7 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             polishDetail = "保留原文"
         } else if hasPolish, hasFinal || stages.error == nil {
             polishState = .complete
-            polishDetail = snapshot.textPolish.provider.title
+            polishDetail = snapshot.textPolish.provider.modelLabel(config: snapshot.textPolish)
         } else if hasPolish {
             polishState = .failed
             polishDetail = "部分输出 · 未采用"
@@ -277,17 +522,26 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             polishDetail = "未生成"
         }
 
-        var finalState: HistoryStageState
-        var finalDetail: String
+        var correctionState: HistoryStageState
+        var correctionDetail: String
         if hasFinal {
-            finalState = .complete
-            finalDetail = "\(stages.finalText?.count ?? 0) 字"
+            correctionState = .complete
+            let changes = HistoryTextChangeAnalyzer.summarize(
+                from: stages.correctionInput ?? stages.polishOutput,
+                to: stages.finalText
+            )
+            if !snapshot.correctionRulesEnabled {
+                correctionState = .skipped
+                correctionDetail = "已关闭"
+            } else {
+                correctionDetail = changes.count == 0 ? "无词级变化" : "校正 \(changes.count) 处"
+            }
         } else if stages.error != nil {
-            finalState = .failed
-            finalDetail = "未生成"
+            correctionState = .failed
+            correctionDetail = "未生成"
         } else {
-            finalState = .unavailable
-            finalDetail = "未生成"
+            correctionState = .unavailable
+            correctionDetail = "未生成"
         }
 
         if attempt.resolvedKind == .asrOnly {
@@ -295,8 +549,8 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             alignmentDetail = "仅转写尝试"
             polishState = .skipped
             polishDetail = "未执行"
-            finalState = .skipped
-            finalDetail = "仅诊断"
+            correctionState = .skipped
+            correctionDetail = "仅诊断"
         } else if attempt.resolvedKind == .polishOnly {
             asrState = .skipped
             asrDetail = "复用已有转写"
@@ -332,7 +586,7 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             .init(position: .asr, state: asrState, detail: asrDetail),
             .init(position: .alignment, state: alignmentState, detail: alignmentDetail),
             .init(position: .polish, state: polishState, detail: polishDetail),
-            .init(position: .finalization, state: finalState, detail: finalDetail),
+            .init(position: .correction, state: correctionState, detail: correctionDetail),
             .init(position: .output, state: outputState, detail: outputDetail)
         ]
     }
@@ -344,7 +598,8 @@ struct HistoryRecordPresentation: Sendable, Equatable {
         guard let attempt else {
             return [
                 HistoryTextArtifact(kind: .asr, text: record.asrText, note: "旧记录", isFailurePartial: false),
-                HistoryTextArtifact(kind: .polish, text: record.polishText, note: "旧版润色文本，未区分最终化", isFailurePartial: false)
+                HistoryTextArtifact(kind: .aligned, text: nil, note: "旧记录未保存对齐文本", isFailurePartial: false),
+                HistoryTextArtifact(kind: .output, text: record.polishText, note: "旧版润色文本", isFailurePartial: false)
             ]
         }
 
@@ -384,24 +639,36 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             polishNote = nil
         }
 
-        var finalNote: String?
+        var outputNote: String?
+        var outputText = stages.polishOutput
+        var outputFailure = polishFailure
         if attempt.resolvedKind == .asrOnly {
-            finalNote = "仅诊断"
+            outputNote = "仅诊断"
+            outputText = nil
+            outputFailure = false
         } else if stages.finalText?.isEmpty == false {
-            if stages.polishOutput == stages.finalText {
-                finalNote = "终稿未再改写"
-            } else {
-                finalNote = textDifferenceSummary(from: stages.polishOutput, to: stages.finalText)
+            outputText = stages.finalText
+            let comparisonSource = stages.correctionInput ?? stages.polishOutput
+            let changes = HistoryTextChangeAnalyzer.summarize(
+                from: comparisonSource,
+                to: stages.finalText
+            )
+            if !attempt.snapshot.textPolish.isEnabled {
+                outputNote = changes.count == 0 ? "润色已关闭" : "已含 \(changes.count) 处校正"
+            } else if comparisonSource != stages.finalText {
+                outputNote = changes.count == 0 ? "已统一格式" : "已含 \(changes.count) 处校正"
             }
+        } else if stages.error != nil {
+            outputNote = stages.polishOutput?.isEmpty == false ? "失败前部分输出 · 未采用" : "未生成"
+            outputFailure = stages.polishOutput?.isEmpty == false
         } else {
-            finalNote = "未生成"
+            outputNote = stages.polishOutput?.isEmpty == false ? "润色输出已保存" : "未生成"
         }
 
         return [
             HistoryTextArtifact(kind: .asr, text: stages.asrText ?? stages.asrPartialText, note: asrNote, isFailurePartial: false),
             HistoryTextArtifact(kind: .aligned, text: stages.polishInput, note: alignmentNote, isFailurePartial: false),
-            HistoryTextArtifact(kind: .polish, text: stages.polishOutput, note: polishNote, isFailurePartial: polishFailure),
-            HistoryTextArtifact(kind: .final, text: stages.finalText, note: finalNote, isFailurePartial: false)
+            HistoryTextArtifact(kind: .output, text: outputText, note: outputNote ?? polishNote, isFailurePartial: outputFailure)
         ]
     }
 }
@@ -420,7 +687,7 @@ extension HistoryStatusPresentation {
         case "processing":
             return .init(label: "处理中", detail: nil, tone: .active)
         case "readyToInject":
-            return .init(label: "输出待核对", detail: "终稿已保存，输出状态未确认", tone: .attention)
+            return .init(label: "输出待核对", detail: "输出文本已保存，输出状态未确认", tone: .attention)
         case "outputUnknown":
             return .init(label: "输出未知", detail: "请先核对原文档", tone: .attention)
         case "cancelled":
@@ -512,6 +779,7 @@ struct RecoveryHistorySummary: Identifiable, Sendable, Equatable {
                     attempt.stages.asrText,
                     attempt.stages.polishInput,
                     attempt.stages.polishOutput,
+                    attempt.stages.correctionInput,
                     attempt.stages.finalText
                 ].compactMap { $0 }
             }.joined(separator: "\n")

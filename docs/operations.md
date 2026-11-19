@@ -64,6 +64,8 @@
 
 ## 131 当前流程重跑与唯一配置入口（2026-11-14）
 
+本节保留 131 的历史实现。149 已改为 HUD 无箭头菜单，History 单屏只显示“重试原路线”和“按当前流程重跑”两个整流程动作；当前行为以 [PRODUCT](../PRODUCT.md) 为准。
+
 本人选择 ChatGPT 后，130 的手动 Retry 仍重用旧录音快照中的豆包，History 却提示“current settings”。131把语义分开：普通“按当前流程重跑”显式采用 Dictation 当前选择，新增attempt；“重试原路线”保留最后一次尝试的识别、润色、词表和注入快照。HUD箭头菜单提供这两个明确动作，History主按钮为当前流程，“更多”中保留原路线。自动恢复不跨服务。
 
 服务、模型及阶段选项只在 Dictation 流程中设置；Account保留账户登录，不再重复识别/润色选择器。识别、润色原完整配置放到对应步骤，提示音在Voice，剪贴板行为在Paste；Settings保留启动项、系统权限与本地数据。没有每次输入都写配置：共享草稿跨窗口保留，F5开始新录音、按当前流程重跑和Save Settings才提交；忙碌操作、F5停录、原路线Retry及关闭窗口不隐式提交。已开始的任务继续使用自身快照。保存失败不开始新录音或云请求。
@@ -350,7 +352,7 @@ open -n /Applications/ChatType.app
 
 ## Control panel acceptance
 
-The installed control panel has five destinations: Account, Dictation, Terminology, History and Settings. Account owns service credentials and model selection; Dictation owns processing behavior and an inspectable six-step route. A route preview uses the displayed draft; Save Settings applies changes to the next recording.
+The installed control panel has four destinations: Account, Workflow, History and Settings. Account owns service capability, installation and credential status; Workflow independently owns recognition, live-preview source, terminology alignment, polish and correction, with an inspectable six-step route. History is a fixed-screen review workspace. A route preview uses the displayed draft; Save Settings applies changes to the next recording.
 
 Terms hold standard spellings and names. Replacement holds explicit final-text corrections; rules run once after polish or its fallback, use literal whole-word matching for English and exact contiguous text for Chinese, and preserve code, paths and links. Identity rules additionally protect their literal text through alignment and polish. macOS input shortcuts are not imported; legacy rules migrate to target standard spellings with a 0600 original-byte backup made before decoding or writing config. To reverse that migration, restore the previous app before restoring the backup.
 

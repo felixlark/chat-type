@@ -6,88 +6,146 @@ import SwiftUI
 
 extension PreferencesView {
     var accountOverviewCard: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            settingsCard(
-                title: "服务",
-                subtitle: "连接 ChatGPT、豆包和可选的润色服务；密钥保存在 macOS Keychain。"
-            ) {
-                providerRow("ChatGPT", status: chatGPTAccountStatus.title,
-                    ready: providers.value.checked ? chatGPTAccountStatus.isReady : nil,
-                    detail: authSnapshot.userEmail ?? authSnapshot.detail)
+        settingsCard(
+            title: "服务",
+            subtitle: "每项服务标明实时预览、识别和润色能力；绿色表示当前可用或凭据已保存，红色表示仍需配置。权限统一在 Settings 管理。"
+        ) {
+            providerRow(
+                "ChatGPT Account",
+                status: chatGPTAccountStatus.title,
+                ready: providers.value.checked ? chatGPTAccountStatus.isReady : nil,
+                capabilities: [.recognition, .polish],
+                detail: "识别完整录音 · 润色使用账户会话 · \(authSnapshot.userEmail ?? authSnapshot.detail)",
+                accessory: {
+                    if authSnapshot.state == .ready || authSnapshot.state == .expired {
+                        chatGPTAccountMenu
+                    }
+                }
+            )
+            if !chatGPTAccountStatus.isReady {
                 chatGPTSetupActions
-                Divider()
-                providerRow("Doubao IME", status: !providers.value.checked ? "Checking…" : providers.value.doubaoInstalled ? "Installed" : "Not installed",
-                    ready: providers.value.checked ? providers.value.doubaoInstalled : nil,
-                    detail: "豆包输入法安装检测 · 可用于识别与文字整理。安装状态不代表云端请求已验证；ChatType 使用自身配置。")
-                Divider()
-                providerRow("Apple SpeechAnalyzer", status: ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 ? "Available on this macOS" : "Requires macOS 26",
-                    ready: nil,
-                    detail: "本机实时预览 · 选择 ChatGPT 识别路线时使用；模型在录音准备时检测。终稿仍由所选识别服务生成。")
-                Divider()
-                providerRow("GLM", status: providers.value.checked ? (glmKeySaved ? "Key saved" : "Key not saved") : "Checking…",
-                    ready: providers.value.checked ? glmKeySaved : nil,
-                    detail: "文字润色 · GLM-4.7-Flash · 密钥保存状态，尚未验证请求。")
-                HStack(spacing: 10) {
-                    SecureField("GLM API Key", text: $glmKeyInput)
-                        .textFieldStyle(.roundedBorder)
-                        .font(SettingsTypography.control)
-                        .accessibilityIdentifier("glm-api-key")
-                    Button("保存 GLM 密钥") { saveGLMKey() }
-                        .buttonStyle(.bordered)
-                        .font(SettingsTypography.control)
-                        .disabled(glmKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                Divider()
-                providerRow("Qwen", status: providers.value.checked ? (qwenKeySaved ? "Key saved" : "Key not saved") : "Checking…",
-                    ready: providers.value.checked ? qwenKeySaved : nil,
-                    detail: "文字润色 · Qwen Flash · 密钥保存状态，尚未验证请求。")
-                HStack(spacing: 10) {
-                    SecureField("Qwen API Key", text: $qwenKeyInput)
-                        .textFieldStyle(.roundedBorder)
-                        .font(SettingsTypography.control)
-                        .accessibilityIdentifier("qwen-api-key")
-                    Button("保存 Qwen 密钥") { saveQwenKey() }
-                        .buttonStyle(.bordered)
-                        .font(SettingsTypography.control)
-                        .disabled(qwenKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                Divider()
-                providerRow("OpenAI-Compatible", status: "Advanced recovery", ready: nil,
-                    detail: "使用独立端点与 API Key，可能按量收费；在 Workflow 的“识别”步骤配置，未验证可用性。")
-                if let terminologyImportMessage {
-                    Text(terminologyImportMessage).font(SettingsTypography.detail).foregroundStyle(terminologyImportIsError ? .red : .secondary)
-                }
-                if let textPolishMessage {
-                    Text(textPolishMessage).font(SettingsTypography.detail).foregroundStyle(textPolishMessageIsError ? .red : .secondary)
-                }
-                Button("刷新服务状态") { providers.refresh() }
-                    .buttonStyle(.bordered)
-                    .font(SettingsTypography.control)
-                    .disabled(providers.isLoading)
             }
-            settingsCard(
-                title: "权限",
-                subtitle: "麦克风和辅助功能权限决定能否录音与自动粘贴。"
-            ) {
-                HStack(spacing: 12) {
-                    compactSetupTile(title: "麦克风", status: microphoneStatus)
-                    compactSetupTile(title: "辅助功能", status: accessibilityStatus)
+            Divider()
+            providerRow(
+                "Doubao IME",
+                status: !providers.value.checked ? "检查中…" : providers.value.doubaoInstalled ? "已安装" : "未安装",
+                ready: providers.value.checked ? providers.value.doubaoInstalled : nil,
+                capabilities: [.livePreview, .recognition, .polish],
+                detail: "实时预览/完整识别/文字整理由服务端选模型；安装状态不代表云端已验证。"
+            )
+            Divider()
+            providerRow(
+                "Apple SpeechAnalyzer",
+                status: LocalSpeechPreviewAvailability.isAvailable ? "可用" : "不可用",
+                ready: LocalSpeechPreviewAvailability.isAvailable,
+                capabilities: [.livePreview],
+                detail: "本机预览，仅配合 ChatGPT 识别；不生成最终转写。"
+            )
+            Divider()
+            providerRow(
+                "GLM",
+                status: providers.value.checked ? (glmKeySaved ? "已保存" : "需要填写") : "检查中…",
+                ready: providers.value.checked ? glmKeySaved : nil,
+                capabilities: [.polish],
+                detail: "GLM-4.7-Flash · 智谱额度与计费；保存密钥不等于请求已验证。",
+                accessory: {
+                    ServiceKeyButton(
+                        title: "GLM",
+                        text: $glmKeyInput,
+                        saved: glmKeySaved,
+                        save: saveGLMKey
+                    )
                 }
-                ForEach(microphoneRepairActions + accessibilityRepairActions) { repairActionButton($0) }
+            )
+            Divider()
+            providerRow(
+                "Qwen",
+                status: providers.value.checked ? (qwenKeySaved ? "已保存" : "需要填写") : "检查中…",
+                ready: providers.value.checked ? qwenKeySaved : nil,
+                capabilities: [.polish],
+                detail: "Qwen Flash · 北京地域；免费额度后按量计费。保存密钥不等于请求已验证。",
+                accessory: {
+                    ServiceKeyButton(
+                        title: "Qwen",
+                        text: $qwenKeyInput,
+                        saved: qwenKeySaved,
+                        save: saveQwenKey
+                    )
+                }
+            )
+            if let terminologyImportMessage {
+                Text(terminologyImportMessage).font(SettingsTypography.detail).foregroundStyle(terminologyImportIsError ? .red : .secondary)
             }
+            if let textPolishMessage {
+                Text(textPolishMessage).font(SettingsTypography.detail).foregroundStyle(textPolishMessageIsError ? .red : .secondary)
+            }
+            Button("刷新服务状态") { providers.refresh() }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(providers.isLoading)
         }
     }
 
-    func providerRow(_ title: String, status: String, ready: Bool?, detail: String) -> some View {
-        let tone: SettingsStatusTone = ready == true ? .ready : ready == false ? .attention : .neutral
+    var chatGPTAccountMenu: some View {
+        Menu {
+            Button("刷新会话") {
+                Task {
+                    _ = try? await authManager.refreshAccessToken()
+                    await MainActor.run {
+                        authSnapshot = authManager.authSnapshot()
+                    }
+                }
+            }
+            Divider()
+            Button("退出登录", role: .destructive) {
+                do {
+                    try authManager.signOut()
+                    authSnapshot = authManager.authSnapshot()
+                } catch {
+                    terminologyImportMessage = error.localizedDescription
+                    terminologyImportIsError = true
+                }
+            }
+        } label: {
+            Label("账户操作", systemImage: "ellipsis.circle")
+                .font(.system(size: 12, weight: .medium))
+                .padding(.horizontal, 6)
+                .frame(height: 28)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("刷新 ChatGPT 会话或退出登录")
+    }
+
+    func providerRow<Accessory: View>(
+        _ title: String,
+        status: String,
+        ready: Bool?,
+        capabilities: [ServiceCapability],
+        detail: String,
+        @ViewBuilder accessory: () -> Accessory = { EmptyView() }
+    ) -> some View {
+        let tone: SettingsStatusTone = ready == true ? .ready : ready == false ? .error : .neutral
         return HStack(alignment: .top, spacing: 12) {
             SettingsIconBadge(symbol: providerSymbol(title), tone: tone, size: 32)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .center, spacing: 8) {
                     Text(title)
                         .font(SettingsTypography.rowTitle)
+                    HStack(spacing: 4) {
+                        ForEach(capabilities) { capability in
+                            Text(capability.rawValue)
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color(nsColor: .controlBackgroundColor))
+                                .clipShape(Capsule())
+                        }
+                    }
                     Spacer()
+                    accessory()
                     SettingsStatusPill(text: localizedProviderStatus(status), tone: tone)
                 }
                 Text(detail)
@@ -98,7 +156,6 @@ extension PreferencesView {
             }
         }
         .padding(.vertical, 3)
-        .accessibilityElement(children: .combine)
         .accessibilityIdentifier("provider-" + title)
     }
 
@@ -116,10 +173,11 @@ extension PreferencesView {
         case "Needs attention": return "需要处理"
         case "Not connected": return "未连接"
         case "Checking…": return "检查中…"
+        case "检查中…": return "检查中…"
         case "Installed": return "已安装"
         case "Not installed": return "未安装"
         case "Key saved": return "密钥已保存"
-        case "Key not saved": return "未保存密钥"
+        case "Key not saved": return "需要填写"
         case "Available on this macOS": return "此 macOS 可用"
         case "Requires macOS 26": return "需要 macOS 26"
         case "Advanced recovery": return "高级恢复"
@@ -372,12 +430,14 @@ extension PreferencesView {
                         connectViaBrowser()
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.large)
                     .disabled(browserLoginIsInProgress)
                 } else {
                     Button(browserLoginIsInProgress ? "等待授权" : "连接 ChatGPT") {
                         connectViaBrowser()
                     }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .disabled(browserLoginIsInProgress)
                 }
 
@@ -390,6 +450,7 @@ extension PreferencesView {
                     }
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.large)
 
                 if authSnapshot.state == .ready || authSnapshot.state == .expired {
                     Button("退出登录") {
@@ -402,6 +463,7 @@ extension PreferencesView {
                         }
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.large)
                 }
             }
 
@@ -489,4 +551,53 @@ extension PreferencesView {
         )
     }
 
+}
+
+private struct ServiceKeyButton: View {
+    let title: String
+    @Binding var text: String
+    let saved: Bool
+    let save: () -> Void
+    @State private var showing = false
+
+    var body: some View {
+        Button {
+            showing.toggle()
+        } label: {
+            Image(systemName: saved ? "key.fill" : "key")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(saved ? Color.secondary : Color.red)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help(saved ? "更换 \(title) API Key" : "填写 \(title) API Key")
+        .accessibilityLabel(saved ? "更换 \(title) API Key" : "填写 \(title) API Key")
+        .accessibilityIdentifier("manage-\(title.lowercased())-key")
+        .popover(isPresented: $showing, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("\(title) API Key")
+                    .font(.system(size: 14, weight: .semibold))
+                SecureField("\(title) API Key", text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .font(SettingsTypography.control)
+                    .controlSize(.large)
+                HStack {
+                    Text("只保存到 macOS Keychain。")
+                        .font(SettingsTypography.detail)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("保存") {
+                        save()
+                        showing = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(16)
+            .frame(width: 340)
+        }
+    }
 }

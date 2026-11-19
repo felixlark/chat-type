@@ -5,6 +5,21 @@ import Speech
 import CoreGraphics
 import OSLog
 
+enum LocalSpeechPreviewAvailability {
+    static var isAvailable: Bool {
+        if #available(macOS 26.0, *) {
+            return SpeechTranscriber.isAvailable
+        }
+        return false
+    }
+
+    static var summary: String {
+        isAvailable
+            ? "本机 SpeechAnalyzer 可用；首次录音准备模型，失败不会阻塞完整录音。"
+            : "需要 macOS 26 且当前设备支持 Apple 设备端语音识别。"
+    }
+}
+
 struct LocalTranscriptionFailure: LocalizedError {
     let partialText: String
     let detail: String

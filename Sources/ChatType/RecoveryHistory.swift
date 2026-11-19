@@ -619,6 +619,7 @@ final class RecoveryStore: RecoveryRecording, @unchecked Sendable {
             asrText: object["asrText"] as? String,
             polishInput: object["polishInput"] as? String,
             polishOutput: object["polishOutput"] as? String,
+            correctionInput: object["correctionInput"] as? String,
             finalText: object["finalText"] as? String,
             error: object["error"] as? String,
             polishOutputs: object["polishOutputs"] as? [String],

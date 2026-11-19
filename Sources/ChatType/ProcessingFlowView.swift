@@ -4,6 +4,7 @@ struct ProcessingStage: Identifiable, Equatable {
     let id: Int
     let title: String
     let icon: String
+    let caption: String
     let input: String
     let service: String
     let output: String
@@ -24,27 +25,38 @@ struct ProcessingStage: Identifiable, Equatable {
         let polishState = !config.textPolish.isEnabled ? "Off — aligned text passes through"
             : selected == nil ? "Needs account or key — processing cannot complete" : polishService
         let doubao = config.provider == .doubaoIME
-        let preview = config.livePreviewEnabled && (doubao || (localPreviewSupported && managed))
+        let previewSource = config.livePreviewEnabled
+            ? config.livePreviewProvider.resolvedSource(for: config.provider, applePreviewAvailable: localPreviewSupported)
+            : nil
+        let previewCaption: String
+        switch previewSource {
+        case .doubaoIME:
+            previewCaption = "豆包实时"
+        case .appleSpeech:
+            previewCaption = "Apple 本机"
+        case nil:
+            previewCaption = "仅录音"
+        }
         return [
-            Self(id: 0, title: "录音", icon: "mic", input: "Microphone audio after F5",
-                 service: preview && managed ? "This Mac · Apple SpeechAnalyzer (when preparation succeeds)" : "This Mac · audio recorder",
-                 output: preview ? "Complete audio recording + live draft preview" : "Complete audio recording",
-                 detail: "F5 stops and submits the recording. Escape or × cancels. Live preview is provisional; the complete audio supplies final recognition."),
-            Self(id: 1, title: "识别", icon: "waveform", input: "Complete audio recording + recognition hints",
+            Self(id: 0, title: "录音", icon: "mic", caption: previewCaption, input: "Microphone audio after F5",
+                 service: previewSource == .appleSpeech ? "This Mac · Apple SpeechAnalyzer" : previewSource == .doubaoIME ? "Doubao live · frontier-audio-ime-ws.doubao.com" : "This Mac · audio recorder",
+                 output: previewSource == nil ? "Complete audio recording" : "Complete audio recording + live draft preview",
+                 detail: "F5 stops and submits the recording. Escape or × cancels. Live preview is provisional; the complete audio supplies final recognition. Choosing Doubao preview sends recording audio to Doubao even when final recognition uses another service."),
+            Self(id: 1, title: "识别", icon: "waveform", caption: config.provider.modelLabel(config: config), input: "Complete audio recording + recognition hints",
                  service: doubao ? "Doubao IME · frontier-audio-ime-ws.doubao.com · server-selected model" : managed ? "ChatGPT account · chatgpt.com · server-selected model" : "\(config.openAIModel) · \(URL(string: config.openAITranscriptionURL)?.host ?? "configured endpoint")",
                  output: "Initial ASR text (automatic speech recognition)",
                  detail: doubao ? "Audio goes to Doubao IME. The private protocol may change; configuration credentials stay in Keychain. No account Cookie or ChatGPT token is used. Pricing and long-term availability are unconfirmed." : managed ? "Audio goes to the original ChatGPT account. This is a private backend; its model ID is not exposed. The preview is not supplied as a second audio input. Challenges retain audio for manual retry."
                     : "Audio goes to your chosen compatible endpoint using its own API key. Its model affects recognition quality, languages and latency; provider usage charges may apply."),
-            Self(id: 2, title: "对齐", icon: "text.book.closed", input: "Recognized text + local Terms",
+            Self(id: 2, title: "对齐", icon: "text.book.closed", caption: config.terminologyAlignmentEnabled ? "本地词库" : "已关闭", input: "Recognized text + local Terms",
                  service: config.terminologyAlignmentEnabled ? "This Mac · terminology alignment" : "Off · recognized text passes through", output: "Aligned full transcript",
                  detail: "Standard spellings preserve names and English casing. Relevant Chinese terms and personal-name hints help matching. Keyboard input codes are excluded."),
-            Self(id: 3, title: "润色", icon: "wand.and.stars", input: config.textPolish.provider == .doubaoIME ? "Aligned full transcript · text only" : "Aligned full transcript + relevant glossary · text only",
+            Self(id: 3, title: "润色", icon: "wand.and.stars", caption: config.textPolish.isEnabled ? config.textPolish.provider.modelLabel(config: config.textPolish) : "已关闭", input: config.textPolish.provider == .doubaoIME ? "Aligned full transcript · text only" : "Aligned full transcript + relevant glossary · text only",
                  service: polishState, output: !config.textPolish.isEnabled ? "Aligned transcript" : selected == nil ? "No output until the selected account or key is ready" : "Rewritten full transcript",
                  detail: "The polish model receives text only. Changing it affects rewriting quality, wording and wait time, independently of audio recognition. On failure or truncation, processing remains incomplete and no text is pasted; audio and available stage text are saved for an explicit retry. No automatic switch to another provider."),
-            Self(id: 4, title: "修正", icon: "text.badge.checkmark", input: "Polished text, or aligned text when polish is off",
-                 service: config.correctionRulesEnabled ? "This Mac · Replacement rules" : "Off · explicit corrections skipped", output: "Final text with your explicit corrections",
-                 detail: "Rules run once, longest match first. English matches whole words, Chinese matches exact text; output keeps your chosen casing. Replacement output is not recursively replaced. Code, paths and links are protected."),
-            Self(id: 5, title: "输出", icon: "doc.on.clipboard", input: "Final text", service: clipboardOnly ? "This Mac · clipboard only" : "This Mac · focused editable target / clipboard",
+            Self(id: 4, title: "校正", icon: "text.badge.checkmark", caption: config.correctionRulesEnabled ? "本地校正" : "已关闭", input: "Polished text, or aligned text when polish is off",
+                 service: config.correctionRulesEnabled ? "This Mac · explicit correction rules" : "Off · explicit corrections skipped", output: "Final text with your explicit corrections",
+                 detail: "Rules run once, longest match first. English matches whole words, Chinese matches exact text; output keeps your chosen casing. Correction output is not recursively replaced. Code, paths and links are protected."),
+            Self(id: 5, title: "输出", icon: "doc.on.clipboard", caption: clipboardOnly ? "仅剪贴板" : "粘贴 / 剪贴板", input: "Final text", service: clipboardOnly ? "This Mac · clipboard only" : "This Mac · focused editable target / clipboard",
                  output: clipboardOnly ? "Clipboard ready for Cmd+V" : "Pasted text, or clipboard ready for Cmd+V",
                  detail: clipboardOnly ? "Only copies after required stage records have been saved. It does not paste into any app." : "Without an editable target, text stays in the clipboard. History keeps recognition and finished results for review or recovery.")
         ]
@@ -64,7 +76,7 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOp
     @State private var selected = 1
 
     private var stages: [ProcessingStage] {
-        ProcessingStage.stages(config: config, localPreviewSupported: ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26,
+        ProcessingStage.stages(config: config, localPreviewSupported: LocalSpeechPreviewAvailability.isAvailable,
             chatGPTReady: chatGPTReady, glmReady: glmReady, qwenReady: qwenReady, clipboardOnly: injection.clipboardOnly)
     }
 
@@ -125,15 +137,19 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOp
                     Button {
                         selected = stage.id
                     } label: {
-                        VStack(spacing: 8) {
+                        VStack(spacing: 6) {
                             Image(systemName: stage.icon)
                                 .font(.system(size: 20, weight: .medium))
                             Text(stage.title)
                                 .font(.system(size: 13, weight: selected == stage.id ? .semibold : .medium))
+                            Text(stage.caption)
+                                .font(.system(size: 10.5))
+                                .lineLimit(1)
+                                .foregroundStyle(.tertiary)
                         }
                         .foregroundStyle(selected == stage.id ? Color.primary : Color.secondary)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
+                        .padding(.vertical, 15)
                         .background(selected == stage.id ? Color.accentColor.opacity(0.11) : Color.clear)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
@@ -163,6 +179,31 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOp
         case 0:
             Toggle("边录边识别 / 实时预览", isOn: $config.livePreviewEnabled)
                 .accessibilityIdentifier("stage-live-preview")
+            if config.livePreviewEnabled {
+                Picker("实时预览来源", selection: $config.livePreviewProvider) {
+                    ForEach(LivePreviewProvider.allCases) { provider in
+                        Text(provider.title).tag(provider)
+                    }
+                }
+                .accessibilityIdentifier("stage-live-preview-provider")
+                Text(config.livePreviewProvider.detail)
+                    .font(SettingsTypography.detail)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                let previewSource = config.livePreviewProvider.resolvedSource(
+                    for: config.provider,
+                    applePreviewAvailable: LocalSpeechPreviewAvailability.isAvailable
+                )
+                if previewSource == nil {
+                    Text("当前组合没有可用预览；录音与最终识别仍会继续。")
+                        .font(SettingsTypography.detail)
+                        .foregroundStyle(.orange)
+                } else if config.livePreviewProvider == .doubaoIME, config.provider != .doubaoIME {
+                    Text("录音音频会同时发往豆包实时接口；最终转写仍由当前识别服务处理。")
+                        .font(SettingsTypography.detail)
+                        .foregroundStyle(.orange)
+                }
+            }
             Toggle("录音开始/结束提示音", isOn: $config.feedbackSoundsEnabled)
             Text("关闭后仍保存完整录音，停录后才识别。原始语音始终在本机保留。")
                 .font(SettingsTypography.detail).foregroundStyle(.secondary)
@@ -175,7 +216,7 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOp
         case 3:
             polishOptions
         case 4:
-            Toggle("应用本地替换规则", isOn: $config.correctionRulesEnabled)
+            Toggle("应用本地校正词表", isOn: $config.correctionRulesEnabled)
                 .accessibilityIdentifier("stage-corrections")
             correctionOptions
         default:

@@ -99,7 +99,7 @@ struct TerminologyEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text(type == .term ? "Custom phrases · \(browser.termCount)" : "Replacement · \(browser.correctionCount)")
+                Text(type == .term ? "标准词 · \(browser.termCount)" : "校正词 · \(browser.correctionCount)")
                     .font(.system(size: 16, weight: .semibold))
                 Spacer()
                 if type == .term { Menu(importing ? "Reading names…" : "Import names") {
@@ -132,8 +132,14 @@ struct TerminologyEditor: View {
                             .accessibilityIdentifier("terminology-replacement")
                     }
                 }
-                if editingID != nil { Button("Cancel") { clearEditor() } }
+                if editingID != nil {
+                    Button("取消") { clearEditor() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                }
                 Button(editingID == nil ? (type == .term ? "Add Term" : "Add Rule") : "Update") { saveEntry() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .disabled(original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || (type == .correction && replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
                     .accessibilityIdentifier("terminology-save-entry")
@@ -158,9 +164,11 @@ struct TerminologyEditor: View {
                     Button { page -= 1 } label: { Image(systemName: "chevron.left") }
                         .disabled(page == 0).accessibilityLabel("Previous entries")
                         .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 28, height: 28)
                     Button { page += 1 } label: { Image(systemName: "chevron.right") }
                         .disabled((page + 1) * rowsPerPage >= rows.count).accessibilityLabel("Next entries")
                         .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 28, height: 28)
                 }
                 if importing || indexing { ProgressView().controlSize(.small) }
                 if let message { Text(message).font(SettingsTypography.detail).foregroundStyle(error ? .red : .secondary).lineLimit(2) }
@@ -181,8 +189,8 @@ struct TerminologyEditor: View {
                             Text(VocabularyBrowser.sourceTitle(row.entry.source)).font(SettingsTypography.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("Edit") { edit(row) }.buttonStyle(.borderless).font(SettingsTypography.control)
-                        Button("Delete") { delete(row) }.buttonStyle(.borderless).font(SettingsTypography.control)
+                        Button("Edit") { edit(row) }.buttonStyle(.borderless).font(SettingsTypography.control).controlSize(.regular)
+                        Button("Delete") { delete(row) }.buttonStyle(.borderless).font(SettingsTypography.control).controlSize(.regular)
                     }.padding(.vertical, 7)
                 }
                 .listStyle(.inset)

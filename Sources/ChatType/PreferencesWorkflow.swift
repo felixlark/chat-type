@@ -8,7 +8,7 @@ extension PreferencesView {
     var transcriptionAccountCard: some View {
         settingsCard(
             title: "识别服务",
-            subtitle: "选择完整录音送往哪个识别服务；实时预览只作为过程提示，终稿仍由这里的选择生成。"
+            subtitle: "选择完整录音送往哪个识别服务；实时预览只作为过程提示，最终输出仍由这里的选择生成。"
         ) {
             Picker("服务", selection: $draft.config.transcription.provider) {
                 ForEach(TranscriptionProvider.allCases) { Text($0.title).tag($0) }
@@ -24,7 +24,7 @@ extension PreferencesView {
                 Text(config.transcription.provider.caption)
                     .font(SettingsTypography.body)
                     .foregroundStyle(.secondary)
-                Text("不需要豆包账户登录。音频发送到 frontier-audio-ime-ws.doubao.com；先从 is.snssdk.com 取得配置。模型由服务端决定。已知识别与改口整理仍可能出错，请核对终稿。")
+                Text("不需要豆包账户登录。音频发送到 frontier-audio-ime-ws.doubao.com；先从 is.snssdk.com 取得配置。模型由服务端决定。已知识别与改口整理仍可能出错，请核对最终输出。")
                     .font(SettingsTypography.detail).foregroundStyle(.secondary)
                 Button("更新豆包识别配置") {
                     Task {
@@ -47,7 +47,7 @@ extension PreferencesView {
         VStack(alignment: .leading, spacing: 20) {
             settingsCard(
                 title: "激活快捷键",
-                subtitle: "按一次开始录音，再按一次停止。录入期间暂停激活，保存后生效。"
+                subtitle: "按一次开始，再按一次停止；录入时暂停激活，保存后生效。"
             ) {
                 HStack(alignment: .center, spacing: 18) {
                     VStack(alignment: .leading, spacing: 5) {
@@ -64,6 +64,7 @@ extension PreferencesView {
                         else { draft.beginShortcutCapture() }
                     }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .tint(draft.isRecordingShortcut ? Color(nsColor: .secondaryLabelColor) : Color.accentColor)
                     .font(SettingsTypography.bodyEmphasis)
                     .accessibilityIdentifier("record-activation-shortcut")
@@ -74,12 +75,8 @@ extension PreferencesView {
                         .foregroundStyle(.secondary)
                         .background(ShortcutRecorder(onCapture: { draft.endShortcutCapture($0) }, onCancel: { draft.endShortcutCapture() }))
                 }
-                Text("支持普通按键和 Command、Option、Control、Shift 组合。当前生效：\(draft.activeShortcut.title)。")
-                    .font(SettingsTypography.body)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
                 if config.transcription.hotkeyKeyCode == 79 {
-                    Text("本机键盘映射可能将实体 F5 输出为 F18；这里显示应用实际接收的按键。")
+                    Text("本机实体 F5 映射为 F18；这里显示应用实际接收的按键。")
                         .font(SettingsTypography.detail).foregroundStyle(.secondary)
                 }
             }
@@ -98,6 +95,7 @@ extension PreferencesView {
                         Text("等待 macOS 登录项批准。").font(SettingsTypography.body).foregroundStyle(.orange)
                         Button("打开登录项") { loginItem.openSystemSettings() }
                             .buttonStyle(.bordered)
+                            .controlSize(.large)
                     }
                     if let message = loginItem.message {
                         Text(message).font(SettingsTypography.detail).foregroundStyle(.red)
@@ -109,8 +107,10 @@ extension PreferencesView {
                     title: "权限",
                     subtitle: "麦克风用于录音，辅助功能用于自动粘贴。"
                 ) {
-                    setupRow(title: "麦克风", status: microphoneStatus)
-                    setupRow(title: "辅助功能", status: accessibilityStatus)
+                    HStack(spacing: 12) {
+                        compactSetupTile(title: "麦克风", status: microphoneStatus)
+                        compactSetupTile(title: "辅助功能", status: accessibilityStatus)
+                    }
                     ForEach(microphoneRepairActions + accessibilityRepairActions) { repairActionButton($0) }
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -132,6 +132,7 @@ extension PreferencesView {
                     Spacer()
                     Button("打开本地数据文件夹", action: onOpenConfigFolder)
                         .buttonStyle(.bordered)
+                        .controlSize(.large)
                 }
             }
         }
@@ -184,8 +185,9 @@ extension PreferencesView {
                         TextField("模型 ID", text: $draft.config.transcription.textPolish.chatGPTResponseModel)
                             .accessibilityIdentifier("polish-model")
                     }
-                    Text("Text model: only the text polish step uses this model. A larger model may improve rewriting and take longer; available models follow your ChatGPT account. Audio recognition uses its own server-selected model.")
+                    Text("仅润色阶段使用这个模型。ChatType 通过 chatgpt.com 的账户后端和现有 ChatGPT 登录发送文本，不调用 OpenAI Platform API，也不使用按量 API Key。实际额度与频率限制由 ChatGPT 账户决定；界面中的 token 数为本地估算，不是账单。")
                         .font(SettingsTypography.detail).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(config.transcription.textPolish.provider == .doubaoIME
                     ? "输入：上一阶段的全文。输出：整理后的全文。本地词表不作为额外提示上传；不承诺云端热词生效。服务：ime.doubao.com。"

@@ -45,6 +45,50 @@ func overlayStatesStayCompactExceptErrors() {
     #expect(OverlayVisualState.error("Microphone permission is missing").allowsSupplementaryText == true)
 }
 
+@MainActor
+@Test
+func hudLeadingTextAndControlsShareOneBottomEdge() {
+    let overlay = OverlayController(presentsPanel: false)
+
+    func assertBottomAligned(_ label: String) {
+        let snapshot = overlay.debugSnapshot
+        #expect(
+            abs(snapshot.leadingFrame.minY - snapshot.textFrame.minY) < 0.5,
+            "\(label): leading and text bottoms differ"
+        )
+        if snapshot.isCancelControlVisible || snapshot.isRetryControlVisible || snapshot.isTimerVisible {
+            #expect(
+                abs(snapshot.trailingFrame.minY - snapshot.textFrame.minY) < 0.5,
+                "\(label): trailing controls are not bottom-aligned"
+            )
+        }
+    }
+
+    overlay.showRecording(elapsedText: "00:07")
+    assertBottomAligned("recording")
+
+    overlay.showProcessing()
+    assertBottomAligned("processing")
+
+    overlay.showError("Clipboard only")
+    assertBottomAligned("error")
+
+    overlay.showResult(text: "终稿", outcome: .pasted)
+    overlay.debugAcknowledgeCaptionDraw()
+    assertBottomAligned("result")
+
+    overlay.showConfirming()
+    assertBottomAligned("confirming")
+
+    overlay.showRetryableError("403 after 3 tries")
+    assertBottomAligned("retryable-error")
+
+    overlay.showOutputUnconfirmed("请核对输入框")
+    assertBottomAligned("unconfirmed")
+
+    overlay.hide()
+}
+
 @Test
 func recordingOverlayStateShowsCancelControlAndTimer() {
     let state = OverlayVisualState.recording(
@@ -92,18 +136,49 @@ func waveformNormalizerClampsSilenceAndLoudInput() {
 }
 
 @Test
-func waveformNormalizerRecordingProfileStaysSymmetricAndWithinBounds() {
-    let smoothed = WaveformNormalizer.smoothedLevels(
+func waveformNormalizerRecordingProfileMovesLikeAnEqualizer() {
+    let early = WaveformNormalizer.smoothedLevels(
         previous: Array(repeating: 0.12, count: 9),
         targetLevel: 0.9,
-        barCount: 9
+        barCount: 9,
+        phase: 0
+    )
+    let later = WaveformNormalizer.smoothedLevels(
+        previous: early,
+        targetLevel: 0.9,
+        barCount: 9,
+        phase: 1.2
     )
 
-    #expect(smoothed.count == 9)
-    #expect(smoothed.allSatisfy { $0 >= 0.08 && $0 <= 1 })
-    #expect(smoothed[4] > smoothed[0])
-    #expect(smoothed[4] > smoothed[8])
-    #expect(abs(smoothed[0] - smoothed[8]) < 0.0001)
+    #expect(early.count == 9)
+    #expect(early.allSatisfy { $0 >= 0.08 && $0 <= 1 })
+    #expect(Set(early.map { Int($0 * 100) }).count >= 4)
+    #expect(early != later)
+    #expect(early.max() != later.max())
+}
+
+@Test
+func waveformBarsGrowFromAFlatBottomBaseline() {
+    let bounds = CGRect(x: 0, y: 0, width: 54, height: 20)
+    let short = WaveformNormalizer.barRect(
+        level: 0.2,
+        x: 0,
+        width: 3,
+        bounds: bounds,
+        minimumHeight: 6
+    )
+    let tall = WaveformNormalizer.barRect(
+        level: 0.95,
+        x: 9,
+        width: 3,
+        bounds: bounds,
+        minimumHeight: 6
+    )
+
+    #expect(short.minY == bounds.minY)
+    #expect(tall.minY == bounds.minY)
+    #expect(tall.height > short.height)
+    #expect(tall.maxY <= bounds.maxY)
 }
 
 @Test

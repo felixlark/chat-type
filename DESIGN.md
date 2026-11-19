@@ -90,7 +90,7 @@ components:
 
 ChatType’s control panel is a useful, candid personal studio: readable service facts, restrained navigation and native macOS controls. Its AppKit window hosts SwiftUI content. System typography, dynamic system colors and SF Symbols (Apple’s system icon library) support everyday operation while the existing product name and brand assets remain owner-controlled.
 
-This document records the implemented settings surface of 0.6.0 (148), using `PreferencesWindowController.swift`, `PreferencesView.swift`, `HistoryWorkspace.swift`, `TerminologyEditor.swift` and `ProcessingFlowView.swift`. It covers the reusable control-panel language, not the recording overlay or a new visual direction. Page strategy remains in `docs/control-panel-surface.md`; product commitments remain in `PRODUCT.md`.
+This document records the implemented settings surface of 0.6.0 (149), using `PreferencesWindowController.swift`, `PreferencesView.swift`, `HistoryWorkspace.swift`, `TerminologyEditor.swift` and `ProcessingFlowView.swift`. It covers the reusable control-panel language, not the recording overlay or a new visual direction. Page strategy remains in `docs/control-panel-surface.md`; product commitments remain in `PRODUCT.md`.
 
 **Key Characteristics:**
 - Dynamic macOS semantic surfaces and one system accent.
@@ -135,11 +135,11 @@ The macOS system font supplies titles, controls and body text. Semibold and medi
 
 ## Layout
 
-The resizable native window opens at (1320 × 820pt) with window minimum (1200 × 720pt); the hosted root uses the same minimum. A 212pt fixed sidebar sits beside a divider and flexible content column. There are no web breakpoints or mobile layouts.
+The resizable native window opens maximized to the built-in display’s `visibleFrame` (1512 × 875pt on this Mac), with window minimum (1200 × 720pt); the hosted root uses the same minimum. The built-in display is identified by `CGDisplayIsBuiltin=1`, not a fixed display ID or name. If no built-in display is present, the first available screen is used. A closed Settings window returns to this placement; a visible window already on the built-in display keeps the user’s position and size. A 212pt fixed sidebar sits beside a divider and flexible content column. There are no web breakpoints or mobile layouts.
 
-The content column has a scrollable page above a persistent divider and save bar. Page padding is 28pt; cards use 18pt inner padding, 14pt corners and a low-contrast native border. The page header stacks a native caption breadcrumb, 28pt page title and 14pt secondary subtitle. Sidebar destinations are Account, Workflow, History and Settings. Account uses icon-led service rows with status capsules and explicit state labels. Green Doubao means installed, not a successful cloud probe. Apple preview support does not imply a prepared model or a local final transcription provider.
+The content column has a scrollable page above a persistent divider and save bar. Page padding is 28pt; cards use 18pt inner padding, 14pt corners and a low-contrast native border. The page header stacks a native caption breadcrumb, 28pt page title and 14pt secondary subtitle. Sidebar destinations are Account, Workflow, History and Settings. Account uses icon-led service rows with capability tags (实时预览, 识别, 润色) and explicit status capsules. Permissions live only in Settings, not Account. Green Doubao means installed, not a successful cloud probe; green Apple means the local analyzer reports available; green GLM/Qwen means a key is saved, not that a request has been verified.
 
-History is a full-height master-detail workspace rather than a scrolling settings page. Its list and detail panes scroll independently; the persistent save bar stays outside both. Other destinations recreate the ScrollView via `.id(selectedSection)` so the next page starts at the top.
+History is a full-height master-detail workspace rather than a scrolling settings page. The voice list scrolls independently; the detail pane stays on one screen. Long transcript columns scroll internally with hidden indicators so the page itself never grows. Other destinations recreate the ScrollView via `.id(selectedSection)` so the next page starts at the top.
 
 Information rows align labels and values horizontally with flexible trailing space. Service facts use a fixed label column (90pt); processing details use (64pt). Related text stacks remain close together; actions stay beside the facts they affect. The bottom bar keeps Open Config Folder at the leading edge and save status plus Save Settings at the trailing edge.
 
@@ -155,9 +155,15 @@ Groups use the larger rounded role; nested rows and selected navigation/stage it
 
 ## Components
 
+### Recording HUD waveform
+
+The Listening mark is a nine-bar mini spectrum inside the existing graphite status pill. Bars share a flat bottom baseline and grow upward; they do not mirror around a center line. The profile changes every audio tick from the live input level plus a moving, asymmetric spectral contour, so quiet speech remains alive without turning into decorative motion. Processing reuses the same flat-baseline geometry for its traveling pulse. Keep the approved graphite, mist and ice-blue palette and the existing HUD dimensions.
+
+Across recording, processing, success, error and retryable-error states, the leading visual, the complete title/description text block, the timer and the inline controls share one bottom edge. The text block remains centered as a block; do not center a small icon against a two-line error.
+
 ### Buttons
 
-Use native default or bordered buttons for ordinary actions, bordered-prominent for the relevant connection, save, or device-code action, and borderless text actions inside vocabulary rows and history stage controls. Save Settings is the window’s default keyboard action. Sidebar and processing selectors use plain buttons with explicit selected fills. Focus, hover, pressed and disabled appearances are supplied by macOS; no custom states are implied by this document. Icon-only history and pagination actions have accessible labels and history actions have help text.
+Use native default or bordered buttons for ordinary actions, bordered-prominent for the relevant connection, save, or device-code action, and borderless text actions only for compact secondary affordances. Primary History, Account and Settings actions use the large native control size; filters, stage selectors and icon-only copy controls expose at least a 28–32pt hit area. Save Settings is the window’s default keyboard action. Sidebar and processing selectors use plain buttons with explicit selected fills. Focus, hover, pressed and disabled appearances are supplied by macOS; no custom states are implied by this document. Icon-only history, key-management and pagination actions have accessible labels and help text.
 
 ### Cards / Containers
 
@@ -173,7 +179,7 @@ The narrow sidebar has an app heading, four icon-and-label destinations and an F
 
 ### Processing map and inspector
 
-Six equally flexible stage buttons—录音, 识别, 对齐, 润色, 修正 and 输出—form one horizontal process map inside a grouped card, with secondary chevrons between stages. Stage icons (20pt) sit above 13pt medium labels; selected stages use a restrained accent fill. Selecting a stage changes the 输入, 运行于, 输出 and explanation below; 识别 is the initial selection. The inspector makes model, service and destination facts readable and selectable. A 12pt caption explains when saved changes take effect.
+Six equally flexible stage buttons—录音, 识别, 对齐, 润色, 校正 and 输出—form one horizontal process map inside a grouped card, with secondary chevrons between stages. Stage icons (20pt) sit above a 13pt medium label and a compact model/service caption; selected stages use a restrained accent fill. The 录音 stage includes an explicit live-preview source picker: follow the recognizer, use Doubao streaming preview, or use Apple SpeechAnalyzer when ChatGPT recognition is selected. Selecting a stage changes the 输入, 运行于, 输出 and explanation below; 识别 is the initial selection. The inspector makes model, service and destination facts readable and selectable. A 12pt caption explains when saved changes take effect.
 
 ### Vocabulary editor
 
@@ -181,7 +187,13 @@ The 对齐 stage contains Custom phrases; 修正 contains Replacement. Each edit
 
 ### History workspace
 
-A 320pt voice list sits beside a flexible detail pane. Each voice appears once, with status, time, target, duration, a two-line preview and a six-segment stage rail. Selecting a voice loads its full record on demand; list search and filters use lightweight metadata. The detail pane shows the original audio, a six-stage process rail, four distinct text artifacts—ASR 原文, 对齐后, 润色输出, 最终化结果—and processing evidence. Each artifact is independently copyable. Stage-level reruns and whole-flow retries are visible actions, not hidden menus. Error text is explicitly labeled by its content and uses the error color. Copy feedback fades in with ease-out (0.12s), stays about (1.5s) and fades out (0.18s); this is local confirmation, not a global motion system.
+A 320pt voice list sits beside a flexible detail pane. Each voice appears once, with status, time, target, duration, a two-line preview and a six-segment stage rail. Selecting a voice loads its full record on demand; list search and filters use lightweight metadata.
+
+The detail pane is one fixed screen: the original waveform/player comes first, followed by status metadata and exactly two whole-flow actions, 重试原路线 and 按当前流程重跑. There is no top copy button, no stage-level rerun row and no processing-evidence block. Below the actions, six stage buttons are directly clickable and show their model/service caption plus a short explanation for the selected stage. The 校正 stage reports word-level changes as a count, unique-word count and sampled before/after pairs.
+
+The text chain has three columns: ASR 原文, 对齐后 and 润色输出 (the final, corrected output when corrections exist). Each column is independently copyable and scrolls internally without a visible scrollbar. Corpus-level scrolling is intentionally absent.
+
+Error text is explicitly labeled by its content and uses the error color. Copy feedback fades in with ease-out (0.12s), stays about (1.5s) and fades out (0.18s); this is local confirmation, not a global motion system.
 
 ### Save bar
 

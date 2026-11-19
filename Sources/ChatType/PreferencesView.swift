@@ -77,8 +77,6 @@ struct PreferencesView: View {
     let recoveryDirectoryURL: URL
     let onRetryRecoveryRecord: (RecoveryRecord, UUID?) -> Void
     let onReprocessRecoveryRecord: (RecoveryRecord, UUID?) -> Void
-    let onRerunRecoveryTranscription: (RecoveryRecord, UUID?) -> Void
-    let onRerunRecoveryPolish: (RecoveryRecord, UUID?) -> Void
     let onOpenConfigFolder: () -> Void
 
     init(
@@ -93,8 +91,6 @@ struct PreferencesView: View {
         recoveryDirectoryURL: URL,
         onRetryRecoveryRecord: @escaping (RecoveryRecord, UUID?) -> Void,
         onReprocessRecoveryRecord: @escaping (RecoveryRecord, UUID?) -> Void,
-        onRerunRecoveryTranscription: @escaping (RecoveryRecord, UUID?) -> Void,
-        onRerunRecoveryPolish: @escaping (RecoveryRecord, UUID?) -> Void,
         onOpenConfigFolder: @escaping () -> Void,
         focusRecoveryHistory: Bool = false,
         glmKeyStore: any GLMKeyStoring = KeychainGLMKeyStore(),
@@ -125,8 +121,6 @@ struct PreferencesView: View {
         self.recoveryDirectoryURL = recoveryDirectoryURL
         self.onRetryRecoveryRecord = onRetryRecoveryRecord
         self.onReprocessRecoveryRecord = onReprocessRecoveryRecord
-        self.onRerunRecoveryTranscription = onRerunRecoveryTranscription
-        self.onRerunRecoveryPolish = onRerunRecoveryPolish
         self.onOpenConfigFolder = onOpenConfigFolder
     }
 
@@ -216,9 +210,7 @@ struct PreferencesView: View {
                         model: historyWorkspace,
                         recoveryDirectoryURL: recoveryDirectoryURL,
                         onRetryRecoveryRecord: onRetryRecoveryRecord,
-                        onReprocessRecoveryRecord: onReprocessRecoveryRecord,
-                        onRerunRecoveryTranscription: onRerunRecoveryTranscription,
-                        onRerunRecoveryPolish: onRerunRecoveryPolish
+                        onReprocessRecoveryRecord: onReprocessRecoveryRecord
                     )
                 } else {
                     ScrollView {
@@ -239,6 +231,8 @@ struct PreferencesView: View {
                     Button("打开配置文件夹", action: onOpenConfigFolder)
                         .buttonStyle(.bordered)
                         .font(SettingsTypography.body)
+                        .controlSize(.large)
+                        .frame(minWidth: 120)
                     Spacer()
                     Text(saveMessage)
                         .font(SettingsTypography.detail)
@@ -249,6 +243,8 @@ struct PreferencesView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .font(SettingsTypography.bodyEmphasis)
+                    .controlSize(.large)
+                    .frame(minWidth: 96)
                     .keyboardShortcut(.defaultAction)
                     .disabled(draft.isRecordingShortcut)
                 }
@@ -360,9 +356,9 @@ struct PreferencesView: View {
 
     var sectionSubtitle: String {
         switch selectedSection {
-        case .account: return "管理服务连接、密钥和系统权限。"
+        case .account: return "查看每项服务能做什么、是否可用，以及凭据是否已保存。"
         case .workflow: return "看清每一步用什么、输入什么、输出什么。"
-        case .recovery: return "逐条检查原声、转写、润色与最终输出。"
+        case .recovery: return "原声、转写、对齐、润色与校正，一屏查看。"
         case .settings: return "快捷键、启动项、权限和本地数据。"
         }
     }
