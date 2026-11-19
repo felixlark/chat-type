@@ -419,7 +419,10 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             return correctionChanges.shortDetail
         case .output:
             if stage.state == .skipped {
-                return "仅诊断尝试，没有执行输出。"
+                if selectedAttempt?.resolvedKind != .full, selectedAttempt != nil {
+                    return "仅诊断尝试，没有执行输出。"
+                }
+                return "\(stage.detail) · \(record.appName ?? "目标未记录")"
             }
             if stage.state == .failed {
                 return "输出失败；\(status.detail ?? status.label)"

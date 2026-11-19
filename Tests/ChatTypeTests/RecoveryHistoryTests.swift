@@ -277,6 +277,43 @@ func diagnosticAttemptPreservesPrimaryVoiceStateAndSelection() throws {
 }
 
 @Test
+func fullCancelledAttemptDoesNotClaimDiagnosticOutput() {
+    let recordID = UUID()
+    let attemptID = UUID()
+    let record = RecoveryRecord(
+        id: recordID,
+        timestamp: Date(timeIntervalSince1970: 7),
+        audioFileName: "\(recordID.uuidString).wav",
+        audioDurationMs: 3_000,
+        asrText: "partial words",
+        polishText: nil,
+        appName: "Notes",
+        appBundleIdentifier: "com.apple.Notes",
+        outcome: "cancelled",
+        errorMessage: nil,
+        attempts: [
+            DictationAttempt(
+                id: attemptID,
+                startedAt: Date(timeIntervalSince1970: 7),
+                snapshot: TranscriptionConfig(),
+                stages: DictationStageAudit(asrText: "partial words"),
+                outcome: "cancelled",
+                kind: .full
+            )
+        ]
+    )
+    let presentation = HistoryRecordPresentation(
+        record: record,
+        selectedAttemptID: attemptID,
+        audioAvailable: true
+    )
+    let narrative = presentation.stageNarrative(for: .output)
+
+    #expect(narrative.contains("已取消"))
+    #expect(!narrative.contains("仅诊断"))
+}
+
+@Test
 func legacyRecordPresentationKeepsOldPolishLabelAndOmitsFakeStages() {
     let record = RecoveryRecord(
         id: UUID(),
