@@ -291,7 +291,7 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             to: selectedStages?.polishInput
         )
         self.correctionChanges = HistoryTextChangeAnalyzer.summarize(
-            from: selectedStages?.polishOutput,
+            from: selectedStages?.correctionInput ?? selectedStages?.polishOutput,
             to: selectedStages?.finalText
         )
 
@@ -325,6 +325,107 @@ struct HistoryRecordPresentation: Sendable, Equatable {
 
     var formattedDuration: String {
         Self.formatDuration(record.audioDurationMs)
+    }
+
+    func stageNarrative(for position: HistoryStagePosition) -> String {
+        guard let stage = stages.first(where: { $0.position == position }) else {
+            return "旧记录未保存分阶段明细。"
+        }
+        let snapshot = selectedAttempt?.snapshot ?? record.snapshot
+        switch position {
+        case .audio:
+            return stage.state == .complete
+                ? "本机原始 WAV · \(formattedDuration) · 可播放"
+                : "原始 WAV 缺失；文本仍可查看和复制。"
+        case .asr:
+            if stage.state == .skipped {
+                let count = artifacts.first(where: { $0.kind == .asr })?.text?.count ?? 0
+                return "仅润色尝试；复用已有转写 · \(count) 字。"
+            }
+            if stage.state == .failed {
+                return "转写失败；原始录音已保留。"
+            }
+            if stage.state == .unavailable {
+                return "这次尝试没有生成转写文本。"
+            }
+            guard let snapshot else { return "旧记录未保存识别路线。" }
+            let count = artifacts.first(where: { $0.kind == .asr })?.text?.count ?? 0
+            let partial = selectedAttempt?.stages.partialAudio == true ? " · 部分录音" : ""
+            let model = snapshot.provider == .openAICompatible
+                ? snapshot.provider.modelLabel(config: snapshot)
+                : "\(snapshot.provider.modelLabel(config: snapshot)) · 服务端选择模型"
+            return "\(model) · \(count) 字\(partial)"
+        case .alignment:
+            if stage.state == .skipped {
+                return selectedAttempt?.resolvedKind == .asrOnly
+                    ? "仅转写尝试；未执行对齐。"
+                    : "已关闭；转写文本直接进入下一阶段。"
+            }
+            if stage.state == .unavailable {
+                return "未执行；没有可对齐的转写文本。"
+            }
+            guard let attempt = selectedAttempt else { return "旧记录未保存对齐阶段。" }
+            guard attempt.snapshot.terminologyAlignmentEnabled else {
+                return "已关闭；转写文本直接进入下一阶段。"
+            }
+            guard artifacts.first(where: { $0.kind == .aligned })?.text?.isEmpty == false else {
+                return "已执行；这次尝试没有单独保存对齐文本。"
+            }
+            return "本地词库 · \(alignmentChanges.shortDetail)"
+        case .polish:
+            if stage.state == .skipped {
+                return selectedAttempt?.resolvedKind == .asrOnly
+                    ? "仅转写尝试；未执行润色。"
+                    : "润色已关闭；对齐文本直接进入校正。"
+            }
+            if stage.state == .failed {
+                if let note = artifacts.first(where: { $0.kind == .output })?.note,
+                   note.contains("失败前部分") {
+                    return note
+                }
+                return "润色失败；没有生成可用输出。"
+            }
+            if stage.state == .unavailable {
+                return "这次尝试没有生成润色输出。"
+            }
+            guard let snapshot else { return "旧记录未保存润色路线。" }
+            guard snapshot.textPolish.isEnabled else {
+                return "润色已关闭；对齐文本直接进入校正。"
+            }
+            let count = artifacts.first(where: { $0.kind == .output })?.text?.count ?? 0
+            let protection = selectedAttempt?.stages.polishProtectionReason
+                .map { " · 安全保护：\($0)" } ?? ""
+            let model = snapshot.textPolish.provider.modelLabel(config: snapshot.textPolish)
+            let service = snapshot.textPolish.provider == .doubaoIME
+                ? "\(model) · 服务端选择模型"
+                : model
+            return "\(service) · \(count) 字\(protection)"
+        case .correction:
+            if stage.state == .skipped {
+                return selectedAttempt?.resolvedKind == .asrOnly
+                    ? "仅诊断尝试；未执行校正。"
+                    : "本地校正已关闭；输出保持校正前文本。"
+            }
+            if stage.state == .failed {
+                return "校正失败；没有生成最终文本。"
+            }
+            if stage.state == .unavailable {
+                return "这次尝试没有生成校正后的文本。"
+            }
+            guard let snapshot else { return "旧记录未保存校正配置。" }
+            guard snapshot.correctionRulesEnabled else {
+                return "本地校正已关闭；输出保持润色文本。"
+            }
+            return correctionChanges.shortDetail
+        case .output:
+            if stage.state == .skipped {
+                return "仅诊断尝试，没有执行输出。"
+            }
+            if stage.state == .failed {
+                return "输出失败；\(status.detail ?? status.label)"
+            }
+            return "\(status.label) · \(record.appName ?? "目标未记录")"
+        }
     }
 
     var selectedAttemptIsDiagnostic: Bool {
@@ -423,7 +524,7 @@ struct HistoryRecordPresentation: Sendable, Equatable {
         if hasFinal {
             correctionState = .complete
             let changes = HistoryTextChangeAnalyzer.summarize(
-                from: stages.polishOutput,
+                from: stages.correctionInput ?? stages.polishOutput,
                 to: stages.finalText
             )
             if !snapshot.correctionRulesEnabled {
@@ -544,11 +645,14 @@ struct HistoryRecordPresentation: Sendable, Equatable {
             outputFailure = false
         } else if stages.finalText?.isEmpty == false {
             outputText = stages.finalText
-            if stages.polishOutput != stages.finalText {
-                let changes = HistoryTextChangeAnalyzer.summarize(
-                    from: stages.polishOutput,
-                    to: stages.finalText
-                )
+            let comparisonSource = stages.correctionInput ?? stages.polishOutput
+            let changes = HistoryTextChangeAnalyzer.summarize(
+                from: comparisonSource,
+                to: stages.finalText
+            )
+            if !attempt.snapshot.textPolish.isEnabled {
+                outputNote = changes.count == 0 ? "润色已关闭" : "已含 \(changes.count) 处校正"
+            } else if comparisonSource != stages.finalText {
                 outputNote = changes.count == 0 ? "已统一格式" : "已含 \(changes.count) 处校正"
             }
         } else if stages.error != nil {
@@ -672,6 +776,7 @@ struct RecoveryHistorySummary: Identifiable, Sendable, Equatable {
                     attempt.stages.asrText,
                     attempt.stages.polishInput,
                     attempt.stages.polishOutput,
+                    attempt.stages.correctionInput,
                     attempt.stages.finalText
                 ].compactMap { $0 }
             }.joined(separator: "\n")

@@ -15,6 +15,7 @@ struct DictationStageAudit: Codable, Sendable, Equatable {
     var asrText: String?
     var polishInput: String?
     var polishOutput: String?
+    var correctionInput: String? = nil
     var finalText: String?
     var error: String?
     var polishOutputs: [String]? = nil
@@ -30,6 +31,7 @@ struct DictationStageAudit: Codable, Sendable, Equatable {
         result.asrText = update.asrText ?? asrText
         result.polishInput = update.polishInput ?? polishInput
         result.polishOutput = update.polishOutput ?? polishOutput
+        result.correctionInput = update.correctionInput ?? correctionInput
         result.finalText = update.finalText ?? finalText
         result.error = update.error ?? error
         result.polishOutputs = update.polishOutputs ?? polishOutputs

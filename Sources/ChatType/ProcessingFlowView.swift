@@ -76,7 +76,7 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOp
     @State private var selected = 1
 
     private var stages: [ProcessingStage] {
-        ProcessingStage.stages(config: config, localPreviewSupported: ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26,
+        ProcessingStage.stages(config: config, localPreviewSupported: LocalSpeechPreviewAvailability.isAvailable,
             chatGPTReady: chatGPTReady, glmReady: glmReady, qwenReady: qwenReady, clipboardOnly: injection.clipboardOnly)
     }
 

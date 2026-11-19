@@ -77,6 +77,15 @@ func hudLeadingTextAndControlsShareOneBottomEdge() {
     overlay.debugAcknowledgeCaptionDraw()
     assertBottomAligned("result")
 
+    overlay.showConfirming()
+    assertBottomAligned("confirming")
+
+    overlay.showRetryableError("403 after 3 tries")
+    assertBottomAligned("retryable-error")
+
+    overlay.showOutputUnconfirmed("请核对输入框")
+    assertBottomAligned("unconfirmed")
+
     overlay.hide()
 }
 

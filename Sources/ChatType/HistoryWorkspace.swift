@@ -775,7 +775,7 @@ private struct HistoryDetailView: View {
                     .frame(width: 18)
                 Text(stage.position.title)
                     .font(.system(size: 12.5, weight: .semibold))
-                Text(stageNarrative(view, stage: stage.position))
+                Text(view.stageNarrative(for: stage.position))
                     .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -787,58 +787,6 @@ private struct HistoryDetailView: View {
             .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
             .clipShape(RoundedRectangle(cornerRadius: 9))
             .accessibilityElement(children: .combine)
-        }
-    }
-
-    private func stageNarrative(
-        _ view: HistoryRecordPresentation,
-        stage: HistoryStagePosition
-    ) -> String {
-        let snapshot = view.selectedAttempt?.snapshot ?? record.snapshot
-        switch stage {
-        case .audio:
-            return audioAvailable
-                ? "本机原始 WAV · \(view.formattedDuration) · 可播放"
-                : "原始 WAV 缺失；文本仍可查看和复制。"
-        case .asr:
-            guard let snapshot else { return "旧记录未保存识别路线。" }
-            let count = view.artifacts.first(where: { $0.kind == .asr })?.text?.count ?? 0
-            let partial = view.selectedAttempt?.stages.partialAudio == true ? " · 部分录音" : ""
-            let model = snapshot.provider == .openAICompatible
-                ? snapshot.provider.modelLabel(config: snapshot)
-                : "\(snapshot.provider.modelLabel(config: snapshot)) · 服务端选择模型"
-            return "\(model) · \(count) 字\(partial)"
-        case .alignment:
-            guard let attempt = view.selectedAttempt else { return "旧记录未保存对齐阶段。" }
-            guard attempt.snapshot.terminologyAlignmentEnabled else {
-                return "已关闭；转写文本直接进入下一阶段。"
-            }
-            let aligned = view.artifacts.first(where: { $0.kind == .aligned })?.text
-            guard aligned?.isEmpty == false else {
-                return "已执行；这次尝试没有单独保存对齐文本。"
-            }
-            return "本地词库 · \(view.alignmentChanges.shortDetail)"
-        case .polish:
-            guard let snapshot else { return "旧记录未保存润色路线。" }
-            guard snapshot.textPolish.isEnabled else {
-                return "润色已关闭；对齐文本直接进入校正。"
-            }
-            let count = view.artifacts.first(where: { $0.kind == .output })?.text?.count ?? 0
-            let protection = view.selectedAttempt?.stages.polishProtectionReason.map { " · 安全保护：\($0)" } ?? ""
-            let model = snapshot.textPolish.provider.modelLabel(config: snapshot.textPolish)
-            let service = snapshot.textPolish.provider == .doubaoIME ? "\(model) · 服务端选择模型" : model
-            return "\(service) · \(count) 字\(protection)"
-        case .correction:
-            guard let snapshot else { return "旧记录未保存校正配置。" }
-            guard snapshot.correctionRulesEnabled else {
-                return "本地校正已关闭；输出保持润色文本。"
-            }
-            return view.correctionChanges.shortDetail
-        case .output:
-            if view.selectedAttempt?.resolvedKind != .full, view.selectedAttempt != nil {
-                return "仅诊断尝试，没有执行输出。"
-            }
-            return "\(view.status.label) · \(record.appName ?? "目标未记录")"
         }
     }
 

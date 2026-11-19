@@ -873,7 +873,7 @@ final class AppCoordinator {
             record.attempts?.first(where: { $0.id == id })
         }
         if !useCurrentFlow, let selectedAttempt, selectedAttempt.resolvedKind != .full {
-            overlay.showError("诊断尝试不能整条重试；请使用阶段重跑，或选择完整流程尝试。")
+            overlay.showError("诊断尝试不能整条重试；请选择完整流程尝试，或使用“按当前流程重跑”。")
             return
         }
         let selectedOutcome = selectedAttempt?.outcome ?? record.outcome

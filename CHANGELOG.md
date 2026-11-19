@@ -10,6 +10,7 @@
 - Made the Settings window open maximized to the built-in display’s visible frame, identified through `CGDisplayIsBuiltin`, with a first-screen fallback and minimum-size preservation.
 - Clarified Account service capabilities as 实时预览, 识别 and 润色; removed duplicate permissions and the advanced compatible entry from Account; Apple availability now shows a green check; missing GLM/Qwen keys show red 需要填写.
 - Clarified that ChatGPT Auth polish uses the ChatGPT account session at `chatgpt.com`, not an OpenAI Platform API key; displayed token values are local estimates, not billing.
+- History now always archives aligned text, records the post-normalization correction input, and computes 校正 from that snapshot instead of counting ordinary formatting or terminology normalization as explicit corrections.
 
 ## 0.6.0 (148)
 
