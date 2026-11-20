@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 enum DoubaoError: LocalizedError, Sendable, Equatable {
     case malformedMessage
@@ -120,46 +121,112 @@ struct DoubaoReply: Sendable {
     }
 }
 
+struct DoubaoTranscriptSegmentAudit: Codable, Sendable, Equatable {
+    let responseOrdinal: Int
+    let resultOrdinal: Int
+    let key: String
+    let textLength: Int
+    let textSHA256: String
+    let final: Bool
+    let nonstreamResult: Bool
+    let action: String
+}
+
+struct DoubaoTranscriptAudit: Codable, Sendable, Equatable {
+    let responseCount: Int
+    let resultCount: Int
+    let uniqueSegmentCount: Int
+    let finalSegmentCount: Int
+    let complete: Bool
+    let finalTextLength: Int
+    let finalTextSHA256: String
+    let segments: [DoubaoTranscriptSegmentAudit]
+}
+
+struct DoubaoSessionDiagnostic: Codable, Sendable, Equatable {
+    let requestID: String
+    let live: Bool
+    let pcmBytesRead: Int
+    let pcmFramesSent: Int
+    let uploadedBytes: Int
+    let transcript: DoubaoTranscriptAudit
+}
+
 /// Each indexed VAD segment is replaced in place; final segments are never
 /// replaced by late interim text. Ambiguous unindexed multi-segment replies fail
-/// explicitly instead of silently dropping earlier speech.
+/// explicitly instead of silently dropping earlier speech. The audit records
+/// the response shape without retaining segment text in diagnostics.
 struct DoubaoTranscript: Sendable {
     struct Segment: Sendable { var text: String; var final: Bool }
     private var order: [String] = []
     private var segments: [String: Segment] = [:]
+    private var audits: [DoubaoTranscriptSegmentAudit] = []
+    private var responseCount = 0
     var text: String { order.compactMap { segments[$0]?.text }.joined() }
     var finalText: String { order.compactMap { segments[$0].flatMap { $0.final ? $0.text : nil } }.joined() }
     var complete: Bool { !order.isEmpty && order.allSatisfy { segments[$0]?.final == true } }
 
-    mutating func consume(_ data: Data) throws {
+    func auditSnapshot() -> DoubaoTranscriptAudit {
+        let final = finalText
+        return DoubaoTranscriptAudit(responseCount: responseCount, resultCount: audits.count,
+            uniqueSegmentCount: order.count, finalSegmentCount: order.filter { segments[$0]?.final == true }.count,
+            complete: complete, finalTextLength: final.count,
+            finalTextSHA256: SHA256.hash(data: Data(final.utf8)).map { String(format: "%02x", $0) }.joined(),
+            segments: audits)
+    }
+
+    mutating func consume(_ data: Data, responseOrdinal: Int = 0) throws {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw DoubaoError.malformedMessage
         }
+        responseCount = max(responseCount, responseOrdinal + 1)
         guard let results = object["results"] as? [[String: Any]] else { return }
-        for result in results {
+        for (resultOrdinal, result) in results.enumerated() {
             guard let text = result["text"] as? String, !text.isEmpty else { continue }
             let extra = result["extra"] as? [String: Any]
-            if extra?["nonstream_result"] as? Bool == true, order.count > 1 {
+            let nonstreamResult = extra?["nonstream_result"] as? Bool == true
+            let final = (result["is_interim"] as? Bool == false && result["is_vad_finished"] as? Bool == true)
+                || nonstreamResult
+            if nonstreamResult, order.count > 1 {
+                appendAudit(responseOrdinal: responseOrdinal, resultOrdinal: resultOrdinal, key: "unindexed",
+                    text: text, final: final, nonstreamResult: true, action: "rejectedAmbiguousOffline")
                 throw DoubaoError.incomplete("离线结果（多段覆盖范围未知）")
             }
-            let final = (result["is_interim"] as? Bool == false && result["is_vad_finished"] as? Bool == true)
-                || extra?["nonstream_result"] as? Bool == true
             let key: String
             if let index = result["index"] as? NSNumber { key = "index:\(index)" }
             else if let start = result["start_time"] as? NSNumber { key = "start:\(start)" }
             else {
                 key = "unindexed"
-                if extra?["nonstream_result"] as? Bool == true, !order.isEmpty, segments[key] == nil {
+                if nonstreamResult, !order.isEmpty, segments[key] == nil {
+                    appendAudit(responseOrdinal: responseOrdinal, resultOrdinal: resultOrdinal, key: key,
+                        text: text, final: final, nonstreamResult: true, action: "rejectedAmbiguousOffline")
                     throw DoubaoError.incomplete("离线结果（分段覆盖范围未知）")
                 }
                 if let old = segments[key], old.final, old.text != text {
+                    appendAudit(responseOrdinal: responseOrdinal, resultOrdinal: resultOrdinal, key: key,
+                        text: text, final: final, nonstreamResult: nonstreamResult, action: "rejectedAmbiguousFinal")
                     throw DoubaoError.incomplete("分段识别（缺少分段标识）")
                 }
             }
-            if let old = segments[key], old.final && !final { continue }
+            if let old = segments[key], old.final && !final {
+                appendAudit(responseOrdinal: responseOrdinal, resultOrdinal: resultOrdinal, key: key,
+                    text: text, final: final, nonstreamResult: nonstreamResult, action: "ignoredLateInterim")
+                continue
+            }
+            let action = segments[key] == nil ? "acceptedNew" : (segments[key]!.final ? "replacedFinal" : "replacedInterim")
+            appendAudit(responseOrdinal: responseOrdinal, resultOrdinal: resultOrdinal, key: key,
+                text: text, final: final, nonstreamResult: nonstreamResult, action: action)
             if segments[key] == nil { order.append(key) }
             segments[key] = Segment(text: text, final: final)
         }
+    }
+
+    private mutating func appendAudit(responseOrdinal: Int, resultOrdinal: Int, key: String,
+                                      text: String, final: Bool, nonstreamResult: Bool, action: String) {
+        audits.append(DoubaoTranscriptSegmentAudit(responseOrdinal: responseOrdinal, resultOrdinal: resultOrdinal,
+            key: key, textLength: text.count,
+            textSHA256: SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined(),
+            final: final, nonstreamResult: nonstreamResult, action: action))
     }
 }
 
