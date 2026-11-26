@@ -11,6 +11,15 @@ struct DoubaoTranscriptionFailure: LocalizedError, Sendable {
     }
 }
 
+private struct DoubaoSessionResult: Sendable {
+    let text: String
+    let transcript: DoubaoTranscriptAudit
+    let metrics: TranscriptionMetrics
+    let pcmBytesRead: Int
+    let pcmFramesSent: Int
+    let uploadedBytes: Int
+}
+
 protocol DoubaoSocket: Sendable {
     func send(_ data: Data) async throws
     func receive() async throws -> Data
@@ -66,13 +75,16 @@ actor DoubaoLiveState {
 final class DoubaoLiveRecognition {
     let state: DoubaoLiveState
     private let task: Task<TranscriptionResult, Error>
-    init(url: URL, sessionAudit: (@Sendable ([DoubaoSessionAttempt]) throws -> Void)? = nil) {
+    init(url: URL, sessionAudit: (@Sendable ([DoubaoSessionAttempt]) throws -> Void)? = nil,
+         diagnosticAudit: (@Sendable (DoubaoSessionDiagnostic) throws -> Void)? = nil) {
         let state = DoubaoLiveState()
         self.state = state
         task = Task.detached {
             do {
                 return try await DoubaoSessionAudit.$observer.withValue(sessionAudit) {
-                    try await DoubaoTranscriber().run(url: url, durationMs: 0, live: state)
+                    try await DoubaoSessionAudit.$diagnosticsObserver.withValue(diagnosticAudit) {
+                        try await DoubaoTranscriber().run(url: url, durationMs: 0, live: state)
+                    }
                 }
             }
             catch { await state.failed(); throw error }
@@ -122,16 +134,19 @@ struct DoubaoTranscriber: Transcriber {
             sessions.append(.init(requestID: id, outcome: "started"))
             try DoubaoSessionAudit.observer?(sessions)
             do {
-                let result = try await runSession(url: url, durationMs: durationMs, live: live, requestID: id)
+                let sessionResult = try await runSession(url: url, durationMs: durationMs, live: live, requestID: id)
+                try DoubaoSessionAudit.diagnosticsObserver?(DoubaoSessionDiagnostic(requestID: id, live: live != nil,
+                    pcmBytesRead: sessionResult.pcmBytesRead, pcmFramesSent: sessionResult.pcmFramesSent,
+                    uploadedBytes: sessionResult.uploadedBytes, transcript: sessionResult.transcript))
                 sessions[ordinal].outcome = "success"
                 try DoubaoSessionAudit.observer?(sessions)
-                let m = result.metrics
-                return TranscriptionResult(text: result.text, metrics: TranscriptionMetrics(provider: m.provider,
+                let m = sessionResult.metrics
+                return TranscriptionResult(text: sessionResult.text, metrics: TranscriptionMetrics(provider: .doubaoIME,
                     audioDurationMs: m.audioDurationMs, audioBytes: m.audioBytes, authMs: m.authMs,
-                    transcribeMs: elapsed(started) - m.authMs, promptIncluded: m.promptIncluded,
-                    uploadedBytes: m.uploadedBytes, uploadFormat: m.uploadFormat,
-                    protocolRequestID: id, protocolSessions: sessions,
-                    liveFinishToLastSendMs: m.liveFinishToLastSendMs, sessionFinishWaitMs: m.sessionFinishWaitMs))
+                    transcribeMs: elapsed(started) - m.authMs, promptIncluded: false,
+                    uploadedBytes: m.uploadedBytes, uploadFormat: m.uploadFormat, protocolRequestID: id,
+                    protocolSessions: sessions, liveFinishToLastSendMs: m.liveFinishToLastSendMs,
+                    sessionFinishWaitMs: m.sessionFinishWaitMs))
             } catch {
                 let failure = error as? DoubaoTranscriptionFailure
                 let underlying = failure?.underlyingError ?? error
@@ -158,7 +173,7 @@ struct DoubaoTranscriber: Transcriber {
         throw DoubaoError.incomplete("识别")
     }
 
-    private func runSession(url: URL, durationMs: Int, live: DoubaoLiveState?, requestID: String) async throws -> TranscriptionResult {
+    private func runSession(url: URL, durationMs: Int, live: DoubaoLiveState?, requestID: String) async throws -> DoubaoSessionResult {
         let start = DispatchTime.now().uptimeNanoseconds
         let token = try await keyProvider()
         let authMs = elapsed(start)
@@ -194,19 +209,21 @@ struct DoubaoTranscriber: Transcriber {
             try await awaitReply("SessionStarted")
             let receiveTask = Task {
                 var transcript = DoubaoTranscript()
+                var responseOrdinal = 0
                 do {
                     while true {
                         try Task.checkCancellation()
                         let reply = try DoubaoReply(await socket.receive())
                         if let result = reply.result {
-                            try transcript.consume(result)
+                            try transcript.consume(result, responseOrdinal: responseOrdinal)
+                            responseOrdinal += 1
                             await progress.update(transcript.text)
                             if let live { await live.update(transcript.text) }
                         }
                         if reply.kind == "SessionFinished" {
                             guard await progress.finishRequested else { throw DoubaoError.incomplete("识别（服务提前结束）") }
                             guard transcript.complete else { throw DoubaoError.incomplete("识别") }
-                            return transcript.finalText
+                            return (transcript.finalText, transcript.auditSnapshot())
                         }
                     }
                 } catch {
@@ -221,6 +238,7 @@ struct DoubaoTranscriber: Transcriber {
             var growingReader: DoubaoGrowingPCM?
             var sentFrames = 0
             var uploaded = 0
+            var pcmBytesRead = 0
             var pending: Data?
             while true {
                 try Task.checkCancellation()
@@ -234,6 +252,7 @@ struct DoubaoTranscriber: Transcriber {
                 }
                 let next = try fileReader?.next() ?? growingReader?.next(final: final)
                 if let next {
+                    pcmBytesRead += next.count
                     if let pending {
                         let opus = try encoder.encode(pending)
                         let metadata = try JSONSerialization.data(withJSONObject: ["extra": [:], "timestamp_ms": sentFrames * 20] as [String: Any])
@@ -265,17 +284,19 @@ struct DoubaoTranscriber: Transcriber {
             await progress.requestFinish()
             let finishStarted = DispatchTime.now().uptimeNanoseconds
             try await send("FinishSession")
-            let text = try await receiveTask.value
+            let received = try await receiveTask.value
             let finishWaitMs = elapsed(finishStarted)
             try Task.checkCancellation()
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TranscriptionError.invalidResponse }
+            guard !received.0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TranscriptionError.invalidResponse }
             let duration = await live?.finished?.durationMs ?? durationMs
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            return TranscriptionResult(text: text, metrics: TranscriptionMetrics(provider: .doubaoIME,
-                audioDurationMs: duration, audioBytes: size, authMs: authMs, transcribeMs: elapsed(start) - authMs,
-                promptIncluded: false, uploadedBytes: uploaded, uploadFormat: "opus/16000/mono", protocolRequestID: id,
+            let metrics = TranscriptionMetrics(provider: .doubaoIME, audioDurationMs: duration, audioBytes: size,
+                authMs: authMs, transcribeMs: elapsed(start) - authMs, promptIncluded: false,
+                uploadedBytes: uploaded, uploadFormat: "opus/16000/mono", protocolRequestID: id,
                 liveFinishToLastSendMs: liveFinished.map { Int(max(0, Double(lastSendCompleted) - Double($0)) / 1_000_000) },
-                sessionFinishWaitMs: finishWaitMs))
+                sessionFinishWaitMs: finishWaitMs)
+            return DoubaoSessionResult(text: received.0, transcript: received.1, metrics: metrics,
+                pcmBytesRead: pcmBytesRead, pcmFramesSent: sentFrames + 1, uploadedBytes: uploaded)
             } catch {
                 let sendingError = error
                 socket.close()

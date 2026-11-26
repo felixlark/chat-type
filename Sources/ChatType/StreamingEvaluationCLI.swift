@@ -1,18 +1,23 @@
 import CryptoKit
 import Foundation
 
-/// Explicit acceptance entry: actual live worker and pipeline, paced PCM input.
-/// It does not simulate HID, use the microphone, inject text, or change settings.
+/// Explicit acceptance entry: production transcription pipeline with paced live
+/// input or a completed-file replay. It never uses HID, the microphone, GUI or
+/// changes settings.
 enum StreamingEvaluationCLI {
     private final class Observations: @unchecked Sendable {
         private let lock = NSLock()
         private var sessions: [DoubaoSessionAttempt] = []
+        private var diagnostics: [DoubaoSessionDiagnostic] = []
         private var asrReady: UInt64?
         func receive(_ value: [DoubaoSessionAttempt]) { lock.withLock { sessions = value } }
+        func receive(_ value: DoubaoSessionDiagnostic) { lock.withLock { diagnostics.append(value) } }
         func stage(_ value: DictationStageAudit) {
             if value.asrText != nil { lock.withLock { if asrReady == nil { asrReady = ProcessingTiming.now() } } }
         }
-        func snapshot() -> ([DoubaoSessionAttempt], UInt64?) { lock.withLock { (sessions, asrReady) } }
+        func snapshot() -> ([DoubaoSessionAttempt], [DoubaoSessionDiagnostic], UInt64?) {
+            lock.withLock { (sessions, diagnostics, asrReady) }
+        }
     }
 
     enum EvaluationError: Error { case invalidArguments, unsupportedRoute, outputExists, emptyAudio }
@@ -21,10 +26,12 @@ enum StreamingEvaluationCLI {
         var options: [String: String] = [:]
         var i = 0
         while i < arguments.count {
-            guard ["--audio", "--output", "--config-snapshot"].contains(arguments[i]),
+            guard ["--audio", "--output", "--config-snapshot", "--mode"].contains(arguments[i]),
                   i + 1 < arguments.count, options[arguments[i]] == nil else { throw EvaluationError.invalidArguments }
             options[arguments[i]] = arguments[i + 1]; i += 2
         }
+        let mode = options["--mode"] ?? "paced-live"
+        guard mode == "paced-live" || mode == "file-replay" else { throw EvaluationError.invalidArguments }
         guard let source = options["--audio"], let destination = options["--output"],
               let snapshot = options["--config-snapshot"] else { throw EvaluationError.invalidArguments }
         let config = try JSONDecoder().decode(AppConfig.self, from: Data(contentsOf: URL(fileURLWithPath: snapshot)))
@@ -63,10 +70,14 @@ enum StreamingEvaluationCLI {
             try handle.seekToEnd()
             let clock = ContinuousClock()
             var offset = 0
-            while offset < capturePCM.count {
+            while mode == "paced-live" && offset < capturePCM.count {
                 let end = min(offset + 640, capturePCM.count)
                 try await clock.sleep(until: began.advanced(by: .nanoseconds(Int64(end) * 1_000_000_000 / 32_000)))
                 try handle.write(contentsOf: capturePCM[offset..<end]); offset = end
+            }
+            if mode == "file-replay" {
+                try handle.write(contentsOf: capturePCM)
+                offset = capturePCM.count
             }
             let stop = ProcessingTiming.now()
             try handle.seek(toOffset: 0); try handle.write(contentsOf: header(pcmBytes: capturePCM.count))
@@ -82,7 +93,12 @@ enum StreamingEvaluationCLI {
             observations.receive(sessions)
             try recovery.recordASRSessions(audioURL: growing, attemptID: attemptID, sessions: sessions)
         }
-        let live = t.provider == .doubaoIME ? DoubaoLiveRecognition(url: growing, sessionAudit: sessionAudit) : nil
+        let diagnosticAudit: @Sendable (DoubaoSessionDiagnostic) throws -> Void = { diagnostic in
+            observations.receive(diagnostic)
+        }
+        let live = t.provider == .doubaoIME && mode == "paced-live"
+            ? DoubaoLiveRecognition(url: growing, sessionAudit: sessionAudit, diagnosticAudit: diagnosticAudit)
+            : nil
         defer { live?.cancel() }
         let (stopTick, sealMs) = try await capture.value
         var audio = RecordedAudio(fileURL: growing, durationMs: pcm.count * 1000 / 32_000)
@@ -105,7 +121,7 @@ enum StreamingEvaluationCLI {
                 chatGPTAuthProvider: auth, chatGPTAuthAvailable: t.needsChatGPT && auth.authSnapshot().state == .ready) : nil,
             alignmentEnabled: t.terminologyAlignmentEnabled, correctionsEnabled: t.correctionRulesEnabled,
             audit: audit)
-        var row: [String: Any] = ["mode": "paced-growing-WAV-production-live-worker-with-durable-audit",
+        var row: [String: Any] = ["mode": mode == "paced-live" ? "paced-growing-WAV-production-live-worker" : "completed-WAV-file-replay",
             "boundary": "stop/seal entry to prepared final; excludes HID, microphone and GUI insertion",
             "provider": t.provider.rawValue, "polishProvider": t.textPolish.provider.rawValue,
             "audioDurationMs": audio.durationMs, "captureWallMs": Double(stopTick - captureTick) / 1_000_000,
@@ -114,7 +130,11 @@ enum StreamingEvaluationCLI {
         do {
             try audit(.init())
             let result = try await DoubaoSessionAudit.$observer.withValue(sessionAudit) {
-                try await pipeline.prepare(audio: audio)
+                try await DoubaoSessionAudit.$diagnosticsObserver.withValue({ diagnostic in
+                    observations.receive(diagnostic)
+                }) {
+                    try await pipeline.prepare(audio: audio)
+                }
             }
             try recovery.record(RecoveryRecordInput(timestamp: Date(), sourceAudioURL: growing,
                 durationMs: durationMs, asrText: result.rawText, polishText: result.stages?.polishOutput,
@@ -157,8 +177,9 @@ enum StreamingEvaluationCLI {
         row["auditWriteStats"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(recovery.persistenceStats()))
         row["archive"] = archive.path
         let observed = observations.snapshot()
-        if let asrReady = observed.1 { row["stopToASRMs"] = Double(asrReady - stopTick) / 1_000_000 }
+        if let asrReady = observed.2 { row["stopToASRMs"] = Double(asrReady - stopTick) / 1_000_000 }
         row["sessions"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(observed.0))
+        row["doubaoDiagnostics"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(observed.1))
         try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys, .prettyPrinted]).write(to: output, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: output.path)
         print("Streaming evaluation \(row["status"] ?? "unknown"); evidence retained.")

@@ -9,6 +9,7 @@ struct DoubaoSessionAttempt: Codable, Sendable, Equatable {
 
 enum DoubaoSessionAudit {
     @TaskLocal static var observer: (@Sendable ([DoubaoSessionAttempt]) throws -> Void)?
+    @TaskLocal static var diagnosticsObserver: (@Sendable (DoubaoSessionDiagnostic) throws -> Void)?
 }
 
 struct DictationStageAudit: Codable, Sendable, Equatable {
