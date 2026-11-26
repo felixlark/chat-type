@@ -1,3 +1,9 @@
+## 155 History 新尝试选中与最终文本复制（2026-11-26）
+
+“按当前流程重跑”成功后，新 attempt 的文字已经写入 journal，但 History 仍保留旧 attempt 的选择，界面因此显示旧失败尝试的三列“未生成”。这不是转写为空；同一记录里已有带 ASR、对齐、润色和终稿的新 attempt。现在每次 journal 追加新 attempt 时自动选中它，只更新同一 attempt 时继续尊重用户手动选择。
+
+此前同类修复只存在于未提交的 checkout；后续安装版从另一条干净分支构建，因此没有包含该修复。本次把自动选中和文本职责加入提交范围，并用回归测试覆盖新 attempt 出现后才切换选择。History 文本链新增较大的“复制最终文本”按钮，只复制所选 attempt 已接受的最终文本；所选尝试没有终稿时禁用，不回退到另一次尝试的部分结果。
+
 ## 152 设置窗口原生编辑命令与界面升级（2026-11-26）
 
 根因不是 SwiftUI `TextField`，而是菜单栏样板启动时没有安装 `NSApplication.mainMenu`。应用只有状态菜单，没有 macOS「编辑」菜单，因此输入框能键入文字，却没有系统提供的 Undo、Redo、Cut、Copy、Paste、Delete 和 Select All 命令；`Cmd+A`、`Cmd+C`、`Cmd+V` 在 Search 和 Keychain 输入框中都不生效。2026-08-25 加入的 `CommandClosingWindow` 只补了 `Cmd+Q`/`Cmd+W`，没有补编辑命令。

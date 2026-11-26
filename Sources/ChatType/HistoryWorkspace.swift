@@ -217,6 +217,10 @@ final class HistoryWorkspaceModel: ObservableObject {
         records.sort { $0.timestamp > $1.timestamp }
         index = RecoveryHistoryIndex(records: records, unreadableCount: index.unreadableCount)
         if selectedRecordID == record.id {
+            let knownAttemptIDs = Set(selectedRecord?.attempts?.map(\.id) ?? [])
+            if let newestAttemptID = record.attempts?.last(where: { !knownAttemptIDs.contains($0.id) })?.id {
+                selectedAttemptID = newestAttemptID
+            }
             loadRecord(id: record.id)
         } else if selectedRecordID == nil {
             selectRecord(record.id)
@@ -702,13 +706,15 @@ private struct HistoryDetailView: View {
 
     private func textChain(_ view: HistoryRecordPresentation) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 12) {
                 Text("文本链")
                     .font(.system(size: 13.5, weight: .semibold))
-                Spacer()
+                Spacer(minLength: 8)
                 Text("ASR 原文 → 对齐 → 输出")
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                copyFinalTextButton(view)
             }
 
             HStack(spacing: 0) {
@@ -728,6 +734,25 @@ private struct HistoryDetailView: View {
             )
         }
         .frame(maxHeight: .infinity)
+    }
+
+    private func copyFinalTextButton(_ view: HistoryRecordPresentation) -> some View {
+        let key = "final-\(record.id)-\(view.selectedAttemptID?.uuidString ?? "legacy")"
+        let text = view.finalTextForCopy
+        let copied = copiedKey == key
+        return Button {
+            guard let text else { return }
+            copy(text, key: key)
+        } label: {
+            Label(copied ? "已复制最终文本" : "复制最终文本", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 13, weight: .semibold))
+                .frame(minWidth: 156, minHeight: 36)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+        .disabled(text == nil)
+        .help(text == nil ? "所选尝试没有可复制的最终文本。" : "复制所选尝试的最终文本。")
+        .accessibilityLabel(copied ? "已复制最终文本" : "复制最终文本")
     }
 
     private func artifactColumn(_ artifact: HistoryTextArtifact) -> some View {

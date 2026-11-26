@@ -517,3 +517,194 @@ func legacyIndexOnlyRecordRemainsOpenableFromHistory() throws {
     #expect(loaded.asrText == "legacy asr")
     #expect(loaded.polishText == "legacy polish")
 }
+
+@Test @MainActor
+func newlyStartedHistoryAttemptBecomesSelected() async throws {
+    let recordID = UUID()
+    let cancelledAttemptID = UUID()
+    let completedAttemptID = UUID()
+    let timestamp = Date(timeIntervalSince1970: 10)
+    let cancelledAttempt = DictationAttempt(
+        id: cancelledAttemptID,
+        startedAt: timestamp,
+        snapshot: TranscriptionConfig(),
+        stages: DictationStageAudit(),
+        outcome: "cancelled"
+    )
+    let initialRecord = RecoveryRecord(
+        id: recordID,
+        timestamp: timestamp,
+        audioFileName: "\(recordID.uuidString).wav",
+        audioDurationMs: 58_000,
+        asrText: nil,
+        polishText: nil,
+        appName: "ChatType",
+        appBundleIdentifier: "me.longbiaochen.chattype",
+        outcome: "cancelled",
+        errorMessage: nil,
+        attempts: [cancelledAttempt]
+    )
+    let completedAttempt = DictationAttempt(
+        id: completedAttemptID,
+        startedAt: timestamp.addingTimeInterval(60),
+        snapshot: TranscriptionConfig(),
+        stages: DictationStageAudit(
+            asrText: "raw transcript",
+            polishInput: "raw transcript",
+            polishOutput: "polished transcript",
+            finalText: "final transcript"
+        ),
+        outcome: "clipboard"
+    )
+    let updatedRecord = RecoveryRecord(
+        id: recordID,
+        timestamp: timestamp,
+        audioFileName: initialRecord.audioFileName,
+        audioDurationMs: initialRecord.audioDurationMs,
+        asrText: "raw transcript",
+        polishText: "polished transcript",
+        appName: initialRecord.appName,
+        appBundleIdentifier: initialRecord.appBundleIdentifier,
+        outcome: "clipboard",
+        errorMessage: nil,
+        attempts: [cancelledAttempt, completedAttempt]
+    )
+    let recoveryDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let records = HistoryRecordBox(record: initialRecord)
+    let model = HistoryWorkspaceModel(
+        recoveryDirectoryURL: recoveryDirectory,
+        onLoadIndex: { RecoveryHistoryIndex(records: [], unreadableCount: 0) },
+        onLoadRecord: { id in records.load(id: id) }
+    )
+    defer { model.cancel() }
+
+    model.selectRecord(recordID)
+    await waitForHistoryCondition { model.selectedAttemptID == cancelledAttemptID }
+    #expect(model.selectedAttemptID == cancelledAttemptID)
+
+    records.store(updatedRecord)
+    model.recordDidChange(updatedRecord, directory: recoveryDirectory.path)
+    await waitForHistoryCondition {
+        model.selectedRecord?.attempts?.count == 2
+            && model.selectedAttemptID == completedAttemptID
+    }
+
+    #expect(model.selectedAttemptID == completedAttemptID)
+    let presentation = HistoryRecordPresentation(
+        record: try #require(model.selectedRecord),
+        selectedAttemptID: model.selectedAttemptID,
+        audioAvailable: true
+    )
+    #expect(presentation.artifacts.first(where: { $0.kind == .asr })?.text == "raw transcript")
+    #expect(presentation.artifacts.first(where: { $0.kind == .output })?.text == "final transcript")
+
+    model.selectedAttemptID = cancelledAttemptID
+    records.store(updatedRecord)
+    model.recordDidChange(updatedRecord, directory: recoveryDirectory.path)
+    await waitForHistoryCondition { !model.isLoadingRecord }
+    #expect(model.selectedAttemptID == cancelledAttemptID)
+}
+
+@Test
+func finalTextCopyUsesOnlyTheSelectedAttemptsAcceptedOutput() {
+    let recordID = UUID()
+    let completedAttemptID = UUID()
+    let diagnosticAttemptID = UUID()
+    let record = RecoveryRecord(
+        id: recordID,
+        timestamp: Date(timeIntervalSince1970: 10),
+        audioFileName: "\(recordID.uuidString).wav",
+        audioDurationMs: 1_000,
+        asrText: "raw transcript",
+        polishText: "polished transcript",
+        appName: "Notes",
+        appBundleIdentifier: "com.apple.Notes",
+        outcome: "clipboard",
+        errorMessage: nil,
+        attempts: [
+            DictationAttempt(
+                id: completedAttemptID,
+                startedAt: Date(timeIntervalSince1970: 10),
+                snapshot: TranscriptionConfig(),
+                stages: DictationStageAudit(
+                    asrText: "raw transcript",
+                    polishInput: "raw transcript",
+                    polishOutput: "polished transcript",
+                    finalText: "final transcript"
+                ),
+                outcome: "clipboard"
+            ),
+            DictationAttempt(
+                id: diagnosticAttemptID,
+                startedAt: Date(timeIntervalSince1970: 11),
+                snapshot: TranscriptionConfig(),
+                stages: DictationStageAudit(asrText: "diagnostic transcript"),
+                outcome: "asrComplete",
+                kind: .asrOnly
+            )
+        ]
+    )
+
+    let completed = HistoryRecordPresentation(
+        record: record,
+        selectedAttemptID: completedAttemptID,
+        audioAvailable: true
+    )
+    let diagnostic = HistoryRecordPresentation(
+        record: record,
+        selectedAttemptID: diagnosticAttemptID,
+        audioAvailable: true
+    )
+    let legacy = HistoryRecordPresentation(
+        record: RecoveryRecord(
+            id: UUID(),
+            timestamp: Date(timeIntervalSince1970: 12),
+            audioFileName: "legacy.wav",
+            audioDurationMs: 1_000,
+            asrText: "legacy raw",
+            polishText: "legacy final",
+            appName: "Notes",
+            appBundleIdentifier: "com.apple.Notes",
+            outcome: "pasted",
+            errorMessage: nil
+        ),
+        selectedAttemptID: nil,
+        audioAvailable: false
+    )
+
+    #expect(completed.finalTextForCopy == "final transcript")
+    #expect(diagnostic.finalTextForCopy == nil)
+    #expect(legacy.finalTextForCopy == "legacy final")
+}
+
+private final class HistoryRecordBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var record: RecoveryRecord?
+
+    init(record: RecoveryRecord?) {
+        self.record = record
+    }
+
+    func load(id: UUID) -> RecoveryRecord? {
+        lock.lock()
+        defer { lock.unlock() }
+        return record?.id == id ? record : nil
+    }
+
+    func store(_ record: RecoveryRecord) {
+        lock.lock()
+        defer { lock.unlock() }
+        self.record = record
+    }
+}
+
+@MainActor
+private func waitForHistoryCondition(
+    attempts: Int = 100,
+    condition: @escaping @MainActor () -> Bool
+) async {
+    for _ in 0..<attempts where condition() == false {
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+}
