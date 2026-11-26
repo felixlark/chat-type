@@ -75,14 +75,14 @@ extension PreferencesView {
             )
             Divider()
             providerRow(
-                "DeepSeek · Markpipe",
+                "DeepSeek API",
                 status: providers.value.checked ? (markpipeKeySaved ? "已保存" : "需要填写") : "检查中…",
                 ready: providers.value.checked ? markpipeKeySaved : nil,
                 capabilities: [.recognition, .polish],
-                detail: "DeepSeek ASR + DeepSeek Flash · api.markpipe.app；识别与润色共用这一把 Markpipe key。保存密钥不等于请求已验证。",
+                detail: "DeepSeek API ASR + DeepSeek Flash；识别与润色共用这一把 DeepSeek API key。保存密钥不等于请求已验证。",
                 accessory: {
                     ServiceKeyButton(
-                        title: "Markpipe",
+                        title: "DeepSeek",
                         text: $markpipeKeyInput,
                         saved: markpipeKeySaved,
                         save: saveMarkpipeKey
@@ -214,7 +214,7 @@ extension PreferencesView {
         case .chatGPTAuth: return "\(config.transcription.textPolish.chatGPTResponseModel) via \(config.transcription.textPolish.chatGPTResponseURL)"
         case .glmFlash: return "glm-4.7-flash via open.bigmodel.cn"
         case .qwenFlash: return "qwen-flash via dashscope.aliyuncs.com (Beijing)"
-        case .deepSeekFlash: return "deepseek-flash via api.markpipe.app"
+        case .deepSeekFlash: return "deepseek-flash via DeepSeek API"
         }
     }
 
@@ -252,7 +252,7 @@ extension PreferencesView {
             markpipeKeyInput = ""
             markpipeKeySaved = true
             providers.refresh()
-            textPolishMessage = "Markpipe Key 已保存；DeepSeek 识别与润色会在 F5 新录音或重跑时使用它。"
+            textPolishMessage = "DeepSeek API Key 已保存；识别与润色会在 F5 新录音或重跑时使用它。"
             textPolishMessageIsError = false
         } catch {
             textPolishMessage = error.localizedDescription

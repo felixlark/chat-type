@@ -61,7 +61,7 @@ enum TranscriptionProvider: String, Codable, Sendable, CaseIterable, Identifiabl
         case .chatGPTManagedAuth:
             return "ChatGPT Account"
         case .deepSeek:
-            return "DeepSeek"
+            return "DeepSeek API"
         case .openAICompatible:
             return "OpenAI-Compatible Recovery"
         }
@@ -74,7 +74,7 @@ enum TranscriptionProvider: String, Codable, Sendable, CaseIterable, Identifiabl
         case .chatGPTManagedAuth:
             return "ChatType signs in to ChatGPT directly and keeps its own session on this Mac."
         case .deepSeek:
-            return "Complete recordings go to DeepSeek ASR through Markpipe using the Markpipe API key saved in Keychain."
+            return "Complete recordings go to the DeepSeek API using the DeepSeek API key saved in Keychain."
         case .openAICompatible:
             return "Optional recovery route. Bring your own OpenAI-compatible API only if you want a separate endpoint."
         }
@@ -99,7 +99,7 @@ enum LivePreviewProvider: String, Codable, Sendable, Equatable, CaseIterable, Id
     var detail: String {
         switch self {
         case .automatic:
-            return "豆包识别使用豆包预览；ChatGPT 识别在可用时使用 Apple 本机预览；DeepSeek 只显示录音状态。"
+            return "豆包识别使用豆包预览；ChatGPT 识别在可用时使用 Apple 本机预览；DeepSeek API 只显示录音状态。"
         case .doubaoIME:
             return "录音同时送往豆包实时接口；最终转写仍使用识别服务中的选择。"
         case .appleSpeech:

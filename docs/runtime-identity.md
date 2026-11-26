@@ -8,7 +8,7 @@ Current source uses the public project identity `felixlark`. A default source pa
 | Doubao configuration | `ChatTypeDoubaoService` | `.doubao` |
 | GLM key | `ChatTypeGLMService` | `.glm` |
 | Qwen key | `ChatTypeQwenService` | `.qwen` |
-| Markpipe key | `ChatTypeMarkpipeService` | `.markpipe` |
+| DeepSeek API key | `ChatTypeMarkpipeService` | `.markpipe` |
 
 Service names are case-sensitive independent values. The app retains each store's existing fixed account and read/write semantics. Logging uses the actual installed Bundle ID. Product branding, data directories, saved history/vocabulary and enrolled keyboard policy remain unchanged.
 

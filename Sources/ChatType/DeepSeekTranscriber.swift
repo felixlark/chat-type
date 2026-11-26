@@ -51,32 +51,32 @@ enum DeepSeekTranscriptionError: LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .missingKey:
-            return "请先在 Account 保存 Markpipe API Key。"
+            return "请先在 Account 保存 DeepSeek API Key。"
         case .invalidAudio:
-            return "录音文件无效，DeepSeek 未发送。"
+            return "录音文件无效，DeepSeek API 未发送。"
         case .payloadTooLarge:
-            return "录音超过 DeepSeek ASR 的 8 MB 上限，当前不发送。"
+            return "录音超过 DeepSeek API ASR 的 8 MB 上限，当前不发送。"
         case .recordingTooLong:
-            return "录音超过 DeepSeek ASR 的 120 秒上限，当前不发送。"
+            return "录音超过 DeepSeek API ASR 的 120 秒上限，当前不发送。"
         case .noUsableAudioSignal:
             return "录音中没有检测到有效麦克风信号；为避免输出空白或不完整转写，ChatType 未发送这份录音并已将其保留。请检查输入设备后重新录制。"
         case .interruptedAudioInput(let capturedSignalSeconds, let silentTailSeconds):
             return "麦克风输入在约 \(capturedSignalSeconds) 秒后中断，随后约 \(silentTailSeconds) 秒只有数字静音；为避免输出不完整转写，ChatType 未发送这份录音并已将其保留。请检查输入设备后重新录制。"
         case .cloudflareChallenge(let status):
-            return "DeepSeek 转写失败：Markpipe 返回 Cloudflare \(status) challenge；这不是 API Key 失效。录音已保留，可以稍后手动重试。"
+            return "DeepSeek API 转写失败：服务返回 Cloudflare \(status) challenge；这不是 API Key 失效。录音已保留，可以稍后手动重试。"
         case .requestFailed(let status):
             switch status {
             case 401, 403:
-                return "DeepSeek 转写失败：Markpipe 鉴权失败（HTTP \(status)），请检查 API Key。"
+                return "DeepSeek API 转写失败：鉴权失败（HTTP \(status)），请检查 API Key。"
             case 429:
-                return "DeepSeek 转写失败：Markpipe 请求过多（HTTP 429），请稍后重试。"
+                return "DeepSeek API 转写失败：请求过多（HTTP 429），请稍后重试。"
             case 503, 504, 520...526:
-                return "DeepSeek 转写失败：Markpipe 或 DeepSeek 服务暂时不可用（HTTP \(status)）。"
+                return "DeepSeek API 转写失败：服务暂时不可用（HTTP \(status)）。"
             default:
-                return "DeepSeek 转写失败：Markpipe 返回 HTTP \(status)。"
+                return "DeepSeek API 转写失败：服务返回 HTTP \(status)。"
             }
         case .invalidResponse:
-            return "DeepSeek 转写返回了空文本或无法识别的响应。"
+            return "DeepSeek API 转写返回了空文本或无法识别的响应。"
         }
     }
 }

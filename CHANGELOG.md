@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0 (154)
+
+- Corrected the credential action label so it reads “DeepSeek API Key” instead of repeating “API”.
+
+## 0.6.0 (153)
+
+- Renamed the user-facing DeepSeek route to DeepSeek API and removed third-party service naming from Settings, workflow explanations and error messages. The existing Keychain entry is retained, so the saved key does not need to be entered again.
+
 ## 0.6.0 (152)
 
 - Restored the standard macOS Edit menu so text fields in the settings window support Undo, Redo, Cut, Copy, Paste, Delete and Select All with their normal keyboard shortcuts.
@@ -8,8 +16,8 @@
 
 ## 0.6.0 (151)
 
-- Added an explicit DeepSeek workflow for complete-recording ASR and DeepSeek Flash text polish through Markpipe. Both stages use one independently stored Markpipe key, fixed destinations, no automatic provider switching, and no live-preview dependency.
-- Added a one-click DeepSeek workflow selection in Workflow while preserving independent recognition and polish choices. Missing Markpipe credentials block applying the route.
+- Added an explicit DeepSeek API workflow for complete-recording ASR and DeepSeek Flash text polish. Both stages use one independently stored DeepSeek API key, fixed destinations, no automatic provider switching, and no live-preview dependency.
+- Added a one-click DeepSeek API workflow selection in Workflow while preserving independent recognition and polish choices. Missing DeepSeek API credentials block applying the route.
 - Expanded the packaged credential identity and read-only compatibility report from four to five app-owned Keychain services.
 
 ## 0.6.0 (150)
