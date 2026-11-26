@@ -83,7 +83,7 @@ private struct PolishCredentialRequired: LocalizedError {
     let provider: TextPolishProviderID
     var errorDescription: String? {
         if provider == .deepSeekFlash {
-            return "请先在 Account 保存 Markpipe API Key，或关闭润色；当前选择尚未应用。"
+            return "请先在 Account 保存 DeepSeek API Key，或关闭润色；当前选择尚未应用。"
         }
         return "请先在 Account 保存 \(provider.title) API Key，或关闭润色；当前选择尚未应用。"
     }
@@ -91,6 +91,6 @@ private struct PolishCredentialRequired: LocalizedError {
 
 private struct MarkpipeASRKeyRequired: LocalizedError {
     var errorDescription: String? {
-        "请先在 Account 保存 Markpipe API Key；DeepSeek 全流程当前尚未应用。"
+        "请先在 Account 保存 DeepSeek API Key；DeepSeek API 全流程当前尚未应用。"
     }
 }

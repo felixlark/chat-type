@@ -150,6 +150,20 @@ private func deepSeekAudioFixture(
     #expect(!json.contains("apiKey"))
 }
 
+@Test func deepSeekUserFacingLabelsSayDeepSeekAPI() {
+    var transcription = TranscriptionConfig()
+    transcription.provider = .deepSeek
+    transcription.livePreviewEnabled = false
+    transcription.textPolish.provider = .deepSeekFlash
+    transcription.textPolish.setEnabled(true)
+
+    #expect(TranscriptionProvider.deepSeek.title == "DeepSeek API")
+    #expect(transcription.provider.modelLabel(config: transcription) == "DeepSeek API")
+    #expect(transcription.textPolish.provider.modelLabel(config: transcription.textPolish) == "DeepSeek Flash")
+    #expect(WorkflowModelPresentation(config: transcription, applePreviewAvailable: true).summary
+        == "DeepSeek API + DeepSeek Flash")
+}
+
 @Test func deepSeekWorkflowReflectsSharedKeyReadiness() {
     var config = TranscriptionConfig()
     config.provider = .deepSeek
@@ -176,8 +190,8 @@ private func deepSeekAudioFixture(
         qwenReady: false,
         deepSeekReady: true
     )
-    #expect(ready[1].service.contains("api.markpipe.app/v1/tools/asr"))
-    #expect(ready[3].service.contains("api.markpipe.app"))
+    #expect(ready[1].service.contains("DeepSeek API"))
+    #expect(ready[3].service.contains("DeepSeek API"))
 }
 
 @Test func deepSeekPolishRequiresMarkpipeKeyAndUsesFixedDestination() async throws {

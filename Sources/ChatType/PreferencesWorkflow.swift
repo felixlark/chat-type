@@ -12,9 +12,9 @@ extension PreferencesView {
         ) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("DeepSeek 全流程")
+                    Text("DeepSeek API 全流程")
                         .font(SettingsTypography.bodyEmphasis)
-                    Text("识别和润色都使用 Markpipe 上的 DeepSeek，共用一把 key。")
+                    Text("识别和润色都使用 DeepSeek API，共用一把 key。")
                         .font(SettingsTypography.detail)
                         .foregroundStyle(.secondary)
                 }
@@ -58,7 +58,7 @@ extension PreferencesView {
                 Text(config.transcription.provider.caption)
                     .font(SettingsTypography.body)
                     .foregroundStyle(.secondary)
-                Text("整段 WAV 发往 api.markpipe.app/v1/tools/asr。DeepSeek ASR 不接收提示词或热词字段；本地术语对齐仍会执行。识别和润色共用 Account 中保存的 Markpipe key，失败时不会自动切换。")
+                Text("整段 WAV 发往 DeepSeek API。语音识别不接收提示词或热词字段；本地术语对齐仍会执行。识别和润色共用 Account 中保存的 DeepSeek API key，失败时不会自动切换。")
                     .font(SettingsTypography.detail).foregroundStyle(.secondary)
             } else {
                 LabeledContent("转写端点") {
@@ -213,9 +213,9 @@ extension PreferencesView {
                         .foregroundStyle(.secondary)
                 }
                 if config.transcription.textPolish.provider == .deepSeekFlash {
-                    Text("凭据在 Account 中管理。DeepSeek Flash 与 DeepSeek ASR 共用 Markpipe key；密钥已保存不代表请求已经验证。")
+                    Text("凭据在 Account 中管理。DeepSeek Flash 与 DeepSeek API ASR 共用 DeepSeek API key；密钥已保存不代表请求已经验证。")
                         .font(SettingsTypography.detail).foregroundStyle(.secondary)
-                    Text("Full transcript and relevant glossary go to api.markpipe.app for DeepSeek Flash. ASR follows the selected dictation route. F5 新录音或按当前流程重跑时应用这些选择。")
+                    Text("Full transcript and relevant glossary go to the DeepSeek API for DeepSeek Flash. ASR follows the selected dictation route. F5 新录音或按当前流程重跑时应用这些选择。")
                         .font(SettingsTypography.body)
                         .foregroundStyle(.secondary)
                 }

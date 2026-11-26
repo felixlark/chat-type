@@ -54,9 +54,9 @@ enum MarkpipeKeyStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyKey:
-            return "请输入 Markpipe API Key。"
+            return "请输入 DeepSeek API Key。"
         case .status(let code):
-            return "Markpipe Keychain 操作失败（\(code)）。"
+            return "DeepSeek API Keychain 操作失败（\(code)）。"
         }
     }
 }

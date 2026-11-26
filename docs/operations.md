@@ -6,11 +6,15 @@
 
 安装版 152 已实测：History 搜索框 `Cmd+A` 后键入会替换原值，`Cmd+C`/`Cmd+V` 可回贴；Qwen API Key 原生 sheet 可粘贴，保存按钮随之启用，取消后不写 Keychain。菜单、侧栏、Workflow、History 和 Settings 均从 `/Applications/ChatType.app` 读回。本机安装使用既有 `me.longbiaochen.chattype` 身份与五个本地 Keychain service；仓库默认公开包身份不变。
 
-## 151 DeepSeek 全流程（2026-11-26）
+## 153 DeepSeek API 命名（2026-11-26）
 
-新增 `deepSeek` 识别与 `deepSeekFlash` 润色。Workflow 的“DeepSeek 全流程”只显式设置这两项，并恢复自动预览源；用户仍需保存配置。完整 WAV 发往固定 `https://api.markpipe.app/v1/tools/asr`，润色文本和词表发往固定 `https://api.markpipe.app/v1/chat/completions`，模型为 `deepseek-flash`。两段共用 Account 中保存的 Markpipe Keychain key，不读取 ChatGPT、GLM、Qwen 或豆包凭据。
+用户可见名称统一为 `DeepSeek API`，移除第三方服务名称和固定 host 的界面表述。现有 Keychain 条目保持不变，已保存的 key 不需要重新填写；`markpipe` 只保留为兼容内部身份字段。
 
-DeepSeek ASR 是整文件接口，不支持流式识别，也没有 prompt 或热词请求字段；ChatType 因此不发送识别提示词，术语对齐仍在本地识别之后执行。音频上限沿用官方 8 MiB / 120 秒，超过时在发网前拒绝。失败只保留原录音与当前尝试，不自动切换服务；HTTP 408、429 和 5xx 允许用户显式 Retry。Markpipe 站点或上游不可用时按真实 HTTP 状态报告，不能把 `523` 写成鉴权失败。
+## 151 DeepSeek API 全流程（2026-11-26）
+
+新增 `deepSeek` 识别与 `deepSeekFlash` 润色。Workflow 的“DeepSeek API 全流程”只显式设置这两项，并恢复自动预览源；用户仍需保存配置。完整 WAV 发往固定的 DeepSeek API ASR 端点，润色文本和词表发往固定的 DeepSeek API Chat Completions 端点，模型为 `deepseek-flash`。两段共用 Account 中保存的 DeepSeek API Keychain key，不读取 ChatGPT、GLM、Qwen 或豆包凭据。
+
+DeepSeek ASR 是整文件接口，不支持流式识别，也没有 prompt 或热词请求字段；ChatType 因此不发送识别提示词，术语对齐仍在本地识别之后执行。音频上限沿用官方 8 MiB / 120 秒，超过时在发网前拒绝。失败只保留原录音与当前尝试，不自动切换服务；HTTP 408、429 和 5xx 允许用户显式 Retry。服务不可用时按真实 HTTP 状态报告，不能把 `523` 写成鉴权失败。
 
 ## 144 词条生效核验与大词库索引复用（2026-11-16）
 

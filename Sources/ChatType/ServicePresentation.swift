@@ -29,7 +29,7 @@ extension TranscriptionProvider {
         case .chatGPTManagedAuth:
             return "ChatGPT 账户"
         case .deepSeek:
-            return "DeepSeek ASR · Markpipe"
+            return "DeepSeek API"
         case .openAICompatible:
             let model = config.openAIModel.trimmingCharacters(in: .whitespacesAndNewlines)
             return model.isEmpty ? "模型未填写" : model
@@ -52,7 +52,7 @@ extension TextPolishProviderID {
         case .qwenFlash:
             return "Qwen Flash"
         case .deepSeekFlash:
-            return "DeepSeek Flash · Markpipe"
+            return "DeepSeek Flash"
         }
     }
 }
