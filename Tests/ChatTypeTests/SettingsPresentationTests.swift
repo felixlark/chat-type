@@ -25,33 +25,6 @@ func approvedStatusMenuPresentationPreservesOriginalDynamicIcon() {
     }
 }
 
-@Test @MainActor
-func settingsWindowCommandQInvokesQuitHandler() throws {
-    var didRequestQuit = false
-    let window = CommandClosingWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
-        styleMask: [.titled, .closable],
-        backing: .buffered,
-        defer: false,
-        onQuit: { didRequestQuit = true }
-    )
-    let event = try #require(NSEvent.keyEvent(
-        with: .keyDown,
-        location: .zero,
-        modifierFlags: .command,
-        timestamp: 0,
-        windowNumber: window.windowNumber,
-        context: nil,
-        characters: "q",
-        charactersIgnoringModifiers: "q",
-        isARepeat: false,
-        keyCode: 12
-    ))
-
-    #expect(window.performKeyEquivalent(with: event))
-    #expect(didRequestQuit)
-}
-
 @MainActor
 private final class RecordingStatusMenu: StatusMenuUpdating {
     private(set) var ensureVisibleCount = 0

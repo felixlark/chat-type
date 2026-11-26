@@ -89,97 +89,67 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOp
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            stageMap
-
+        VStack(alignment: .leading, spacing: 16) {
             let stage = stages[selected]
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(stage.title)
-                            .font(.system(size: 21, weight: .semibold))
-                        Text("第 \(selected + 1) 步，共 \(stages.count) 步")
-                            .font(SettingsTypography.detail)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-
-                stageOptions
-                Divider()
+            stageSelector(stage)
+            stageOptions
+            GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
                     detailRow("输入", stage.input)
                     detailRow("运行于", stage.service)
                     detailRow("输出", stage.output)
                 }
-                Text(stage.detail)
-                    .font(SettingsTypography.body)
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
+                .padding(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } label: {
+                Text("运行信息")
             }
-            .textSelection(.enabled)
+
+            Text(stage.detail)
+                .font(SettingsTypography.body)
+                .foregroundStyle(.secondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
         .font(SettingsTypography.body)
         .padding(.vertical, 2)
     }
 
-    private var stageMap: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 4) {
+    private func stageSelector(_ stage: ProcessingStage) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
                     Text("处理流程")
                         .font(SettingsTypography.sectionTitle)
-                    Text("F5 新录音或“按当前流程重跑”会应用当前选择；已开始的任务保持原路线。")
-                        .font(SettingsTypography.detail)
+                    Spacer()
+                    Text("第 \(selected + 1) 步，共 \(stages.count) 步")
+                        .font(SettingsTypography.caption)
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
-                Text("\(stages.count) 个步骤")
-                    .font(SettingsTypography.caption)
+
+                Text("F5 新录音或“按当前流程重跑”会应用当前选择；已开始的任务保持原路线。")
+                    .font(SettingsTypography.detail)
                     .foregroundStyle(.secondary)
-            }
+                    .textSelection(.enabled)
 
-            HStack(spacing: 4) {
-                ForEach(stages) { stage in
-                    Button {
-                        selected = stage.id
-                    } label: {
-                        VStack(spacing: 6) {
-                            Image(systemName: stage.icon)
-                                .font(.system(size: 20, weight: .medium))
-                            Text(stage.title)
-                                .font(.system(size: 13, weight: selected == stage.id ? .semibold : .medium))
-                            Text(stage.caption)
-                                .font(.system(size: 10.5))
-                                .lineLimit(1)
-                                .foregroundStyle(.tertiary)
-                        }
-                        .foregroundStyle(selected == stage.id ? Color.primary : Color.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 15)
-                        .background(selected == stage.id ? Color.accentColor.opacity(0.11) : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Processing step: \(stage.title)")
-
-                    if stage.id != stages.last?.id {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.tertiary)
+                Picker("处理步骤", selection: $selected) {
+                    ForEach(stages) { stage in
+                        Text(stage.title).tag(stage.id)
                     }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityIdentifier("processing-flow")
+
+                Label(stage.caption, systemImage: stage.icon)
+                    .font(SettingsTypography.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
-            .accessibilityIdentifier("processing-flow")
+            .padding(4)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(18)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.32), lineWidth: 1)
-        )
     }
 
     @ViewBuilder private var stageOptions: some View {
@@ -235,14 +205,11 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOp
     }
 
     private func detailRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 14) {
-            Text(label)
-                .font(SettingsTypography.detail)
-                .foregroundStyle(.secondary)
-                .frame(width: 74, alignment: .leading)
+        LabeledContent(label) {
             Text(value)
                 .font(SettingsTypography.body)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
         }
     }
 }

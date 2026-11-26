@@ -1,3 +1,11 @@
+## 152 设置窗口原生编辑命令与界面升级（2026-11-26）
+
+根因不是 SwiftUI `TextField`，而是菜单栏样板启动时没有安装 `NSApplication.mainMenu`。应用只有状态菜单，没有 macOS「编辑」菜单，因此输入框能键入文字，却没有系统提供的 Undo、Redo、Cut、Copy、Paste、Delete 和 Select All 命令；`Cmd+A`、`Cmd+C`、`Cmd+V` 在 Search 和 Keychain 输入框中都不生效。2026-08-25 加入的 `CommandClosingWindow` 只补了 `Cmd+Q`/`Cmd+W`，没有补编辑命令。
+
+152 安装标准 App、编辑、窗口主菜单，用 responder-chain selector 驱动原生编辑命令；设置窗口只保留快捷键录入期间对 `SettingsWindow.performKeyEquivalent` 的精确拦截。设置壳层改为 `NavigationSplitView + List`，内容改用系统 `GroupBox` 和语义字体；Workflow 六个阶段及 History 处理阶段改为原生 segmented `Picker`，History 记录列表改为原生 `List` 选择，凭证输入从 popover 改为原生 sheet。静态说明文字启用 `textSelection`，History 文本列移除了会与选择操作竞争的外层点击手势。
+
+安装版 152 已实测：History 搜索框 `Cmd+A` 后键入会替换原值，`Cmd+C`/`Cmd+V` 可回贴；Qwen API Key 原生 sheet 可粘贴，保存按钮随之启用，取消后不写 Keychain。菜单、侧栏、Workflow、History 和 Settings 均从 `/Applications/ChatType.app` 读回。本机安装使用既有 `me.longbiaochen.chattype` 身份与五个本地 Keychain service；仓库默认公开包身份不变。
+
 ## 151 DeepSeek 全流程（2026-11-26）
 
 新增 `deepSeek` 识别与 `deepSeekFlash` 润色。Workflow 的“DeepSeek 全流程”只显式设置这两项，并恢复自动预览源；用户仍需保存配置。完整 WAV 发往固定 `https://api.markpipe.app/v1/tools/asr`，润色文本和词表发往固定 `https://api.markpipe.app/v1/chat/completions`，模型为 `deepseek-flash`。两段共用 Account 中保存的 Markpipe Keychain key，不读取 ChatGPT、GLM、Qwen 或豆包凭据。
@@ -283,7 +291,7 @@ History对cancelled/interrupted、已有partial标记及PCM中断检测统一请
 - 冷启动：无 Dock icon、菜单栏图标出现、不自动弹主窗口；
 - 视觉保真：菜单栏显示既有气泡声波图标而不是 `CT` 文本，并能随 Ready、Recording、Processing、Error 等状态更新；
 - 菜单栏：可以打开 Settings，关闭窗口后菜单栏仍在；
-- 命令：Settings 可用 `Cmd+Q` 退出；
+- 命令：Settings 可用 `Cmd+Q` 退出；输入框的 `Cmd+A`/`Cmd+C`/`Cmd+V` 与编辑菜单一致生效；
 - 登录：设备码在 ChatType 内显示并可一键复制；授权中禁止重复启动；成功后显示 `Ready`，重启仍保持；
 - 转写：`F5` 开始、`F5` 停止，返回非空文本；
 - 错误：Cloudflare、权限拒绝和普通鉴权失败显示不同、真实、可操作的提示；
@@ -358,7 +366,9 @@ open -n /Applications/ChatType.app
 
 ## Control panel acceptance
 
-The installed control panel has four destinations: Account, Workflow, History and Settings. Account owns service capability, installation and credential status; Workflow independently owns recognition, live-preview source, terminology alignment, polish and correction, with an inspectable six-step route. History is a fixed-screen review workspace. A route preview uses the displayed draft; Save Settings applies changes to the next recording.
+The installed control panel has four destinations in a native `NavigationSplitView`: Account, Workflow, History and Settings. Account owns service capability, installation and credential status; Workflow independently owns recognition, live-preview source, terminology alignment, polish and correction, with a six-stage native segmented picker and an inspectable route. History is a native `HSplitView` review workspace with a `List`, a segmented stage picker and copyable text columns. A route preview uses the displayed draft; Save Settings applies changes to the next recording.
+
+The app installs standard App, Edit and Window menus. Text fields must accept Undo, Redo, Cut, Copy, Paste, Delete and Select All with their standard shortcuts; a menu-bar-only launch must not be used as a reason to omit them. The shortcut recorder is the only key-equivalent interception and applies only while it is first responder.
 
 Terms hold standard spellings and names. Replacement holds explicit final-text corrections; rules run once after polish or its fallback, use literal whole-word matching for English and exact contiguous text for Chinese, and preserve code, paths and links. Identity rules additionally protect their literal text through alignment and polish. macOS input shortcuts are not imported; legacy rules migrate to target standard spellings with a 0600 original-byte backup made before decoding or writing config. To reverse that migration, restore the previous app before restoring the backup.
 

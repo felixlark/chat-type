@@ -10,28 +10,25 @@ extension PreferencesView {
         subtitle: String? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: SettingsLayout.cardSpacing) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(title)
-                    .font(SettingsTypography.sectionTitle)
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(SettingsTypography.detail)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+        GroupBox {
+            VStack(alignment: .leading, spacing: SettingsLayout.cardSpacing) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title)
+                        .font(SettingsTypography.sectionTitle)
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(SettingsTypography.detail)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
                 }
+                content()
             }
-            content()
+            .font(SettingsTypography.body)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(SettingsTypography.body)
-        .padding(SettingsLayout.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.32), lineWidth: 1)
-        )
     }
 
     func setupRow(title: String, status: SetupStatus) -> some View {
@@ -41,30 +38,22 @@ extension PreferencesView {
     }
 
     func compactSetupTile(title: String, status: SetupStatus) -> some View {
-        HStack(spacing: 11) {
-            SettingsIconBadge(
-                symbol: status.isReady ? "checkmark" : "exclamationmark",
-                tone: status.isReady ? .ready : .attention,
-                size: 30
+        VStack(alignment: .leading, spacing: 5) {
+            Label(
+                title,
+                systemImage: status.isReady ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
             )
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(SettingsTypography.rowTitle)
-                Text(status.title)
-                    .font(SettingsTypography.detail)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
+            .font(SettingsTypography.rowTitle)
+            .foregroundStyle(status.isReady ? Color.green : Color.orange)
+            Text(status.title)
+                .font(SettingsTypography.detail)
+                .foregroundStyle(.secondary)
+            Text(status.subtitle)
+                .font(SettingsTypography.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.25), lineWidth: 1)
-        )
     }
 
     func setupRow<Actions: View>(

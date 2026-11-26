@@ -1,18 +1,18 @@
 import SwiftUI
 
 enum SettingsTypography {
-    static let pageTitle = Font.system(size: 28, weight: .semibold)
-    static let pageSubtitle = Font.system(size: 14)
-    static let sectionTitle = Font.system(size: 16, weight: .semibold)
-    static let body = Font.system(size: 13)
-    static let bodyEmphasis = Font.system(size: 13, weight: .medium)
-    static let detail = Font.system(size: 12)
-    static let caption = Font.system(size: 11)
-    static let nav = Font.system(size: 14, weight: .medium)
-    static let control = Font.system(size: 13)
-    static let rowTitle = Font.system(size: 14, weight: .semibold)
-    static let value = Font.system(size: 13, weight: .semibold)
-    static let monoValue = Font.system(size: 20, weight: .semibold, design: .monospaced)
+    static let pageTitle = Font.title.weight(.semibold)
+    static let pageSubtitle = Font.body
+    static let sectionTitle = Font.title3.weight(.semibold)
+    static let body = Font.body
+    static let bodyEmphasis = Font.body.weight(.medium)
+    static let detail = Font.callout
+    static let caption = Font.caption
+    static let nav = Font.body.weight(.medium)
+    static let control = Font.body
+    static let rowTitle = Font.headline
+    static let value = Font.body.weight(.medium)
+    static let monoValue = Font.title2.monospaced().weight(.semibold)
 }
 
 enum SettingsLayout {
@@ -59,15 +59,11 @@ struct SettingsStatusPill: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: tone.symbol)
-                .font(.system(size: 10, weight: .semibold))
             Text(text)
-                .font(.system(size: 11.5, weight: .semibold))
         }
+        .font(.caption.weight(.semibold))
         .foregroundStyle(tone.color)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(tone.color.opacity(0.10))
-        .clipShape(Capsule())
+        .fixedSize()
     }
 }
 

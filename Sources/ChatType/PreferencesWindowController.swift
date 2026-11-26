@@ -42,12 +42,11 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         )
         let hostingController = NSHostingController(rootView: view)
 
-        let window = CommandClosingWindow(
+        let window = SettingsWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1320, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
-            defer: false,
-            onQuit: { NSApp.terminate(nil) }
+            defer: false
         )
         window.minSize = NSSize(width: 1200, height: 720)
         window.title = "ChatType Settings"
@@ -90,51 +89,12 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
-final class CommandClosingWindow: NSWindow {
-    private let onQuit: () -> Void
-
-    init(
-        contentRect: NSRect,
-        styleMask style: NSWindow.StyleMask,
-        backing backingStoreType: NSWindow.BackingStoreType,
-        defer flag: Bool,
-        onQuit: @escaping () -> Void
-    ) {
-        self.onQuit = onQuit
-        super.init(
-            contentRect: contentRect,
-            styleMask: style,
-            backing: backingStoreType,
-            defer: flag
-        )
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
+final class SettingsWindow: NSWindow {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if let recorder = firstResponder as? ShortcutRecorder.CaptureView {
             recorder.keyDown(with: event)
             return true
         }
-        let modifiers = event.modifierFlags
-            .intersection(.deviceIndependentFlagsMask)
-            .subtracting(.capsLock)
-        let isCommandOnly = modifiers == .command
-        let key = event.charactersIgnoringModifiers?.lowercased()
-
-        if event.type == .keyDown, isCommandOnly, key == "q" {
-            onQuit()
-            return true
-        }
-
-        if event.type == .keyDown, isCommandOnly, key == "w" {
-            close()
-            return true
-        }
-
         return super.performKeyEquivalent(with: event)
     }
 }
