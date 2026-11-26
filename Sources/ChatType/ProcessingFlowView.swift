@@ -89,36 +89,38 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOp
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 24) {
             let stage = stages[selected]
             stageSelector(stage)
-            stageOptions
+            stageOptionsContent(stage)
             GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 14) {
                     detailRow("输入", stage.input)
                     detailRow("运行于", stage.service)
                     detailRow("输出", stage.output)
                 }
-                .padding(4)
+                .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } label: {
                 Text("运行信息")
+                    .font(SettingsTypography.rowTitle)
             }
 
             Text(stage.detail)
-                .font(SettingsTypography.body)
+                .font(SettingsTypography.detail)
                 .foregroundStyle(.secondary)
-                .lineSpacing(3)
+                .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
         .font(SettingsTypography.body)
-        .padding(.vertical, 2)
+        .settingsControlSize()
+        .padding(.vertical, 4)
     }
 
     private func stageSelector(_ stage: ProcessingStage) -> some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .firstTextBaseline) {
                     Text("处理流程")
                         .font(SettingsTypography.sectionTitle)
@@ -131,24 +133,46 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOp
                 Text("F5 新录音或“按当前流程重跑”会应用当前选择；已开始的任务保持原路线。")
                     .font(SettingsTypography.detail)
                     .foregroundStyle(.secondary)
+                    .lineSpacing(2)
                     .textSelection(.enabled)
 
                 Picker("处理步骤", selection: $selected) {
                     ForEach(stages) { stage in
-                        Text(stage.title).tag(stage.id)
+                        Text(stage.title)
+                            .font(SettingsTypography.control)
+                            .tag(stage.id)
                     }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .settingsControlSize()
                 .accessibilityIdentifier("processing-flow")
 
                 Label(stage.caption, systemImage: stage.icon)
-                    .font(SettingsTypography.caption)
+                    .font(SettingsTypography.detail)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
-            .padding(4)
+            .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func stageOptionsContent(_ stage: ProcessingStage) -> some View {
+        if selected == 1 || selected == 3 {
+            stageOptions
+        } else {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 18) {
+                    stageOptions
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } label: {
+                Text("\(stage.title)设置")
+                    .font(SettingsTypography.rowTitle)
+            }
         }
     }
 
@@ -164,6 +188,7 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOp
                     }
                 }
                 .accessibilityIdentifier("stage-live-preview-provider")
+                .settingsControlSize()
                 Text(config.livePreviewProvider.detail)
                     .font(SettingsTypography.detail)
                     .foregroundStyle(.secondary)
@@ -205,11 +230,15 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOp
     }
 
     private func detailRow(_ label: String, _ value: String) -> some View {
-        LabeledContent(label) {
+        LabeledContent {
             Text(value)
                 .font(SettingsTypography.body)
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
+        } label: {
+            Text(label)
+                .font(SettingsTypography.detail)
+                .foregroundStyle(.secondary)
         }
     }
 }

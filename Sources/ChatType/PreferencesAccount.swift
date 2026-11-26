@@ -124,9 +124,9 @@ extension PreferencesView {
             }
         } label: {
             Label("账户操作", systemImage: "ellipsis.circle")
-                .font(.system(size: 12, weight: .medium))
-                .padding(.horizontal, 6)
-                .frame(height: 28)
+                .font(SettingsTypography.bodyEmphasis)
+                .padding(.horizontal, 10)
+                .frame(minHeight: 32)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
@@ -142,15 +142,15 @@ extension PreferencesView {
         @ViewBuilder accessory: () -> Accessory = { EmptyView() }
     ) -> some View {
         let tone: SettingsStatusTone = ready == true ? .ready : ready == false ? .error : .neutral
-        return HStack(alignment: .top, spacing: 12) {
-            SettingsIconBadge(symbol: providerSymbol(title), tone: tone, size: 32)
+        return HStack(alignment: .top, spacing: 16) {
+            SettingsIconBadge(symbol: providerSymbol(title), tone: tone, size: 40)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 10) {
                     Text(title)
                         .font(SettingsTypography.rowTitle)
                     Text(capabilities.map(\.rawValue).joined(separator: " · "))
-                        .font(SettingsTypography.caption)
+                        .font(SettingsTypography.detail)
                         .foregroundStyle(.secondary)
                     Spacer()
                     accessory()
@@ -159,11 +159,12 @@ extension PreferencesView {
                 Text(detail)
                     .font(SettingsTypography.detail)
                     .foregroundStyle(.secondary)
+                    .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 10)
         .accessibilityIdentifier("provider-" + title)
     }
 
@@ -382,7 +383,7 @@ extension PreferencesView {
                     .textSelection(.enabled)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(4)
+            .padding(8)
         }
     }
 
@@ -431,9 +432,9 @@ private struct ServiceKeyButton: View {
             showing.toggle()
         } label: {
             Image(systemName: saved ? "key.fill" : "key")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(saved ? Color.secondary : Color.red)
-                .frame(width: 28, height: 28)
+                .frame(width: 36, height: 36)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
@@ -484,14 +485,18 @@ private struct CredentialEntrySheet: View {
             HStack {
                 Spacer()
                 Button("取消", action: onCancel)
+                    .controlSize(.large)
                     .keyboardShortcut(.cancelAction)
                 Button("保存", action: onSave)
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .padding(16)
+            .padding(20)
         }
-        .frame(width: 440, height: 220)
+        .font(SettingsTypography.body)
+        .controlSize(.large)
+        .frame(width: 520, height: 280)
     }
 }

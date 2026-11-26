@@ -254,24 +254,26 @@ struct HistoryWorkspaceView: View {
             HSplitView {
                 voiceList
                 detail
-                    .frame(minWidth: 520, maxWidth: .infinity)
+                    .frame(minWidth: 560, maxWidth: .infinity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.horizontal, 24)
-            .padding(.bottom, 20)
+            .padding(.horizontal, 32)
+            .padding(.bottom, 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .settingsControlSize()
         .onAppear { model.activate() }
     }
 
     private var header: some View {
         HStack(alignment: .bottom, spacing: 20) {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text("History")
                     .font(SettingsTypography.pageTitle)
                 Text("原声、转写、对齐、润色与校正，一屏查看。")
                     .font(SettingsTypography.pageSubtitle)
                     .foregroundStyle(.secondary)
+                    .lineSpacing(3)
                     .textSelection(.enabled)
             }
             Spacer()
@@ -283,24 +285,24 @@ struct HistoryWorkspaceView: View {
                     model.refreshIndex()
                 } label: {
                     Label("刷新", systemImage: "arrow.clockwise")
-                        .font(.system(size: 12))
+                        .font(.system(size: 14, weight: .medium))
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.regular)
+                .controlSize(.large)
                 .disabled(model.isLoadingIndex)
                 .help("重新读取本地语音索引")
                 Text("\(model.index.records.count) 条")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.secondary)
                 Text("·").foregroundStyle(.tertiary)
                 Label("本机保存", systemImage: "lock")
-                    .font(.system(size: 12))
+                    .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 24)
-        .padding(.bottom, 16)
+        .padding(.horizontal, 40)
+        .padding(.top, 30)
+        .padding(.bottom, 20)
     }
 
     private var voiceList: some View {
@@ -308,22 +310,27 @@ struct HistoryWorkspaceView: View {
             VStack(spacing: 10) {
                 TextField("搜索文字、应用或日期", text: $model.query)
                     .textFieldStyle(.roundedBorder)
+                    .font(SettingsTypography.control)
+                    .controlSize(.large)
                     .onChange(of: model.query) { _ in
                         model.reconcileSelection()
                     }
 
                 Picker("筛选", selection: $model.filter) {
                     ForEach(HistoryFilter.allCases) { filter in
-                        Text(filter.title).tag(filter)
+                        Text(filter.title)
+                            .font(SettingsTypography.control)
+                            .tag(filter)
                     }
                 }
                 .pickerStyle(.segmented)
+                .settingsControlSize()
                 .labelsHidden()
                 .onChange(of: model.filter) { _ in
                     model.reconcileSelection()
                 }
             }
-            .padding(13)
+            .padding(16)
 
             Divider()
 
@@ -369,31 +376,31 @@ struct HistoryWorkspaceView: View {
                         .foregroundStyle(.orange)
                 }
             }
-            .font(.system(size: 11))
+            .font(.system(size: 13))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 16)
-            .frame(height: 38)
+            .frame(minHeight: 44)
         }
-        .frame(minWidth: 280, idealWidth: SettingsLayout.historyListWidth, maxWidth: 380)
+        .frame(minWidth: 320, idealWidth: SettingsLayout.historyListWidth, maxWidth: 420)
     }
 
     private func voiceRow(_ record: RecoveryHistorySummary) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 Circle()
                     .fill(record.status.tone.color)
                     .frame(width: 7, height: 7)
                 Text(record.status.label)
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(record.status.tone.color)
                 Spacer()
                 Text(record.timestamp.formatted(date: .omitted, time: .shortened))
-                    .font(.caption)
+                    .font(.system(size: 13))
                     .foregroundStyle(.secondary)
             }
 
             Text(record.displayTitle)
-                .font(.body)
+                .font(.system(size: 15.5, weight: .regular))
                 .foregroundStyle(.primary)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
@@ -405,18 +412,18 @@ struct HistoryWorkspaceView: View {
                 Text(record.formattedDuration)
                     .monospacedDigit()
             }
-            .font(.caption)
+            .font(.system(size: 13))
             .foregroundStyle(.secondary)
 
             HStack(spacing: 3) {
                 ForEach(Array(record.stageStates.enumerated()), id: \.offset) { _, state in
                     Capsule()
                         .fill(state.color.opacity(state == .unavailable ? 0.18 : 0.72))
-                        .frame(height: 4)
+                        .frame(height: 5)
                 }
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
@@ -461,15 +468,15 @@ private struct HistoryEmptyState: View {
     var body: some View {
         VStack(spacing: 8) {
             Image(systemName: symbol)
-                .font(.system(size: 24))
+                .font(.system(size: 32, weight: .medium))
                 .foregroundStyle(.secondary)
             Text(title)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 18, weight: .semibold))
             Text(detail)
-                .font(.system(size: 12))
+                .font(.system(size: 15))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 280)
+                .frame(maxWidth: 340)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(20)
@@ -503,14 +510,14 @@ private struct HistoryDetailView: View {
 
     var body: some View {
         let view = presentation
-        VStack(alignment: .leading, spacing: 11) {
+        VStack(alignment: .leading, spacing: 16) {
             detailHeader(view)
             stages(view)
             stageSummary(view)
             textChain(view)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onChange(of: selectedAttemptID) { _ in
             selectedStage = .asr
@@ -519,17 +526,17 @@ private struct HistoryDetailView: View {
 
     private func detailHeader(_ view: HistoryRecordPresentation) -> some View {
         let canRetryOriginal = audioAvailable && !view.selectedAttemptIsDiagnostic
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 14) {
             audioPlayer
 
             HStack(alignment: .center, spacing: 14) {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 7) {
                         Label(view.status.label, systemImage: view.status.tone.symbol)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 13.5, weight: .semibold))
                             .foregroundStyle(view.status.tone.color)
-                            .padding(.horizontal, 9)
-                            .frame(height: 24)
+                            .padding(.horizontal, 10)
+                            .frame(height: 28)
                             .background(view.status.tone.color.opacity(0.12))
                             .clipShape(Capsule())
                             .fixedSize()
@@ -544,7 +551,7 @@ private struct HistoryDetailView: View {
                                 .lineLimit(1)
                         }
                     }
-                    .font(.system(size: 12))
+                    .font(.system(size: 13.5))
                     .foregroundStyle(.secondary)
 
                     HStack(spacing: 7) {
@@ -555,13 +562,13 @@ private struct HistoryDetailView: View {
                             attemptMenu(view)
                         }
                     }
-                    .font(.system(size: 12))
+                    .font(.system(size: 13.5))
                     .foregroundStyle(.secondary)
 
                     if let detail = view.status.detail,
                        view.status.tone == .attention || view.status.tone == .failure {
                         Label(detail, systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 12))
+                            .font(.system(size: 13.5))
                             .foregroundStyle(view.status.tone.color)
                             .lineLimit(1)
                             .help(detail)
@@ -611,9 +618,9 @@ private struct HistoryDetailView: View {
                 Image(systemName: "clock.arrow.circlepath")
                 Text(view.attemptOptions.first(where: { $0.id == view.selectedAttemptID })?.title ?? "选择尝试")
             }
-            .font(.system(size: 12, weight: .medium))
-            .padding(.horizontal, 7)
-            .frame(height: 26)
+            .font(.system(size: 13.5, weight: .medium))
+            .padding(.horizontal, 9)
+            .frame(minHeight: 30)
             .background(Color(nsColor: .controlBackgroundColor))
             .clipShape(Capsule())
         }
@@ -633,9 +640,9 @@ private struct HistoryDetailView: View {
                 Text("原始音频缺失；文本、状态与复制功能仍可用。")
                 Spacer()
             }
-            .font(.system(size: 12))
+            .font(.system(size: 15))
             .foregroundStyle(.orange)
-            .padding(12)
+            .padding(16)
             .background(Color.orange.opacity(0.09))
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
@@ -667,14 +674,17 @@ private struct HistoryDetailView: View {
                 } else {
                     Picker("处理阶段", selection: $selectedStage) {
                         ForEach(view.stages) { stage in
-                            Text(stage.position.title).tag(stage.position)
+                            Text(stage.position.title)
+                                .font(SettingsTypography.control)
+                                .tag(stage.position)
                         }
                     }
                     .pickerStyle(.segmented)
+                    .settingsControlSize()
                     .labelsHidden()
                 }
             }
-            .padding(4)
+            .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -684,20 +694,20 @@ private struct HistoryDetailView: View {
         if !view.legacy, let stage = view.stages.first(where: { $0.position == selectedStage }) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: stage.position.systemImage)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(stage.state.color)
-                    .frame(width: 18)
+                    .frame(width: 22)
                 Text(stage.position.title)
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.system(size: 15.5, weight: .semibold))
                 Text(view.stageNarrative(for: stage.position))
-                    .font(.system(size: 12.5))
+                    .font(.system(size: 15.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
             .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
             .clipShape(RoundedRectangle(cornerRadius: 9))
             .accessibilityElement(children: .combine)
@@ -708,10 +718,10 @@ private struct HistoryDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 Text("文本链")
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                 Spacer(minLength: 8)
                 Text("ASR 原文 → 对齐 → 输出")
-                    .font(.system(size: 11.5))
+                    .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 copyFinalTextButton(view)
@@ -745,8 +755,8 @@ private struct HistoryDetailView: View {
             copy(text, key: key)
         } label: {
             Label(copied ? "已复制最终文本" : "复制最终文本", systemImage: copied ? "checkmark" : "doc.on.doc")
-                .font(.system(size: 13, weight: .semibold))
-                .frame(minWidth: 156, minHeight: 36)
+                .font(.system(size: 15, weight: .semibold))
+                .frame(minWidth: 176, minHeight: 40)
         }
         .buttonStyle(.bordered)
         .controlSize(.large)
@@ -760,7 +770,7 @@ private struct HistoryDetailView: View {
         return VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
                 Text(artifact.kind.title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 14.5, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
                 copyButton(for: artifact)
@@ -768,7 +778,7 @@ private struct HistoryDetailView: View {
 
             if let note = artifact.note, !note.isEmpty {
                 Text(note)
-                    .font(.system(size: 11))
+                    .font(.system(size: 13))
                     .foregroundStyle(artifact.isFailurePartial ? .orange : .secondary)
                     .lineLimit(1)
                     .help(note)
@@ -777,14 +787,14 @@ private struct HistoryDetailView: View {
             ScrollView(.vertical) {
                 if let text = artifact.text, !text.isEmpty {
                     Text(text)
-                        .font(.system(size: 13))
+                        .font(.system(size: 15.5))
                         .foregroundStyle(artifact.isFailurePartial ? .secondary : .primary)
-                        .lineSpacing(2)
+                        .lineSpacing(4)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                 } else {
                     Text("未生成")
-                        .font(.system(size: 12.5))
+                        .font(.system(size: 14.5))
                         .foregroundStyle(.secondary)
                         .italic()
                         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -792,7 +802,7 @@ private struct HistoryDetailView: View {
             }
             .scrollIndicators(.hidden)
         }
-        .padding(12)
+        .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(isSelected ? Color.accentColor.opacity(0.045) : Color.clear)
         .overlay(
@@ -811,7 +821,7 @@ private struct HistoryDetailView: View {
         } label: {
             Image(systemName: copiedKey == key ? "checkmark" : "doc.on.doc")
                 .font(.system(size: 12, weight: .medium))
-                .frame(width: 28, height: 28)
+                .frame(width: 32, height: 32)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
@@ -862,8 +872,8 @@ private struct HistoryAudioPlayerView: View {
                 model.toggle()
             } label: {
                 Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 40, height: 40)
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 48, height: 48)
                     .foregroundStyle(.white)
                     .background(Color.accentColor)
                     .clipShape(Circle())
@@ -874,20 +884,20 @@ private struct HistoryAudioPlayerView: View {
             HistoryWaveformView(peaks: model.peaks, progress: model.progress) { fraction in
                 model.seek(to: fraction)
             }
-            .frame(height: 40)
+            .frame(height: 48)
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text("\(format(model.currentTime)) / \(format(model.duration))")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .font(.system(size: 14, weight: .medium, design: .rounded))
                     .monospacedDigit()
                 Text("本机原声")
-                    .font(.system(size: 11.5))
+                    .font(.system(size: 13))
                     .foregroundStyle(.secondary)
             }
-            .frame(width: 104, alignment: .trailing)
+            .frame(width: 124, alignment: .trailing)
         }
-        .padding(.horizontal, 15)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .onDisappear { model.stop() }

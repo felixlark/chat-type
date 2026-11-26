@@ -212,7 +212,9 @@ struct PreferencesView: View {
             detail
         }
         .navigationSplitViewStyle(.balanced)
-        .frame(minWidth: 1100, minHeight: 680)
+        .font(SettingsTypography.body)
+        .settingsControlSize()
+        .frame(minWidth: 1200, minHeight: 760)
         .onChange(of: config) { _ in
             saveMessage = "尚未应用 · 保存设置后使用新快捷键；新录音或按当前流程重跑时应用流程选择。"
             saveIsError = false
@@ -244,47 +246,51 @@ struct PreferencesView: View {
 
     var sidebar: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("ChatType")
-                    .font(.title2.weight(.semibold))
+                    .font(.system(size: 28, weight: .bold))
                 Text("Speak. Make it clear.")
-                    .font(.caption)
+                    .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 16)
 
             List(selection: sectionSelection) {
                 ForEach(SettingsSection.allCases) { section in
                     Label(section.rawValue, systemImage: section.icon)
                         .font(SettingsTypography.nav)
+                        .imageScale(.large)
+                        .padding(.vertical, 6)
                         .tag(section)
                 }
             }
             .listStyle(.sidebar)
+            .controlSize(.large)
 
             Divider()
             Label("\(draft.activeShortcut.title) 开始 / 停止", systemImage: "mic")
-                .font(.caption)
+                .font(.system(size: 14))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
+                .padding(16)
         }
-        .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 260)
+        .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 300)
     }
 
     var sectionHeader: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(selectedSection.rawValue)
                 .font(SettingsTypography.pageTitle)
             Text(sectionSubtitle)
                 .font(SettingsTypography.pageSubtitle)
                 .foregroundStyle(.secondary)
+                .lineSpacing(3)
                 .textSelection(.enabled)
         }
-        .padding(.bottom, 2)
+        .padding(.bottom, 4)
     }
 
     private var sectionSelection: Binding<SettingsSection?> {
@@ -300,7 +306,7 @@ struct PreferencesView: View {
 
     private var detail: some View {
         detailContent
-            .safeAreaInset(edge: .bottom, spacing: 0) {
+            .safeAreaInset(edge: .top, spacing: 0) {
                 actionBar
             }
     }
@@ -320,8 +326,11 @@ struct PreferencesView: View {
                     sectionHeader
                     selectedSectionView
                 }
-                .padding(SettingsLayout.pagePadding)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(maxWidth: SettingsLayout.contentMaxWidth, alignment: .leading)
+                .padding(.horizontal, SettingsLayout.pagePadding)
+                .padding(.top, SettingsLayout.pageTopPadding)
+                .padding(.bottom, 44)
+                .frame(maxWidth: .infinity, alignment: .center)
                 .textSelection(.enabled)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -330,36 +339,40 @@ struct PreferencesView: View {
     }
 
     private var actionBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 16) {
             Button(action: onOpenConfigFolder) {
                 Label("打开配置文件夹", systemImage: "folder")
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
 
-            Spacer(minLength: 12)
+            Spacer(minLength: 16)
 
             Text(saveMessage)
                 .font(SettingsTypography.detail)
                 .foregroundStyle(saveIsError ? .red : .secondary)
                 .multilineTextAlignment(.trailing)
-                .lineLimit(2)
+                .lineLimit(1)
                 .textSelection(.enabled)
+                .help(saveMessage)
 
-            Button("保存设置") {
+            Button {
                 _ = draft.apply(using: onSave)
+            } label: {
+                Label("保存设置", systemImage: "checkmark")
+                    .font(SettingsTypography.bodyEmphasis)
+                    .frame(minWidth: 118)
             }
             .buttonStyle(.borderedProminent)
-            .font(SettingsTypography.bodyEmphasis)
             .controlSize(.large)
-            .frame(minWidth: 96)
+            .frame(minHeight: 36)
             .keyboardShortcut(.defaultAction)
             .disabled(draft.isRecordingShortcut)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 32)
+        .padding(.vertical, 16)
         .background(.bar)
-        .overlay(alignment: .top) {
+        .overlay(alignment: .bottom) {
             Divider()
         }
     }
