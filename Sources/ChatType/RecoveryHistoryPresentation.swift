@@ -435,6 +435,16 @@ struct HistoryRecordPresentation: Sendable, Equatable {
         selectedAttempt?.resolvedKind != .full && selectedAttempt != nil
     }
 
+    var finalTextForCopy: String? {
+        let candidate = selectedAttempt?.stages.finalText
+            ?? (selectedAttempt == nil ? record.polishText : nil)
+        guard let candidate,
+              !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return candidate
+    }
+
     static func collapse(_ text: String, limit: Int) -> String {
         let collapsed = text
             .split(whereSeparator: \.isNewline)

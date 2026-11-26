@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0 (155)
+
+- Select the newly appended History attempt after “按当前流程重跑” or Retry, so a newer successful result cannot remain hidden behind an older failed attempt.
+- Add a large “复制最终文本” action to the History text chain; it copies only the selected attempt’s accepted final text and stays disabled when that attempt has none.
+
 ## 0.6.0 (154)
 
 - Corrected the credential action label so it reads “DeepSeek API Key” instead of repeating “API”.
