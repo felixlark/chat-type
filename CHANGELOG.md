@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0 (151)
+
+- Added an explicit DeepSeek workflow for complete-recording ASR and DeepSeek Flash text polish through Markpipe. Both stages use one independently stored Markpipe key, fixed destinations, no automatic provider switching, and no live-preview dependency.
+- Added a one-click DeepSeek workflow selection in Workflow while preserving independent recognition and polish choices. Missing Markpipe credentials block applying the route.
+- Expanded the packaged credential identity and read-only compatibility report from four to five app-owned Keychain services.
+
 ## 0.6.0 (150)
 
 - Added a read-only Models row to the menu-bar item that lists the live-preview source, final recognition and enabled text polish in processing order. It updates from saved workflow choices without changing providers.

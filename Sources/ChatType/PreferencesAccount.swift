@@ -73,6 +73,22 @@ extension PreferencesView {
                     )
                 }
             )
+            Divider()
+            providerRow(
+                "DeepSeek · Markpipe",
+                status: providers.value.checked ? (markpipeKeySaved ? "已保存" : "需要填写") : "检查中…",
+                ready: providers.value.checked ? markpipeKeySaved : nil,
+                capabilities: [.recognition, .polish],
+                detail: "DeepSeek ASR + DeepSeek Flash · api.markpipe.app；识别与润色共用这一把 Markpipe key。保存密钥不等于请求已验证。",
+                accessory: {
+                    ServiceKeyButton(
+                        title: "Markpipe",
+                        text: $markpipeKeyInput,
+                        saved: markpipeKeySaved,
+                        save: saveMarkpipeKey
+                    )
+                }
+            )
             if let terminologyImportMessage {
                 Text(terminologyImportMessage).font(SettingsTypography.detail).foregroundStyle(terminologyImportIsError ? .red : .secondary)
             }
@@ -163,7 +179,7 @@ extension PreferencesView {
         if title.hasPrefix("ChatGPT") { return "bubble.left.and.bubble.right" }
         if title.hasPrefix("Doubao") { return "waveform" }
         if title.hasPrefix("Apple") { return "waveform.badge.mic" }
-        if title.hasPrefix("GLM") || title.hasPrefix("Qwen") { return "key" }
+        if title.hasPrefix("GLM") || title.hasPrefix("Qwen") || title.hasPrefix("DeepSeek") { return "key" }
         return "terminal"
     }
 
@@ -211,6 +227,7 @@ extension PreferencesView {
         case .chatGPTAuth: return "\(config.transcription.textPolish.chatGPTResponseModel) via \(config.transcription.textPolish.chatGPTResponseURL)"
         case .glmFlash: return "glm-4.7-flash via open.bigmodel.cn"
         case .qwenFlash: return "qwen-flash via dashscope.aliyuncs.com (Beijing)"
+        case .deepSeekFlash: return "deepseek-flash via api.markpipe.app"
         }
     }
 
@@ -242,15 +259,30 @@ extension PreferencesView {
         }
     }
 
+    func saveMarkpipeKey() {
+        do {
+            try markpipeKeyStore.save(markpipeKeyInput)
+            markpipeKeyInput = ""
+            markpipeKeySaved = true
+            providers.refresh()
+            textPolishMessage = "Markpipe Key 已保存；DeepSeek 识别与润色会在 F5 新录音或重跑时使用它。"
+            textPolishMessageIsError = false
+        } catch {
+            textPolishMessage = error.localizedDescription
+            textPolishMessageIsError = true
+        }
+    }
+
     func testTextPolishSelection() {
         let selected = TextPolishProviderSelector().selectProvider(
             config: config.transcription.textPolish,
             chatGPTAuthAvailable: authSnapshot.state == .ready,
             glmKeyAvailable: glmKeySaved,
-            qwenKeyAvailable: qwenKeySaved
+            qwenKeyAvailable: qwenKeySaved,
+            markpipeKeyAvailable: markpipeKeySaved
         )
         guard let selected else {
-            textPolishMessage = config.transcription.textPolish.provider == .qwenFlash ? "先保存 Qwen API Key，或检查 Mode。" : config.transcription.textPolish.provider == .glmFlash ? "先保存 GLM API Key，或检查 Mode。" : "ChatGPT Auth is not ready. Connect ChatGPT first."
+            textPolishMessage = config.transcription.textPolish.provider == .qwenFlash ? "先保存 Qwen API Key，或检查 Mode。" : config.transcription.textPolish.provider == .glmFlash ? "先保存 GLM API Key，或检查 Mode。" : config.transcription.textPolish.provider == .deepSeekFlash ? "先保存 Markpipe API Key，或检查 Mode。" : "ChatGPT Auth is not ready. Connect ChatGPT first."
             textPolishMessageIsError = true
             return
         }
@@ -261,7 +293,8 @@ extension PreferencesView {
         textPolishMessageIsError = false
         let polisher = OpenAICompatibleTextPolisher(
             config: config.transcription.textPolish, chatGPTAuthProvider: authManager,
-            chatGPTAuthAvailable: authSnapshot.state == .ready, glmKeyStore: glmKeyStore, qwenKeyStore: qwenKeyStore
+            chatGPTAuthAvailable: authSnapshot.state == .ready, glmKeyStore: glmKeyStore, qwenKeyStore: qwenKeyStore,
+            markpipeKeyStore: markpipeKeyStore
         )
         Task { @MainActor in
             defer { if polishTestGeneration == generation { testingTextPolish = false } }

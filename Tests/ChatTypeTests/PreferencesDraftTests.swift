@@ -21,7 +21,7 @@ import Foundation
 }
 
 
-@Test(arguments: [TextPolishProviderID.qwenFlash, .glmFlash]) @MainActor
+@Test(arguments: [TextPolishProviderID.qwenFlash, .glmFlash, .deepSeekFlash]) @MainActor
 func missingPolishKeyRejectsDirtyAndAlreadySavedFlowBeforeSaving(provider: TextPolishProviderID) {
     var original = AppConfig(); original.transcription.textPolish.provider = provider
     var writes = 0, checks = 0
@@ -37,4 +37,21 @@ func missingPolishKeyRejectsDirtyAndAlreadySavedFlowBeforeSaving(provider: TextP
     draft.config.transcription.textPolish.setEnabled(false)
     _ = draft.apply { _ in writes += 1; return .success(()) }
     #expect(writes == 1 && !draft.hasChanges)
+}
+
+@Test @MainActor
+func deepSeekASRRequiresTheSharedMarkpipeKeyEvenWhenPolishIsOff() {
+    var original = AppConfig()
+    original.transcription.provider = .deepSeek
+    original.transcription.textPolish.setEnabled(false)
+    var writes = 0
+    let draft = PreferencesDraft(config: original, hasPolishCredential: { provider in
+        #expect(provider == .deepSeekFlash)
+        return false
+    })
+    if case .success = draft.apply(using: { _ in writes += 1; return .success(()) }) {
+        Issue.record("DeepSeek ASR accepted a missing Markpipe key")
+    }
+    #expect(writes == 0)
+    #expect(draft.isError)
 }

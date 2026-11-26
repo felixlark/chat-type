@@ -6,7 +6,7 @@ import Security
 /// App-owned read-only probe. The CLI exposes no service/account override.
 enum CredentialReadCheck {
     enum Service: String, Codable, CaseIterable {
-        case chatGPTSession, doubao, glm, qwen
+        case chatGPTSession, doubao, glm, qwen, markpipe
 
         var query: [String: Any] {
             switch self {
@@ -14,6 +14,7 @@ enum CredentialReadCheck {
             case .doubao: DoubaoKeychain().credentialReadQuery
             case .glm: KeychainGLMKeyStore().credentialReadQuery
             case .qwen: KeychainQwenKeyStore().credentialReadQuery
+            case .markpipe: KeychainMarkpipeKeyStore().credentialReadQuery
             }
         }
     }

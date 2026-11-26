@@ -81,7 +81,8 @@ struct TextPolishProviderSelector: Sendable {
         config: TextPolishConfig,
         chatGPTAuthAvailable: Bool,
         glmKeyAvailable: Bool = false,
-        qwenKeyAvailable: Bool = false
+        qwenKeyAvailable: Bool = false,
+        markpipeKeyAvailable: Bool = false
     ) -> TextPolishProviderSelection? {
         guard config.mode != .disabled else {
             return nil
@@ -93,6 +94,9 @@ struct TextPolishProviderSelector: Sendable {
         }
         if config.provider == .glmFlash {
             return glmKeyAvailable ? TextPolishProviderSelection(id: .glmFlash) : nil
+        }
+        if config.provider == .deepSeekFlash {
+            return markpipeKeyAvailable ? TextPolishProviderSelection(id: .deepSeekFlash) : nil
         }
         if config.chatGPTAuthEnabled && chatGPTAuthAvailable {
             return TextPolishProviderSelection(id: .chatGPTAuth)
@@ -230,6 +234,7 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
     let chatGPTAuthAvailable: Bool
     let glmKeyStore: any GLMKeyStoring
     let qwenKeyStore: any QwenKeyStoring
+    let markpipeKeyStore: any MarkpipeKeyStoring
     let promptBuilder: TextPolishPromptBuilder
     let selector: TextPolishProviderSelector
     let dataLoader: @Sendable (URLRequest) async throws -> (Data, URLResponse)
@@ -242,6 +247,7 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
         chatGPTAuthAvailable: Bool,
         glmKeyStore: any GLMKeyStoring = KeychainGLMKeyStore(),
         qwenKeyStore: any QwenKeyStoring = KeychainQwenKeyStore(),
+        markpipeKeyStore: any MarkpipeKeyStoring = KeychainMarkpipeKeyStore(),
         promptBuilder: TextPolishPromptBuilder = .init(),
         selector: TextPolishProviderSelector = .init(),
         reasoningEffort: String = "none",
@@ -252,6 +258,7 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
         self.chatGPTAuthAvailable = chatGPTAuthAvailable
         self.glmKeyStore = glmKeyStore
         self.qwenKeyStore = qwenKeyStore
+        self.markpipeKeyStore = markpipeKeyStore
         self.promptBuilder = promptBuilder
         self.selector = selector
         self.reasoningEffort = reasoningEffort
@@ -278,7 +285,8 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
             config: config,
             chatGPTAuthAvailable: chatGPTAuthAvailable,
             glmKeyAvailable: config.provider == .glmFlash && glmKeyStore.contains(),
-            qwenKeyAvailable: config.provider == .qwenFlash && qwenKeyStore.contains()
+            qwenKeyAvailable: config.provider == .qwenFlash && qwenKeyStore.contains(),
+            markpipeKeyAvailable: config.provider == .deepSeekFlash && markpipeKeyStore.contains()
         ) else {
             throw TextPolishError.providerUnavailable
         }
@@ -318,6 +326,11 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
                 throw TextPolishError.providerUnavailable
             }
             polished = try await executeChatCompletionRequest(provider: .qwenFlash, key: key, messages: messages)
+        case .deepSeekFlash:
+            guard let key = try markpipeKeyStore.load(), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw TextPolishError.providerUnavailable
+            }
+            polished = try await executeChatCompletionRequest(provider: .deepSeekFlash, key: key, messages: messages)
         }
         return TextPolishResult(
             text: polished,
@@ -352,6 +365,10 @@ struct OpenAICompatibleTextPolisher: TextPolishing {
             endpoint = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
             body["model"] = "qwen-flash"
             body["enable_thinking"] = false
+        case .deepSeekFlash:
+            endpoint = MarkpipeDeepSeekRoute.chatCompletionsURL.absoluteString
+            body["model"] = MarkpipeDeepSeekRoute.polishModel
+            body["thinking"] = ["type": "disabled"]
         case .chatGPTAuth, .doubaoIME:
             throw TextPolishError.providerUnavailable
         }

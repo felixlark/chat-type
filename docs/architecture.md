@@ -6,7 +6,7 @@ The current behavior is defined by the [product contract](../PRODUCT.md). This d
 
 `AppDelegate` resolves explicit launch modes; normal launch remains a menu bar application. `AppCoordinator` owns recording, processing, cancellation and Retry. Session identity isolates obsolete asynchronous tasks; attempt identity records stages. Recording to processing retains its attempt, whereas Retry and history replay create a new attempt. These identities have distinct responsibilities.
 
-`AudioRecorder` persists the original WAV. The selected Doubao route uses `DoubaoLiveRecognition`; the supported ChatGPT preview route can use `LocalSpeechRecorder` on macOS 26+. Preview is not a substitute for the selected final transcription route.
+`AudioRecorder` persists the original WAV. The selected Doubao route uses `DoubaoLiveRecognition`; the supported ChatGPT preview route can use `LocalSpeechRecorder` on macOS 26+. DeepSeek sends the complete WAV without live preview. Preview is not a substitute for the selected final transcription route.
 
 `DictationServiceFactory` constructs the selected transcriber and optional polisher with the configured terminology/correction switches. The normal coordinator and explicit timeout acceptance use this same factory. `AcceptanceTranscriptionDeadline` only injects a one-shot deadline into the audited ChatGPT HTTP transport; it cannot claim to fault-inject Doubao's WebSocket.
 
@@ -17,7 +17,7 @@ The current behavior is defined by the [product contract](../PRODUCT.md). This d
 ## Services and persistence
 
 - `ChatGPTAuthManager`, `BrowserAuthBridge` and `ChatGPTSessionStore`: app-owned account login and Keychain session persistence. A browser callback, ready login and successful business request are separate facts.
-- `ChatGPTTranscriber.selectedRoute`: explicit Doubao, ChatGPT or compatible recognition selection. ChatGPT OAuth is restricted to audited official account hosts.
+- `ChatGPTTranscriber.selectedRoute`: explicit Doubao, ChatGPT, DeepSeek or compatible recognition selection. ChatGPT OAuth is restricted to audited official account hosts; DeepSeek and DeepSeek Flash use one app-owned Markpipe key and fixed `api.markpipe.app` endpoints.
 - `OpenAICompatibleTextPolisher` and `DoubaoTextOrganizer`: independently selected polish service, with fixed approved destinations and credential ownership.
 - `TerminologyNormalizer`, `VocabularyIndex` and `TerminologyPolicy`: deterministic local alignment, vocabulary lookup and import policy. `TerminologyEditor` edits the shared draft.
 - `RecoveryStore`: original recordings, per-attempt snapshots, stage outputs and errors. `TranscriptionHistoryRecorder` serves displayed text history; `LatencyRecorder` serves diagnostics. These have different consumers and are retained.

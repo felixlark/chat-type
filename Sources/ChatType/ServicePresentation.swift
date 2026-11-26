@@ -15,6 +15,8 @@ extension TranscriptionProvider {
             return [.livePreview, .recognition]
         case .chatGPTManagedAuth:
             return [.recognition]
+        case .deepSeek:
+            return [.recognition]
         case .openAICompatible:
             return [.recognition]
         }
@@ -26,6 +28,8 @@ extension TranscriptionProvider {
             return "豆包"
         case .chatGPTManagedAuth:
             return "ChatGPT 账户"
+        case .deepSeek:
+            return "DeepSeek ASR · Markpipe"
         case .openAICompatible:
             let model = config.openAIModel.trimmingCharacters(in: .whitespacesAndNewlines)
             return model.isEmpty ? "模型未填写" : model
@@ -47,6 +51,8 @@ extension TextPolishProviderID {
             return "GLM-4.7-Flash"
         case .qwenFlash:
             return "Qwen Flash"
+        case .deepSeekFlash:
+            return "DeepSeek Flash · Markpipe"
         }
     }
 }

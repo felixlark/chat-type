@@ -24,7 +24,8 @@ class BuildIdentityTests(unittest.TestCase):
         self.identity = {"schemaVersion": 1, "bundleId": "example.synthetic.ChatType",
                          "signingIdentity": "A1" * 20,
                          "keychainServices": {"chatGPTSession": "Example.Session.MixedCase", "doubao": "example.speech",
-                                              "glm": "EXAMPLE.GLM", "qwen": "Example.Qwen"}}
+                                              "glm": "EXAMPLE.GLM", "qwen": "Example.Qwen",
+                                              "markpipe": "Example.Markpipe"}}
 
     def write_profile(self, value):
         self.profile.write_text(json.dumps(value))
@@ -34,6 +35,7 @@ class BuildIdentityTests(unittest.TestCase):
         public = MODULE.resolve_profile()
         self.assertEqual(public["bundleId"], "io.github.felixlark.ChatType")
         self.assertEqual(public["keychainServices"]["chatGPTSession"], "io.github.felixlark.ChatType.chatgpt-session")
+        self.assertEqual(public["keychainServices"]["markpipe"], "io.github.felixlark.ChatType.markpipe")
         private = MODULE.resolve_profile(self.write_profile(self.identity))
         self.assertEqual(private, self.identity)
         self.assertNotEqual(private, public)
@@ -58,7 +60,7 @@ class BuildIdentityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "absolute"):
             MODULE.resolve_profile(Path("relative-profile.json"))
 
-    def test_injection_preserves_brand_and_exact_four_services(self):
+    def test_injection_preserves_brand_and_exact_five_services(self):
         original = {"CFBundleName": "ChatType", "CFBundleDisplayName": "ChatType", "LSUIElement": True,
                     "CFBundleShortVersionString": "1.0", "CFBundleVersion": "1"}
         resolved = MODULE.resolve_profile(self.write_profile(self.identity))

@@ -58,6 +58,11 @@ struct PreferencesView: View {
         nonmutating set { let value = newValue; providers.update { var copy = $0; copy.qwenKeySaved = value; return copy } }
     }
     @State var polishTestGeneration = UUID()
+    @State var markpipeKeyInput = ""
+    var markpipeKeySaved: Bool {
+        get { providers.value.markpipeKeySaved }
+        nonmutating set { let value = newValue; providers.update { var copy = $0; copy.markpipeKeySaved = value; return copy } }
+    }
     @State var glmKeyInput = ""
     var glmKeySaved: Bool {
         get { providers.value.glmKeySaved }
@@ -66,6 +71,7 @@ struct PreferencesView: View {
     @State var testingTextPolish = false
     let qwenKeyStore: any QwenKeyStoring
     let glmKeyStore: any GLMKeyStoring
+    let markpipeKeyStore: any MarkpipeKeyStoring
     @State var textPolishMessage: String?
     @State var textPolishMessageIsError = false
     let authManager: ChatGPTAuthManager
@@ -94,14 +100,17 @@ struct PreferencesView: View {
         onOpenConfigFolder: @escaping () -> Void,
         focusRecoveryHistory: Bool = false,
         glmKeyStore: any GLMKeyStoring = KeychainGLMKeyStore(),
-        qwenKeyStore: any QwenKeyStoring = KeychainQwenKeyStore()
+        qwenKeyStore: any QwenKeyStoring = KeychainQwenKeyStore(),
+        markpipeKeyStore: any MarkpipeKeyStoring = KeychainMarkpipeKeyStore()
     ) {
         self.qwenKeyStore = qwenKeyStore
         self.glmKeyStore = glmKeyStore
+        self.markpipeKeyStore = markpipeKeyStore
         _draft = ObservedObject(wrappedValue: draft ?? PreferencesDraft(config: initialConfig))
         _providers = StateObject(wrappedValue: SettingsResource(SettingsProviderEnvironment()) {
             SettingsProviderEnvironment(auth: authManager.authSnapshot(), browser: authManager.browserBridgeSnapshot(),
                 qwenKeySaved: qwenKeyStore.contains(), glmKeySaved: glmKeyStore.contains(),
+                markpipeKeySaved: markpipeKeyStore.contains(),
                 doubaoInstalled: SettingsProviderEnvironment.doubaoIsInstalled(), checked: true)
         })
         _usage = StateObject(wrappedValue: SettingsResource(SettingsPolishUsage()) { try SettingsPolishUsage.read() })
@@ -370,7 +379,7 @@ struct PreferencesView: View {
             accountOverviewCard
         case .workflow:
             ProcessingFlowView(config: $draft.config.transcription, injection: $draft.config.injection, chatGPTReady: authSnapshot.state == .ready,
-                glmReady: glmKeySaved, qwenReady: qwenKeySaved,
+                glmReady: glmKeySaved, qwenReady: qwenKeySaved, deepSeekReady: markpipeKeySaved,
                 recognitionOptions: transcriptionAccountCard, polishOptions: aiPolishCard,
                 termsOptions: terminologyEditor(.term), correctionOptions: terminologyEditor(.correction))
         case .recovery: EmptyView()

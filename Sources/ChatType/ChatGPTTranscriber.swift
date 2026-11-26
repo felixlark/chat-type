@@ -240,6 +240,9 @@ struct ChatGPTTranscriber: Sendable {
         case .doubaoIME:
             // Handled before the account-specific preparation above.
             throw TranscriptionError.invalidResponse
+        case .deepSeek:
+            // Handled by SelectedRouteTranscriber before account preparation.
+            throw TranscriptionError.invalidResponse
         case .chatGPTManagedAuth:
             let encodingStarted = DispatchTime.now().uptimeNanoseconds
             let payload = try AudioUploadPreparation().prepare(audio: audio, original: data, mode: uploadMode)
@@ -510,9 +513,14 @@ struct ChatGPTTranscriber: Sendable {
 /// explicit, so its test transport can never accidentally invoke a real socket.
 struct SelectedRouteTranscriber: Transcriber {
     let account: ChatGPTTranscriber
+    var deepSeek = DeepSeekTranscriber()
+
     func transcribe(_ audio: RecordedAudio) async throws -> TranscriptionResult {
         if account.config.provider == .doubaoIME {
             return try await DoubaoTranscriber(maximumSessionAttempts: account.cloudflareChallengeMaxAttempts).transcribe(audio)
+        }
+        if account.config.provider == .deepSeek {
+            return try await deepSeek.transcribe(audio)
         }
         return try await account.transcribe(audio)
     }

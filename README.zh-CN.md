@@ -8,9 +8,9 @@
 
 ## 当前行为
 
-新配置默认使用**豆包识别与豆包文字整理**，已有服务选择保持。识别还保留 ChatType 自有 ChatGPT 登录路线和高级 OpenAI-compatible 恢复路线；润色可独立选择已批准的豆包、ChatGPT、GLM、Qwen。失败不会自动切换服务。
+新配置默认使用**豆包识别与豆包文字整理**，已有服务选择保持。识别还保留 ChatType 自有 ChatGPT 登录路线、经 Markpipe 的 DeepSeek 整段录音识别路线和高级 OpenAI-compatible 恢复路线；润色可独立选择已批准的豆包、ChatGPT、GLM、Qwen、DeepSeek Flash。Workflow 可一键选择 DeepSeek 两段全流程。失败不会自动切换服务。
 
-豆包 IME 与 ChatGPT 账户后端都是私有、随版本变化的服务。凭据只存 Keychain，不导出浏览器 Cookie 或已安装输入法的凭据。音频发给所选识别服务，以及用户明确选择的豆包实时预览；相关文字发给所选润色服务。ChatGPT Auth 润色使用 `chatgpt.com` 的现有账户会话，不是 OpenAI Platform API Key；界面中的 token 数为本地估算，不是账单。成功测试不保证今后的可用性或计费。兼容识别、GLM、Qwen 使用各自凭据与对应计费授权。
+豆包 IME 与 ChatGPT 账户后端都是私有、随版本变化的服务。凭据只存 Keychain，不导出浏览器 Cookie 或已安装输入法的凭据。音频发给所选识别服务，以及用户明确选择的豆包实时预览；相关文字发给所选润色服务。DeepSeek 将完整 WAV 发到 `api.markpipe.app/v1/tools/asr`，将润色文本发到 `api.markpipe.app/v1/chat/completions`；DeepSeek ASR 不接收提示词或热词字段，因此术语对齐仍在本地随后执行。ChatGPT Auth 润色使用 `chatgpt.com` 的现有账户会话，不是 OpenAI Platform API Key；界面中的 token 数为本地估算，不是账单。成功测试不保证今后的可用性或计费。兼容识别、GLM、Qwen、DeepSeek 使用各自凭据与对应计费授权。
 
 应用在私有本地历史中保存原录音、路线快照、各阶段输出和错误。处理失败不粘贴半成品。Retry 沿用原路线，历史中可明确选择用当前设置重新处理。ESC 或浮层关闭会取消活动任务，同时保留录音。
 

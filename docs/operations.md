@@ -1,3 +1,9 @@
+## 151 DeepSeek 全流程（2026-11-26）
+
+新增 `deepSeek` 识别与 `deepSeekFlash` 润色。Workflow 的“DeepSeek 全流程”只显式设置这两项，并恢复自动预览源；用户仍需保存配置。完整 WAV 发往固定 `https://api.markpipe.app/v1/tools/asr`，润色文本和词表发往固定 `https://api.markpipe.app/v1/chat/completions`，模型为 `deepseek-flash`。两段共用 Account 中保存的 Markpipe Keychain key，不读取 ChatGPT、GLM、Qwen 或豆包凭据。
+
+DeepSeek ASR 是整文件接口，不支持流式识别，也没有 prompt 或热词请求字段；ChatType 因此不发送识别提示词，术语对齐仍在本地识别之后执行。音频上限沿用官方 8 MiB / 120 秒，超过时在发网前拒绝。失败只保留原录音与当前尝试，不自动切换服务；HTTP 408、429 和 5xx 允许用户显式 Retry。Markpipe 站点或上游不可用时按真实 HTTP 状态报告，不能把 `523` 写成鉴权失败。
+
 ## 144 词条生效核验与大词库索引复用（2026-11-16）
 
 词库有 18,796 条时，失败录音快照及已保存配置均没有 `interactiond`、`contextd`、`taskd`。安装版界面经实际编辑、Add Term、Save Settings 后，三个词进入保存配置；随后增加 `interaction d → interactiond`、`context d → contextd`、`task d → taskd` 三条明确的 Replacement，并将同样的拆词写法写入对应术语的 aliases，使其在豆包整理前完成对齐。原始失败识别中的 `and d`、`contacts d` 没有足够信息作唯一还原，不建立猜测映射。此前新增为何没有进入配置仍未确认，不归咎于用户未点按钮。

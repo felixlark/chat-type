@@ -22,6 +22,7 @@ final class PreferencesDraft: ObservableObject {
         switch provider {
         case .qwenFlash: return KeychainQwenKeyStore().contains()
         case .glmFlash: return KeychainGLMKeyStore().contains()
+        case .deepSeekFlash: return KeychainMarkpipeKeyStore().contains()
         default: return true
         }
     }
@@ -57,7 +58,10 @@ final class PreferencesDraft: ObservableObject {
         }
         let polish = config.transcription.textPolish
         let result: Result<Void, any Error>
-        if polish.isEnabled, [.qwenFlash, .glmFlash].contains(polish.provider), !hasPolishCredential(polish.provider) {
+        if config.transcription.provider == .deepSeek, !hasPolishCredential(.deepSeekFlash) {
+            result = .failure(MarkpipeASRKeyRequired())
+        } else if polish.isEnabled, [.qwenFlash, .glmFlash, .deepSeekFlash].contains(polish.provider),
+                  !hasPolishCredential(polish.provider) {
             result = .failure(PolishCredentialRequired(provider: polish.provider))
         } else {
             result = candidate != applied ? save(candidate) : .success(())
@@ -77,5 +81,16 @@ final class PreferencesDraft: ObservableObject {
 
 private struct PolishCredentialRequired: LocalizedError {
     let provider: TextPolishProviderID
-    var errorDescription: String? { "请先在 Account 保存 \(provider.title) API Key，或关闭润色；当前选择尚未应用。" }
+    var errorDescription: String? {
+        if provider == .deepSeekFlash {
+            return "请先在 Account 保存 Markpipe API Key，或关闭润色；当前选择尚未应用。"
+        }
+        return "请先在 Account 保存 \(provider.title) API Key，或关闭润色；当前选择尚未应用。"
+    }
+}
+
+private struct MarkpipeASRKeyRequired: LocalizedError {
+    var errorDescription: String? {
+        "请先在 Account 保存 Markpipe API Key；DeepSeek 全流程当前尚未应用。"
+    }
 }
