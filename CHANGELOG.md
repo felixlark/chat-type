@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0 (150)
+
+- Added a read-only Models row to the menu-bar item that lists the live-preview source, final recognition and enabled text polish in processing order. It updates from saved workflow choices without changing providers.
+
 ## 0.6.0 (149)
 
 - Reworked History into one fixed-screen detail: waveform first, two whole-flow actions, clickable stages with model labels, a word-level 校正 summary and three independently copyable text columns (ASR 原文, 对齐后, 润色输出). Removed the duplicate finalization artifact, stage-rerun row and processing-evidence block.

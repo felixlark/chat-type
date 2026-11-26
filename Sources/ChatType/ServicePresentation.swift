@@ -50,3 +50,33 @@ extension TextPolishProviderID {
         }
     }
 }
+
+struct WorkflowModelPresentation: Equatable, Sendable {
+    let models: [String]
+
+    init(config: TranscriptionConfig, applePreviewAvailable: Bool) {
+        var models: [String] = []
+        if config.livePreviewEnabled,
+           let preview = config.livePreviewProvider.resolvedSource(
+               for: config.provider,
+               applePreviewAvailable: applePreviewAvailable
+           ) {
+            switch preview {
+            case .doubaoIME:
+                models.append("豆包实时")
+            case .appleSpeech:
+                models.append("Apple 本机预览")
+            }
+        }
+
+        models.append(config.provider.modelLabel(config: config))
+        if config.textPolish.isEnabled {
+            models.append(config.textPolish.provider.modelLabel(config: config.textPolish))
+        }
+        self.models = models
+    }
+
+    var summary: String {
+        models.joined(separator: " + ")
+    }
+}

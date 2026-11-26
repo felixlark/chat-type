@@ -236,6 +236,7 @@ final class AppCoordinator {
             { [weak self] in self?.openConfigFolder() },
             { NSApplication.shared.terminate(nil) }
         )
+        updateStatusMenuModels()
         statusMenu?.ensureVisible()
     }
 
@@ -510,6 +511,7 @@ final class AppCoordinator {
                 try configStore.save(newConfig)
             }
             config = newConfig
+            updateStatusMenuModels()
             // Saving future choices must not make an active task look Ready.
             refreshReadyState(detailOverride: "Settings saved", state: .ready)
             prewarmAuthIfNeeded()
@@ -1369,6 +1371,15 @@ final class AppCoordinator {
 
     private func shouldContinue(sessionID: UUID) -> Bool {
         activeSessionID == sessionID
+    }
+
+    private func updateStatusMenuModels() {
+        statusMenu?.updateModels(
+            WorkflowModelPresentation(
+                config: config.transcription,
+                applePreviewAvailable: LocalSpeechPreviewAvailability.isAvailable
+            ).summary
+        )
     }
 
     private func refreshReadyState(detailOverride: String? = nil, state: StatusMenuVisualState = .ready) {
