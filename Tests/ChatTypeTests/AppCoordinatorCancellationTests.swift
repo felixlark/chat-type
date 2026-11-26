@@ -1187,7 +1187,7 @@ func currentFlowReplayRequiresEveryApplicableSavedAudioDecision(source: String) 
 }
 
 
-@Test(arguments: [TextPolishProviderID.qwenFlash, .glmFlash]) @MainActor
+@Test(arguments: [TextPolishProviderID.qwenFlash, .glmFlash, .deepSeekFlash]) @MainActor
 func missingPolishCredentialPreventsBothAutomaticApplyEntryPoints(provider: TextPolishProviderID) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

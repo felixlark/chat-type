@@ -18,7 +18,7 @@ func credentialReadCheckUsesOriginalQueriesAndCannotPrompt() throws {
         calls += 1
         return (errSecSuccess, Data("synthetic credential".utf8) as CFData)
     }
-    #expect(calls == 4)
+    #expect(calls == 5)
     #expect(report.results.map(\.service) == CredentialReadCheck.Service.allCases)
     #expect(report.results.allSatisfy { $0.state == .readable })
     let json = String(decoding: try JSONEncoder().encode(report), as: UTF8.self)
@@ -93,10 +93,10 @@ func credentialReadCheckWritesOnlyPrivateRedactedReportAndKeepsExistingFiles() t
         calls += 1
         return (errSecSuccess, Data("never serialize this synthetic value".utf8) as CFData)
     }
-    #expect(calls == 4)
+    #expect(calls == 5)
     let data = try Data(contentsOf: output)
     let report = try JSONDecoder().decode(CredentialReadCheck.Report.self, from: data)
-    #expect(report.results.count == 4)
+    #expect(report.results.count == 5)
     #expect(!String(decoding: data, as: UTF8.self).contains("never serialize"))
     let mode = try #require(FileManager.default.attributesOfItem(atPath: output.path)[.posixPermissions] as? NSNumber)
     #expect(mode.uint16Value & 0o777 == 0o600)

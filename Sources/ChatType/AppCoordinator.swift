@@ -1219,6 +1219,9 @@ final class AppCoordinator {
         if case TranscriptionError.retryableCloudflareChallenge = error {
             return true
         }
+        if error is DeepSeekTranscriptionError {
+            return DeepSeekTranscriber.isRetryable(error)
+        }
         return ChatGPTTranscriber.isRetryable(error)
     }
 

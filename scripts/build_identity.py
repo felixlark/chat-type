@@ -14,9 +14,10 @@ SERVICE_FIELDS = {
     "doubao": "ChatTypeDoubaoService",
     "glm": "ChatTypeGLMService",
     "qwen": "ChatTypeQwenService",
+    "markpipe": "ChatTypeMarkpipeService",
 }
 DEFAULT_SERVICES = dict(zip(SERVICE_FIELDS, (DEFAULT_BUNDLE_ID + "." + suffix
-                       for suffix in ("chatgpt-session", "doubao", "glm", "qwen"))))
+                       for suffix in ("chatgpt-session", "doubao", "glm", "qwen", "markpipe"))))
 
 
 def nonempty(value):
@@ -40,7 +41,7 @@ def resolve_profile(path=None):
         raise ValueError("Identity profile requires a certificate SHA-1 selector")
     services = value.get("keychainServices")
     if not isinstance(services, dict) or any(not nonempty(services.get(key)) for key in SERVICE_FIELDS):
-        raise ValueError("Identity profile requires all four nonempty service names")
+        raise ValueError("Identity profile requires all five nonempty service names")
     return {"schemaVersion": 1, "bundleId": value["bundleId"], "signingIdentity": selector.upper(),
             "keychainServices": {key: services[key] for key in SERVICE_FIELDS}}
 

@@ -5,7 +5,7 @@ import Foundation
 struct AppIdentity: Equatable, Sendable {
     static let defaultBundleID = "io.github.felixlark.ChatType"
     static let serviceFields = ["ChatTypeChatGPTSessionService", "ChatTypeDoubaoService",
-                                "ChatTypeGLMService", "ChatTypeQwenService"]
+                                "ChatTypeGLMService", "ChatTypeQwenService", "ChatTypeMarkpipeService"]
     static let current: AppIdentity = {
         do { return try AppIdentity(info: Bundle.main.infoDictionary ?? [:]) }
         catch { fatalError("ChatType package identity metadata is incomplete.") }
@@ -16,6 +16,7 @@ struct AppIdentity: Equatable, Sendable {
     let doubaoService: String
     let glmService: String
     let qwenService: String
+    let markpipeService: String
 
     enum IdentityError: Error { case incompleteServices }
 
@@ -25,7 +26,7 @@ struct AppIdentity: Equatable, Sendable {
         if fields.allSatisfy({ info[$0] == nil }) {
             // SwiftPM/unpackaged development uses the same public defaults as
             // the packager; an explicit partial package never mixes identities.
-            values = ["chatgpt-session", "doubao", "glm", "qwen"].map { Self.defaultBundleID + "." + $0 }
+            values = ["chatgpt-session", "doubao", "glm", "qwen", "markpipe"].map { Self.defaultBundleID + "." + $0 }
         } else {
             values = try fields.map { field in
                 guard let value = info[field] as? String,
@@ -39,5 +40,6 @@ struct AppIdentity: Equatable, Sendable {
         doubaoService = values[1]
         glmService = values[2]
         qwenService = values[3]
+        markpipeService = values[4]
     }
 }

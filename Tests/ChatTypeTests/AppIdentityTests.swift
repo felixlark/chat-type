@@ -8,17 +8,19 @@ func appIdentityDefaultsUseThePublicNamespace() throws {
     #expect(identity.doubaoService == "io.github.felixlark.ChatType.doubao")
     #expect(identity.glmService == "io.github.felixlark.ChatType.glm")
     #expect(identity.qwenService == "io.github.felixlark.ChatType.qwen")
+    #expect(identity.markpipeService == "io.github.felixlark.ChatType.markpipe")
 }
 
 @Test
-func appIdentityKeepsFourExactIndependentServiceValues() throws {
-    let values = ["example.ChatGPT.Session", "example.doubao", "EXAMPLE.GLM.Key", "Example.Qwen.Key"]
+func appIdentityKeepsFiveExactIndependentServiceValues() throws {
+    let values = ["example.ChatGPT.Session", "example.doubao", "EXAMPLE.GLM.Key", "Example.Qwen.Key", "Example.Markpipe.Key"]
     let info = Dictionary(uniqueKeysWithValues: zip(AppIdentity.serviceFields, values))
     let identity = try AppIdentity(info: info)
     #expect(identity.chatGPTSessionService == values[0])
     #expect(identity.doubaoService == values[1])
     #expect(identity.glmService == values[2])
     #expect(identity.qwenService == values[3])
+    #expect(identity.markpipeService == values[4])
 }
 
 @Test

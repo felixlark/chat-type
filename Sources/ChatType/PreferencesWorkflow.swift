@@ -10,11 +10,33 @@ extension PreferencesView {
             title: "识别服务",
             subtitle: "选择完整录音送往哪个识别服务；实时预览只作为过程提示，最终输出仍由这里的选择生成。"
         ) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("DeepSeek 全流程")
+                        .font(SettingsTypography.bodyEmphasis)
+                    Text("识别和润色都使用 Markpipe 上的 DeepSeek，共用一把 key。")
+                        .font(SettingsTypography.detail)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("选择") {
+                    draft.config.transcription.provider = .deepSeek
+                    draft.config.transcription.livePreviewProvider = .automatic
+                    draft.config.transcription.textPolish.selectProvider(.deepSeekFlash)
+                    draft.config.transcription.textPolish.setEnabled(true)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(config.transcription.provider == .deepSeek
+                    && config.transcription.textPolish.isEnabled
+                    && config.transcription.textPolish.provider == .deepSeekFlash)
+                .accessibilityIdentifier("select-deepseek-workflow")
+            }
             Picker("服务", selection: $draft.config.transcription.provider) {
                 ForEach(TranscriptionProvider.allCases) { Text($0.title).tag($0) }
             }.accessibilityIdentifier("stage-asr-provider")
             Toggle("清理口头语和改口", isOn: $draft.config.transcription.speechCleanupEnabled)
-                .disabled(config.transcription.provider == .doubaoIME)
+                .disabled(config.transcription.provider == .doubaoIME || config.transcription.provider == .deepSeek)
             if config.transcription.provider == .chatGPTManagedAuth {
                 routeRow(title: "模型", value: "由 ChatGPT 选择", detail: "私有转写服务不暴露可选择的模型 ID。")
                 Text("Complete recordings go to chatgpt.com. Local Codex login supplies the ChatGPT session. This private backend can change or return a challenge; saved audio remains available in History.")
@@ -32,6 +54,12 @@ extension PreferencesView {
                         catch { saveMessage = error.localizedDescription; saveIsError = true }
                     }
                 }
+            } else if config.transcription.provider == .deepSeek {
+                Text(config.transcription.provider.caption)
+                    .font(SettingsTypography.body)
+                    .foregroundStyle(.secondary)
+                Text("整段 WAV 发往 api.markpipe.app/v1/tools/asr。DeepSeek ASR 不接收提示词或热词字段；本地术语对齐仍会执行。识别和润色共用 Account 中保存的 Markpipe key，失败时不会自动切换。")
+                    .font(SettingsTypography.detail).foregroundStyle(.secondary)
             } else {
                 TextField("转写端点", text: $draft.config.transcription.openAITranscriptionURL)
                 TextField("音频模型", text: $draft.config.transcription.openAIModel)
@@ -176,6 +204,13 @@ extension PreferencesView {
                     Text("凭据在 Account 中管理。密钥已保存不代表请求已经验证。")
                         .font(SettingsTypography.detail).foregroundStyle(.secondary)
                     Text("GLM-4.7-Flash uses your vendor account quota and current pricing. Full transcript and relevant glossary go to open.bigmodel.cn; ASR follows the selected dictation route. F5 新录音或按当前流程重跑时应用这些选择。")
+                        .font(SettingsTypography.body)
+                        .foregroundStyle(.secondary)
+                }
+                if config.transcription.textPolish.provider == .deepSeekFlash {
+                    Text("凭据在 Account 中管理。DeepSeek Flash 与 DeepSeek ASR 共用 Markpipe key；密钥已保存不代表请求已经验证。")
+                        .font(SettingsTypography.detail).foregroundStyle(.secondary)
+                    Text("Full transcript and relevant glossary go to api.markpipe.app for DeepSeek Flash. ASR follows the selected dictation route. F5 新录音或按当前流程重跑时应用这些选择。")
                         .font(SettingsTypography.body)
                         .foregroundStyle(.secondary)
                 }

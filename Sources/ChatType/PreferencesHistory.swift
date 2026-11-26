@@ -13,6 +13,8 @@ extension PreferencesView {
             ? qwenKeySaved
             : provider == .glmFlash
                 ? glmKeySaved
+                : provider == .deepSeekFlash
+                    ? markpipeKeySaved
                 : provider == .doubaoIME
                     ? true
                     : authSnapshot.state == .ready
@@ -28,6 +30,8 @@ extension PreferencesView {
             detail = ready ? "GLM 密钥已保存；润色时会检查服务可用性。" : "请先保存 GLM API Key。"
         case .qwenFlash:
             detail = ready ? "Qwen 密钥已保存；免费额度和计费遵循你的北京账户。" : "请先保存 Qwen API Key。"
+        case .deepSeekFlash:
+            detail = ready ? "Markpipe 密钥已保存；润色会校验固定 DeepSeek 文本端点。" : "请先保存 Markpipe API Key。"
         }
 
         return HStack(alignment: .top, spacing: 12) {

@@ -80,6 +80,7 @@ struct SettingsProviderEnvironment: Sendable {
     var browser = BrowserBridgeSnapshot(state: .available, detail: "Checking device login…")
     var qwenKeySaved = false
     var glmKeySaved = false
+    var markpipeKeySaved = false
     var doubaoInstalled = false
     var checked = false
 

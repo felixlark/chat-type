@@ -93,6 +93,8 @@ struct DictationPipeline: DictationPreparing, DictationStageRerunning {
             stages.partialAudio = audio.isPartialReplay
             if transcription.metrics.provider == .doubaoIME {
                 stages.protocolVersion = "DoubaoIME-1.1.0/v2/Opus-16000"
+            } else if transcription.metrics.provider == .deepSeek {
+                stages.protocolVersion = "DeepSeek-ASR-1"
             }
             try audit?(stages)
             return stages
@@ -189,6 +191,8 @@ struct DictationPipeline: DictationPreparing, DictationStageRerunning {
         stages.partialAudio = audio.isPartialReplay
         if transcription.metrics.provider == .doubaoIME {
             stages.protocolVersion = "DoubaoIME-1.1.0/v2/Opus-16000"
+        } else if transcription.metrics.provider == .deepSeek {
+            stages.protocolVersion = "DeepSeek-ASR-1"
         }
         try audit?(stages)
         // Identity rules are literal locks; retain them during alignment and text polish.

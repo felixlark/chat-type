@@ -102,9 +102,9 @@ def validate_read_report(output, info):
     if report["appVersion"] != info["CFBundleShortVersionString"] or report["appBuild"] != info["CFBundleVersion"]:
         raise ValueError("Credential check report version mismatch")
     results = report["results"]
-    if not isinstance(results, list) or len(results) != 4:
-        raise ValueError("Credential check report requires four logical services")
-    if {entry.get("service") for entry in results} != {"chatGPTSession", "doubao", "glm", "qwen"}:
+    if not isinstance(results, list) or len(results) != 5:
+        raise ValueError("Credential check report requires five logical services")
+    if {entry.get("service") for entry in results} != {"chatGPTSession", "doubao", "glm", "qwen", "markpipe"}:
         raise ValueError("Credential check report logical services mismatch")
     for entry in results:
         if set(entry) != {"service", "state", "osStatus"} or type(entry["osStatus"]) is not int:

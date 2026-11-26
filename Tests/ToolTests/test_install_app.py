@@ -63,7 +63,7 @@ class FakeSystem:
                 output_path = Path(args[-1])
                 report = {"schemaVersion": 1, "appVersion": "1.0", "appBuild": "1", "results": [
                     {"service": key, "state": "notFound", "osStatus": -25300}
-                    for key in ("chatGPTSession", "doubao", "glm", "qwen")]}
+                    for key in ("chatGPTSession", "doubao", "glm", "qwen", "markpipe")]}
                 output_path.write_text(json.dumps(report))
                 output_path.chmod(0o600)
         elif args[0] == "/usr/bin/swift" and args[1].endswith("/scripts/launch_installed_app.swift"):
@@ -177,7 +177,8 @@ class InstallTests(unittest.TestCase):
         identity = {"schemaVersion": 1, "bundleId": "example.ChatType",
                     "signingIdentity": hashlib.sha1(b"synthetic signing certificate").hexdigest().upper(),
                     "keychainServices": {"chatGPTSession": "Example.Session", "doubao": "example.speech",
-                                         "glm": "EXAMPLE.GLM", "qwen": "Example.Qwen"}}
+                                         "glm": "EXAMPLE.GLM", "qwen": "Example.Qwen",
+                                         "markpipe": "Example.Markpipe"}}
         info_path = self.source / "Contents/Info.plist"
         info = plistlib.loads(info_path.read_bytes())
         from build_identity import inject_info
@@ -199,7 +200,8 @@ class InstallTests(unittest.TestCase):
         profile = self.private / "synthetic-profile.json"
         identity = {"schemaVersion": 1, "bundleId": "example.ChatType", "signingIdentity": "A1" * 20,
                     "keychainServices": {"chatGPTSession": "Example.Session", "doubao": "example.speech",
-                                         "glm": "EXAMPLE.GLM", "qwen": "Example.Qwen"}}
+                                         "glm": "EXAMPLE.GLM", "qwen": "Example.Qwen",
+                                         "markpipe": "Example.Markpipe"}}
         profile.write_text(json.dumps(identity))
         missing = self.root / "not-packaged"
         with mock.patch.object(sys, "argv", ["install_app.py", "--identity-profile", str(profile)]), \

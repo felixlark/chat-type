@@ -1,6 +1,6 @@
 # Package identity and local compatibility
 
-Current source uses the public project identity `felixlark`. A default source package has Bundle ID `io.github.felixlark.ChatType` and four separate Keychain services under that prefix. The signed package records their exact values in these Info fields:
+Current source uses the public project identity `felixlark`. A default source package has Bundle ID `io.github.felixlark.ChatType` and five separate Keychain services under that prefix. The signed package records their exact values in these Info fields:
 
 | Logical service | Info field | Public default suffix |
 | --- | --- | --- |
@@ -8,6 +8,7 @@ Current source uses the public project identity `felixlark`. A default source pa
 | Doubao configuration | `ChatTypeDoubaoService` | `.doubao` |
 | GLM key | `ChatTypeGLMService` | `.glm` |
 | Qwen key | `ChatTypeQwenService` | `.qwen` |
+| Markpipe key | `ChatTypeMarkpipeService` | `.markpipe` |
 
 Service names are case-sensitive independent values. The app retains each store's existing fixed account and read/write semantics. Logging uses the actual installed Bundle ID. Product branding, data directories, saved history/vocabulary and enrolled keyboard policy remain unchanged.
 
@@ -15,7 +16,7 @@ Service names are case-sensitive independent values. The app retains each store'
 
 Changing a Bundle ID or signing certificate can change permission and Keychain access. An existing installation requires a compatible candidate: the installer compares the Bundle ID, designated signing requirement and leaf certificate before stopping the app. An incompatible public default does not replace an older local installation.
 
-A maintained local installation can use an explicit version-1 JSON profile outside the repository. It contains only `schemaVersion`, `bundleId`, a certificate SHA-1 `signingIdentity` selector and all four `keychainServices` entries (`chatGPTSession`, `doubao`, `glm`, `qwen`). Capture those nonsecret values from the existing installation and its known source before changing identity. Keep the profile local with file mode `0600`; never put credentials, tokens, private keys or private recordings in it. Missing or invalid fields fail before building, without mixing public defaults into a partial profile.
+A maintained local installation can use an explicit version-1 JSON profile outside the repository. It contains only `schemaVersion`, `bundleId`, a certificate SHA-1 `signingIdentity` selector and all five `keychainServices` entries (`chatGPTSession`, `doubao`, `glm`, `qwen`, `markpipe`). Capture those nonsecret values from the existing installation and its known source before changing identity. Keep the profile local with file mode `0600`; never put credentials, tokens, private keys or private recordings in it. Missing or invalid fields fail before building, without mixing public defaults into a partial profile.
 
 Use the same explicit profile for packaging, checking and installation:
 
@@ -40,7 +41,7 @@ The installed app has an internal `credential-read-check --output /absolute/priv
   --credential-read-check "$HOME/Library/Application Support/ChatType/identity/credential-check.json"
 ```
 
-The result path must be new and its parent directory must be private to the current user. Output is a `0600` JSON file containing only app version/build, four logical service keys and `readable`, `notFound` or `OSStatus` results. The app performs actual data reads, discards the data, forbids authentication UI, and never creates an auth manager/provider, contacts a server, refreshes, saves or deletes credentials. It accepts no arbitrary service/account arguments. Authentication/locked-Keychain errors remain unknown compatibility results, not readable success.
+The result path must be new and its parent directory must be private to the current user. Output is a `0600` JSON file containing only app version/build, five logical service keys and `readable`, `notFound` or `OSStatus` results. The app performs actual data reads, discards the data, forbids authentication UI, and never creates an auth manager/provider, contacts a server, refreshes, saves or deletes credentials. It accepts no arbitrary service/account arguments. Authentication/locked-Keychain errors remain unknown compatibility results, not readable success.
 
 For an identity change, first collect the denominator from the original identity and original queries. Previously readable services must remain readable in the compatible candidate; previously absent services stay reported as absent. A metadata-only presence check cannot establish this. Keep results and local compatible packages private.
 

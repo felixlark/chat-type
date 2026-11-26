@@ -11,20 +11,25 @@ struct ProcessingStage: Identifiable, Equatable {
     let detail: String
 
     static func stages(config: TranscriptionConfig, localPreviewSupported: Bool,
-                       chatGPTReady: Bool, glmReady: Bool, qwenReady: Bool, clipboardOnly: Bool = false) -> [Self] {
+                       chatGPTReady: Bool, glmReady: Bool, qwenReady: Bool,
+                       deepSeekReady: Bool = false, clipboardOnly: Bool = false) -> [Self] {
         let managed = config.provider == .chatGPTManagedAuth
         let selected = TextPolishProviderSelector().selectProvider(config: config.textPolish,
-            chatGPTAuthAvailable: chatGPTReady, glmKeyAvailable: glmReady, qwenKeyAvailable: qwenReady)
+            chatGPTAuthAvailable: chatGPTReady, glmKeyAvailable: glmReady, qwenKeyAvailable: qwenReady,
+            markpipeKeyAvailable: deepSeekReady)
         let polishService: String
         switch config.textPolish.provider {
         case .doubaoIME: polishService = "Doubao IME · ime.doubao.com · server-selected model"
         case .chatGPTAuth: polishService = "ChatGPT · \(config.textPolish.chatGPTResponseModel) · chatgpt.com"
         case .glmFlash: polishService = "GLM-4.7-Flash · open.bigmodel.cn"
         case .qwenFlash: polishService = "Qwen Flash · dashscope.aliyuncs.com"
+        case .deepSeekFlash: polishService = "DeepSeek Flash · api.markpipe.app"
         }
         let polishState = !config.textPolish.isEnabled ? "Off — aligned text passes through"
             : selected == nil ? "Needs account or key — processing cannot complete" : polishService
         let doubao = config.provider == .doubaoIME
+        let deepSeek = config.provider == .deepSeek
+        let deepSeekASRReady = !deepSeek || deepSeekReady
         let previewSource = config.livePreviewEnabled
             ? config.livePreviewProvider.resolvedSource(for: config.provider, applePreviewAvailable: localPreviewSupported)
             : nil
@@ -42,10 +47,11 @@ struct ProcessingStage: Identifiable, Equatable {
                  service: previewSource == .appleSpeech ? "This Mac · Apple SpeechAnalyzer" : previewSource == .doubaoIME ? "Doubao live · frontier-audio-ime-ws.doubao.com" : "This Mac · audio recorder",
                  output: previewSource == nil ? "Complete audio recording" : "Complete audio recording + live draft preview",
                  detail: "F5 stops and submits the recording. Escape or × cancels. Live preview is provisional; the complete audio supplies final recognition. Choosing Doubao preview sends recording audio to Doubao even when final recognition uses another service."),
-            Self(id: 1, title: "识别", icon: "waveform", caption: config.provider.modelLabel(config: config), input: "Complete audio recording + recognition hints",
-                 service: doubao ? "Doubao IME · frontier-audio-ime-ws.doubao.com · server-selected model" : managed ? "ChatGPT account · chatgpt.com · server-selected model" : "\(config.openAIModel) · \(URL(string: config.openAITranscriptionURL)?.host ?? "configured endpoint")",
-                 output: "Initial ASR text (automatic speech recognition)",
+            Self(id: 1, title: "识别", icon: "waveform", caption: config.provider.modelLabel(config: config), input: deepSeek ? "Complete audio recording" : "Complete audio recording + recognition hints",
+                 service: doubao ? "Doubao IME · frontier-audio-ime-ws.doubao.com · server-selected model" : managed ? "ChatGPT account · chatgpt.com · server-selected model" : deepSeek ? (deepSeekASRReady ? "DeepSeek ASR · api.markpipe.app/v1/tools/asr" : "DeepSeek ASR · Markpipe key required") : "\(config.openAIModel) · \(URL(string: config.openAITranscriptionURL)?.host ?? "configured endpoint")",
+                 output: deepSeekASRReady ? "Initial ASR text (automatic speech recognition)" : "No output until the Markpipe key is saved",
                  detail: doubao ? "Audio goes to Doubao IME. The private protocol may change; configuration credentials stay in Keychain. No account Cookie or ChatGPT token is used. Pricing and long-term availability are unconfirmed." : managed ? "Audio goes to the original ChatGPT account. This is a private backend; its model ID is not exposed. The preview is not supplied as a second audio input. Challenges retain audio for manual retry."
+                    : deepSeek ? "The complete WAV goes to DeepSeek through Markpipe with the saved Markpipe key. DeepSeek ASR accepts no prompt or hint fields; local terminology alignment still runs afterward. No automatic switch to another provider."
                     : "Audio goes to your chosen compatible endpoint using its own API key. Its model affects recognition quality, languages and latency; provider usage charges may apply."),
             Self(id: 2, title: "对齐", icon: "text.book.closed", caption: config.terminologyAlignmentEnabled ? "本地词库" : "已关闭", input: "Recognized text + local Terms",
                  service: config.terminologyAlignmentEnabled ? "This Mac · terminology alignment" : "Off · recognized text passes through", output: "Aligned full transcript",
@@ -69,6 +75,7 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOp
     let chatGPTReady: Bool
     let glmReady: Bool
     let qwenReady: Bool
+    let deepSeekReady: Bool
     let recognitionOptions: RecognitionOptions
     let polishOptions: PolishOptions
     let termsOptions: TermsOptions
@@ -77,7 +84,8 @@ struct ProcessingFlowView<RecognitionOptions: View, PolishOptions: View, TermsOp
 
     private var stages: [ProcessingStage] {
         ProcessingStage.stages(config: config, localPreviewSupported: LocalSpeechPreviewAvailability.isAvailable,
-            chatGPTReady: chatGPTReady, glmReady: glmReady, qwenReady: qwenReady, clipboardOnly: injection.clipboardOnly)
+            chatGPTReady: chatGPTReady, glmReady: glmReady, qwenReady: qwenReady,
+            deepSeekReady: deepSeekReady, clipboardOnly: injection.clipboardOnly)
     }
 
     var body: some View {

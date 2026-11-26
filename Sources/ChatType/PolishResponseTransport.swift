@@ -34,7 +34,8 @@ enum PolishResponseTransport {
         }
         var body = Data()
         var completion = ChatCompletionPolishStream()
-        let isChatCompletion = ["open.bigmodel.cn", "dashscope.aliyuncs.com"].contains(request.url?.host ?? "")
+        let isChatCompletion = ["open.bigmodel.cn", "dashscope.aliyuncs.com", "api.markpipe.app"]
+            .contains(request.url?.host ?? "")
         for try await line in bytes.lines {
             try Task.checkCancellation()
             body.append(contentsOf: (line + "\n").utf8)
