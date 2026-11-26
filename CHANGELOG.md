@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0 (157)
+
+- Rebuilt the Settings type scale for legibility: 34pt page titles, 22pt section titles, 18pt row titles, 16pt body text and 15pt supporting copy, with larger controls and row heights based on the current Apple HIG and the iOS/macOS 27 design refinements.
+- Constrained the settings page to a 980pt readable column, widened the sidebar and enlarged History, Workflow and terminology content without changing their native structure.
+- Moved save actions and save status into a fixed top action bar so critical controls remain visible and follow the macOS guidance to avoid critical bottom-of-window controls.
+
 ## 0.6.0 (155)
 
 - Select the newly appended History attempt after “按当前流程重跑” or Retry, so a newer successful result cannot remain hidden behind an older failed attempt.

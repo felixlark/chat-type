@@ -1,3 +1,11 @@
+## 157 设置界面可读性与原生设计规范重构（2026-11-26）
+
+安装版 155 的截图确认问题不是单一控件：主设置正文按 macOS 默认 13pt 渲染，辅助文字降到 12pt/11pt，窗口最大化后内容又横铺近整屏，导致同等字号下更难读。macOS HIG 的默认正文确实是 13pt，但同页也明确要求在实际阅读困难时增大字号；2027 设计更新又提高了列表和表单的行高、留白，并增加 extra-large 控件。macOS 不支持 Dynamic Type，因此本项目需要显式维护一套更易读的固定字号和可响应窗口的排版。
+
+本次依据 Apple 官方的 Typography、Layout、Materials、Accessibility、Designing for macOS、Adopting Liquid Glass、WWDC26 iOS 和 Design guides 重做：正文 16pt、说明 15pt、行标题 18pt、分组标题 22pt、页标题 34pt；正文列最大 980pt 并居中，页面水平留白 40pt，卡片内边距 24pt，分组间距 30pt。控件在 macOS 14+ 使用 extra-large，macOS 13 使用 large；侧栏、顶部 `.bar`、sheet、List 和 GroupBox 继续使用系统组件，让 macOS 26+ 自动采用 Liquid Glass，而不把 Liquid Glass 用进内容层。保存操作从窗口底部移到固定顶部操作栏，符合 macOS 不把关键控件放在窗口底部的指导。
+
+安装版 157 已对 Account、Workflow、History、Settings 四页逐一截图核对：正文、服务说明、表单标签和历史文本均明显放大；术语列表、History 三列文本、密钥 sheet、快捷键录入页和顶部保存栏无裁切或重叠。`scripts/check.sh` 通过 438 个 Swift 测试、58 个 Python 工具测试、shell/policy/landing checks 和打包元数据检查。最终安装版仍在 `/Applications/ChatType.app` 正常运行，设置窗口保留在 Account 页。
+
 ## 155 History 新尝试选中与最终文本复制（2026-11-26）
 
 “按当前流程重跑”成功后，新 attempt 的文字已经写入 journal，但 History 仍保留旧 attempt 的选择，界面因此显示旧失败尝试的三列“未生成”。这不是转写为空；同一记录里已有带 ASR、对齐、润色和终稿的新 attempt。现在每次 journal 追加新 attempt 时自动选中它，只更新同一 attempt 时继续尊重用户手动选择。

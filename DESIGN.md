@@ -14,28 +14,36 @@ colors:
 typography:
   product-title:
     fontFamily: "macOS system"
-    swiftUIStyle: ".title2.weight(.semibold)"
+    size: 28
+    weight: 700
   page-title:
     fontFamily: "macOS system"
-    swiftUIStyle: ".title.weight(.semibold)"
+    size: 34
+    weight: 700
   section-title:
     fontFamily: "macOS system"
-    swiftUIStyle: ".title3.weight(.semibold)"
+    size: 22
+    weight: 600
   body:
     fontFamily: "macOS system"
-    swiftUIStyle: ".body"
+    size: 16
+    weight: 400
   row-title:
     fontFamily: "macOS system"
-    swiftUIStyle: ".headline"
+    size: 18
+    weight: 600
   detail:
     fontFamily: "macOS system"
-    swiftUIStyle: ".callout"
+    size: 15
+    weight: 400
   caption:
     fontFamily: "macOS system"
-    swiftUIStyle: ".caption"
+    size: 13
+    weight: 400
   navigation:
     fontFamily: "macOS system"
-    swiftUIStyle: ".body.weight(.medium)"
+    size: 16
+    weight: 500
 rounded:
   controls: "System-managed"
   containers: "System GroupBox and List"
@@ -48,8 +56,10 @@ spacing:
   row-gap: "10pt"
   group-gap: "12pt"
   editor-gap: "16pt"
-  section-gap: "20pt"
-  page-padding: "28pt"
+  section-gap: "30pt"
+  page-padding: "40pt"
+  content-max-width: "980pt"
+  card-padding: "24pt"
 components:
   navigation-split-view:
     sidebar: "Native List with .sidebar style"
@@ -59,10 +69,11 @@ components:
   processing-picker:
     control: "Native segmented Picker"
   sidebar:
-    width: "190–260pt"
+    width: "220–300pt"
   save-bar:
     material: "{colors.surface-save-bar}"
-    padding: "{spacing.editor-gap}"
+    placement: "fixed top action bar"
+    padding: "32pt horizontal / 16pt vertical"
 ---
 
 # Design System: ChatType Control Panel
@@ -73,13 +84,15 @@ components:
 
 ChatType’s control panel is a useful, candid personal studio: readable service facts, restrained navigation and native macOS controls. Its AppKit window hosts SwiftUI content. System typography, dynamic system colors and SF Symbols (Apple’s system icon library) support everyday operation while the existing product name and brand assets remain owner-controlled.
 
-This document records the implemented settings surface of 0.6.0 (152), using `ApplicationMenu.swift`, `PreferencesWindowController.swift`, `PreferencesView.swift`, `HistoryWorkspace.swift`, `TerminologyEditor.swift` and `ProcessingFlowView.swift`. It covers the reusable control-panel language, not the recording overlay or a new visual direction. Page strategy remains in `docs/control-panel-surface.md`; product commitments remain in `PRODUCT.md`.
+This document records the implemented settings surface of 0.6.0 (157), using `ApplicationMenu.swift`, `PreferencesWindowController.swift`, `PreferencesView.swift`, `HistoryWorkspace.swift`, `TerminologyEditor.swift` and `ProcessingFlowView.swift`. It covers the reusable control-panel language, not the recording overlay or a new visual direction. Page strategy remains in `docs/control-panel-surface.md`; product commitments remain in `PRODUCT.md`.
 
 **Key Characteristics:**
 - Native `NavigationSplitView`, `List`, `GroupBox`, `Picker` and `HSplitView` structure.
-- Dynamic system materials and semantic typography; macOS 26+ renders the standard controls with Liquid Glass automatically.
+- A deliberately readable macOS type scale rather than the platform's minimum 13pt body size.
+- Liquid Glass is left to system navigation, bars, sheets and controls; content uses stable standard containers.
+- Larger row height, padding and control sizes aligned with the 2027 Apple design refinements.
 - Standard App, Edit and Window menus, including text-field editing commands.
-- Local feedback beside its action; configuration save state in the persistent bottom bar.
+- Local feedback beside its action; configuration save state in a fixed top action bar.
 
 ## Colors
 
@@ -102,28 +115,29 @@ Ready, attention and error colors accompany status text and/or SF Symbols. Ready
 
 ## Typography
 
-The macOS system font supplies titles, controls and body text. SwiftUI semantic roles define the hierarchy; code uses `.title`, `.title3`, `.headline`, `.body`, `.callout`, `.caption` and `.title2.monospaced()` rather than fixed point sizes. macOS resolves the actual type size, weight and accessibility scaling.
+The macOS system font supplies titles, controls and body text. Apple’s macOS default body size is 13pt, but its HIG explicitly requires testing legibility and increasing the size when the content is difficult to read. ChatType therefore uses a deliberately larger fixed scale: 16pt body, 15pt supporting copy, 18pt row titles, 22pt section titles and 34pt page titles. macOS does not provide Dynamic Type, so the layout must remain responsive as the window and text length change.
 
 ### Hierarchy
 
-- **Product / page title:** `.title2` for the sidebar product identity; `.title` for the current destination.
-- **Section title:** `.title3` for `GroupBox` section headings.
-- **Row title:** `.headline` for service names, group headings and status rows.
-- **Body:** `.body` for standard settings copy, stage explanations and history text.
-- **Detail:** `.callout` for secondary descriptions and `.caption` for timestamps, counts and metadata.
-- **Numeric information:** pagination uses monospaced digits; device codes use `.title2.monospaced()`.
+- **Product title:** 28pt bold for the sidebar identity.
+- **Page title:** 34pt bold for the current destination.
+- **Section title:** 22pt semibold for `GroupBox` headings.
+- **Row title:** 18pt semibold for service names, group headings and prominent state.
+- **Body:** 16pt regular for standard settings copy, labels and history text.
+- **Detail:** 15pt for supporting descriptions; 13pt only for captions, timestamps and compact metadata.
+- **Numeric information:** pagination uses monospaced digits; device codes use 26pt monospaced semibold.
 
-**The Native Type Rule.** Use the macOS system font and the observed semantic or point-size roles; preserve the native title hierarchy.
+**The Readability Type Rule.** Keep the macOS system font, but do not default substantive content to the platform minimum. Enlarged body and detail sizes must preserve the title → section → row → body → caption hierarchy.
 
 ## Layout
 
-The resizable native window opens maximized to the built-in display’s `visibleFrame`, with window minimum (1200 × 720pt); the hosted root uses a 1100 × 680pt minimum. The built-in display is identified by `CGDisplayIsBuiltin=1`, not a fixed display ID or name. If no built-in display is present, the first available screen is used. A closed Settings window returns to this placement; a visible window already on the built-in display keeps the user’s position and size. `NavigationSplitView` supplies the resizable sidebar (190–260pt) and flexible detail column. There are no web breakpoints or mobile layouts.
+The resizable native window opens maximized to the built-in display’s `visibleFrame`, with window minimum (1240 × 760pt); the hosted root uses a 1200 × 760pt minimum. The built-in display is identified by `CGDisplayIsBuiltin=1`, not a fixed display ID or name. If no built-in display is present, the first available screen is used. A closed Settings window returns to this placement; a visible window already on the built-in display keeps the user’s position and size. `NavigationSplitView` supplies the resizable sidebar (220–300pt) and flexible detail column. There are no web breakpoints or mobile layouts.
 
-The content column has a scrollable page above a persistent `.bar` save area. Page padding is 28pt; native `GroupBox` containers replace custom cards. The page header stacks the page title and a selectable secondary subtitle. Sidebar destinations are Account, Workflow, History and Settings. Account uses icon-led service rows with capability labels (实时预览, 识别, 润色) and native status labels. Permissions live only in Settings, not Account. Green Doubao means installed, not a successful cloud probe; green Apple means the local analyzer reports available; green GLM/Qwen/DeepSeek means a key is saved, not that a request has been verified.
+The detail column has a fixed `.bar` action area at the top, then a scrollable page. Page padding is 40pt with a 980pt content maximum, centered in the detail column so long settings pages do not stretch into unreadable full-width lines. Native `GroupBox` cards use 24pt inner padding and 30pt section spacing. The page header stacks the 34pt title and a selectable 17pt subtitle. Sidebar destinations are Account, Workflow, History and Settings. Account uses icon-led service rows with capability labels (实时预览, 识别, 润色) and native status labels. Permissions live only in Settings, not Account. Green Doubao means installed, not a successful cloud probe; green Apple means the local analyzer reports available; green GLM/Qwen/DeepSeek means a key is saved, not that a request has been verified.
 
 History is a full-height native `HSplitView` workspace rather than a scrolling settings page. The voice `List` scrolls independently; the detail pane stays on one screen. Long transcript columns scroll internally with hidden indicators so the page itself never grows. Other destinations recreate the ScrollView via `.id(selectedSection)` so the next page starts at the top.
 
-Information rows use `LabeledContent` for system-aligned labels and values. Related text stacks remain close together; actions stay beside the facts they affect. The save bar keeps Open Config Folder at the leading edge and save status plus Save Settings at the trailing edge.
+Information rows use `LabeledContent` for system-aligned labels and values. Related text stacks remain close together; actions stay beside the facts they affect. The fixed top action bar keeps Open Config Folder and save status at the leading side and Save Settings at the trailing side, avoiding the macOS failure mode where critical controls at the bottom of a window are moved offscreen.
 
 ## Elevation & Depth
 
@@ -149,11 +163,11 @@ Use native default or bordered buttons for ordinary actions, bordered-prominent 
 
 ### Cards / Containers
 
-The reusable settings section is a native `GroupBox` containing a semantic section title and vertically stacked content. Readiness rows pair a status symbol, title and subtitle without a second custom surface. Native dividers separate logical groups.
+The reusable settings section is a native `GroupBox` containing an 22pt section title, 15pt supporting copy and vertically stacked content with 24pt padding. Readiness rows pair a status symbol, title and subtitle without a second custom surface. Native dividers separate logical groups. List and form rows use enlarged padding to match the 2027 platform updates.
 
 ### Inputs / Fields
 
-Native TextField, SecureField, Picker and Toggle remain the form vocabulary. Search uses a rounded-border field. Secure key entry opens a native settings sheet with the field focused, explanatory text and a native Save/Cancel footer; this state is separate from request availability and configuration save status. Descriptions and history text can be selected, while TextFields receive standard editing commands through the app’s Edit menu. No custom focus ring or validation animation is defined.
+Native TextField, SecureField, Picker and Toggle remain the form vocabulary. Controls use `.large` on macOS 13 and `.extraLarge` on macOS 14+, where available, and their labels inherit the 16pt body/control scale. Search uses a rounded-border field. Secure key entry opens a native settings sheet with the field focused, 16pt explanatory text and a native Save/Cancel footer; this state is separate from request availability and configuration save status. Descriptions and history text can be selected, while TextFields receive standard editing commands through the app’s Edit menu. No custom focus ring or validation animation is defined.
 
 ### Navigation
 
@@ -165,7 +179,7 @@ Six stages—录音, 识别, 对齐, 润色, 校正 and 输出—use one native 
 
 ### Vocabulary editor
 
-The 对齐 stage contains Custom phrases; 修正 contains Replacement. Each editor has a fixed entry type, keeping canonical spelling and explicit corrections in their workflow positions. Search indexing runs off the UI thread. Add/update fields precede a divider, search and source filtering. The source picker is fixed (210pt). A native inset list pages at 50 entries; its height ranges 380–560pt, ideal 460pt. Entry text uses semantic body type and provenance uses caption type beside borderless Edit/Delete actions. Empty state, import progress and bounded local feedback occupy their own slots. “Read X names” reports the read operation; the bottom bar owns configuration save state.
+The 对齐 stage contains Custom phrases; 修正 contains Replacement. Each editor has a fixed entry type, keeping canonical spelling and explicit corrections in their workflow positions. Search indexing runs off the UI thread. Add/update fields precede a divider, search and source filtering. The source picker is fixed (240pt). A native inset list pages at 50 entries; its height ranges 440–640pt, ideal 520pt. Entry text uses 16pt body type and provenance uses 13pt caption type beside borderless Edit/Delete actions. Empty state, import progress and bounded local feedback occupy their own slots. “Read X names” reports the read operation; the top action bar owns configuration save state.
 
 ### History workspace
 
@@ -179,7 +193,7 @@ Error text is explicitly labeled by its content and uses the error color. Copy f
 
 ### Save bar
 
-The persistent footer uses `.bar` material and is the single configuration save-status location. It presents normal, unsaved, saved or error text with a two-line limit and a default-action Save Settings button. Immediate native operations, such as the login-item switch, explain their own timing near the control.
+The fixed top action bar uses `.bar` material and is the single configuration save-status location. It presents normal, unsaved, saved or error text on one selectable line with a help tooltip and a default-action Save Settings button. The bar stays above scrolling content, so it is visible at every window position. Immediate native operations, such as the login-item switch, explain their own timing near the control.
 
 ## Do's and Don'ts
 
@@ -189,7 +203,7 @@ The persistent footer uses `.bar` material and is the single configuration save-
 - **Do** keep the standard Edit menu installed so text fields get the system editing shortcuts.
 - **Do** prefer system materials and Liquid Glass rendering over custom card backgrounds.
 - **Do** accompany readiness and errors with meaningful labels or symbols.
-- **Do** show operation feedback near the action and configuration save status in the bottom bar.
+- **Do** show operation feedback near the action and configuration save status in the fixed top bar.
 - **Do** reset the page scroll position when changing sidebar destinations.
 
 ### Don't:
@@ -199,3 +213,16 @@ The persistent footer uses `.bar` material and is the single configuration save-
 - **Don’t** add parent tap gestures over selectable text or text fields.
 - **Don’t** treat a local “Read names” result as proof that configuration was saved.
 - **Don’t** change owner-controlled brand visuals without explicit approval.
+
+## Apple References
+
+Checked against official Apple documentation on 2026-11-26:
+
+- [Human Interface Guidelines: Typography](https://developer.apple.com/design/human-interface-guidelines/typography)
+- [Human Interface Guidelines: Layout](https://developer.apple.com/design/human-interface-guidelines/layout)
+- [Human Interface Guidelines: Materials](https://developer.apple.com/design/human-interface-guidelines/materials)
+- [Human Interface Guidelines: Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility)
+- [Human Interface Guidelines: Designing for macOS](https://developer.apple.com/design/human-interface-guidelines/designing-for-macos)
+- [Apple Developer: Adopting Liquid Glass](https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass)
+- [WWDC26 iOS guide](https://developer.apple.com/wwdc26/guides/ios/)
+- [WWDC26 Design guide](https://developer.apple.com/wwdc26/guides/design/)

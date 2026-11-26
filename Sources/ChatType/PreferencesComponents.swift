@@ -19,6 +19,7 @@ extension PreferencesView {
                         Text(subtitle)
                             .font(SettingsTypography.detail)
                             .foregroundStyle(.secondary)
+                            .lineSpacing(2)
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
                     }
@@ -26,7 +27,7 @@ extension PreferencesView {
                 content()
             }
             .font(SettingsTypography.body)
-            .padding(.vertical, 4)
+            .padding(SettingsLayout.cardPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -64,9 +65,9 @@ extension PreferencesView {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: status.isReady ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 .foregroundStyle(status.isReady ? .green : .orange)
-                .font(.system(size: 14))
+                .font(.system(size: 18, weight: .semibold))
                 .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(SettingsTypography.rowTitle)
                 Text(status.title)

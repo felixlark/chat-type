@@ -34,38 +34,39 @@ extension PreferencesView {
             detail = ready ? "DeepSeek API 密钥已保存；润色会校验 DeepSeek 文本端点。" : "请先保存 DeepSeek API Key。"
         }
 
-        return HStack(alignment: .top, spacing: 12) {
+        return HStack(alignment: .top, spacing: 16) {
             SettingsIconBadge(
                 symbol: ready ? "checkmark" : "exclamationmark",
                 tone: ready ? .ready : .attention,
-                size: 30
+                size: 40
             )
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 7) {
                 Text("\(provider.title) 润色")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(SettingsTypography.rowTitle)
                 Text(detail)
-                    .font(.system(size: 12.5))
+                    .font(SettingsTypography.detail)
                     .foregroundStyle(.secondary)
+                    .lineSpacing(2)
                 Text(provider == .doubaoIME
                     ? "记录：\(usage.attempts) 次尝试，\(usage.succeeded) 次完成；服务未提供 token 用量与费用。"
                     : "本地估算：\(usage.attempts) 次尝试，\(usage.succeeded) 次完成，约 \(usage.inputTokens) 输入 / \(usage.outputTokens) 输出 token；不是服务账单。")
-                    .font(.system(size: 11.5))
+                    .font(SettingsTypography.caption)
                     .foregroundStyle(.secondary)
                 if unattributedPolishAttempts > 0 {
                     Text("\(unattributedPolishAttempts) 次尝试的提供方未知（包括失败尝试）。")
-                        .font(.system(size: 11.5))
+                        .font(SettingsTypography.caption)
                         .foregroundStyle(.secondary)
                 }
             }
 
             Spacer()
         }
-        .padding(12)
+        .padding(16)
         .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 14)
                 .stroke(Color(nsColor: .separatorColor).opacity(0.25), lineWidth: 1)
         )
     }

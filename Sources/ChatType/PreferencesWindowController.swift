@@ -43,12 +43,12 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         let hostingController = NSHostingController(rootView: view)
 
         let window = SettingsWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1320, height: 820),
+            contentRect: NSRect(x: 0, y: 0, width: 1380, height: 880),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.minSize = NSSize(width: 1200, height: 720)
+        window.minSize = NSSize(width: 1240, height: 760)
         window.title = "ChatType Settings"
         window.isReleasedWhenClosed = false
         window.isRestorable = false
