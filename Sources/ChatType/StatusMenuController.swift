@@ -3,10 +3,12 @@ import AppKit
 @MainActor
 protocol StatusMenuUpdating: AnyObject {
     func update(state: StatusMenuVisualState, detail: String)
+    func updateModels(_ summary: String)
     func ensureVisible()
 }
 
 extension StatusMenuUpdating {
+    func updateModels(_ summary: String) {}
     func ensureVisible() {}
 }
 
@@ -47,6 +49,7 @@ final class StatusMenuController: NSObject, StatusMenuUpdating {
     private let statusItem: NSStatusItem
     private let stateItem = NSMenuItem(title: "State: idle", action: nil, keyEquivalent: "")
     private let detailItem = NSMenuItem(title: "Ready", action: nil, keyEquivalent: "")
+    private let modelsItem = NSMenuItem(title: "Models: —", action: nil, keyEquivalent: "")
     private let openSettingsHandler: () -> Void
     private let openConfigHandler: () -> Void
     private let quitHandler: () -> Void
@@ -81,6 +84,10 @@ final class StatusMenuController: NSObject, StatusMenuUpdating {
         detailItem.title = detail
     }
 
+    func updateModels(_ summary: String) {
+        modelsItem.title = "Models: \(summary)"
+    }
+
     func ensureVisible() {
         statusItem.isVisible = true
     }
@@ -89,6 +96,7 @@ final class StatusMenuController: NSObject, StatusMenuUpdating {
         let menu = NSMenu()
         menu.addItem(stateItem)
         menu.addItem(detailItem)
+        menu.addItem(modelsItem)
         menu.addItem(.separator())
 
         let settingsItem = NSMenuItem(

@@ -1,6 +1,6 @@
 # ChatType product contract
 
-ChatType is a native macOS menu bar dictation app. This file owns the current behavior; [architecture](docs/architecture.md) describes implementation, [operations](docs/operations.md) owns diagnosis and acceptance, and [release](docs/release.md) owns packaging and installation.
+ChatType is a native macOS menu bar dictation app. Opening the menu-bar item shows State, readiness and the current model route for live preview, final recognition and enabled polish in processing order. This file owns the current behavior; [architecture](docs/architecture.md) describes implementation, [operations](docs/operations.md) owns diagnosis and acceptance, and [release](docs/release.md) owns packaging and installation.
 
 ## Dictation
 
