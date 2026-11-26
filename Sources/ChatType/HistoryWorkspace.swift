@@ -247,17 +247,12 @@ struct HistoryWorkspaceView: View {
         VStack(spacing: 0) {
             header
 
-            HStack(spacing: 0) {
+            HSplitView {
                 voiceList
-                Divider()
                 detail
+                    .frame(minWidth: 520, maxWidth: .infinity)
             }
-            .background(Color(nsColor: .textBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
-            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, 24)
             .padding(.bottom, 20)
         }
@@ -268,18 +263,12 @@ struct HistoryWorkspaceView: View {
     private var header: some View {
         HStack(alignment: .bottom, spacing: 20) {
             VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 6) {
-                    Text("ChatType")
-                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
-                    Text("History")
-                }
-                .font(SettingsTypography.caption)
-                .foregroundStyle(.secondary)
                 Text("History")
                     .font(SettingsTypography.pageTitle)
                 Text("原声、转写、对齐、润色与校正，一屏查看。")
                     .font(SettingsTypography.pageSubtitle)
                     .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
             Spacer()
             HStack(spacing: 8) {
@@ -313,48 +302,22 @@ struct HistoryWorkspaceView: View {
     private var voiceList: some View {
         VStack(spacing: 0) {
             VStack(spacing: 10) {
-                HStack(spacing: 7) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                    TextField("搜索文字、应用或日期", text: $model.query)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13.5))
-                        .onChange(of: model.query) { _ in
-                            model.reconcileSelection()
-                        }
-                }
-                .padding(.horizontal, 11)
-                .frame(height: 38)
-                .background(Color(nsColor: .controlBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
-                )
+                TextField("搜索文字、应用或日期", text: $model.query)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: model.query) { _ in
+                        model.reconcileSelection()
+                    }
 
-                HStack(spacing: 3) {
+                Picker("筛选", selection: $model.filter) {
                     ForEach(HistoryFilter.allCases) { filter in
-                        Button {
-                            model.filter = filter
-                            model.reconcileSelection()
-                        } label: {
-                            Text(filter.title)
-                                .font(.system(size: 12.5, weight: model.filter == filter ? .semibold : .regular))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 32)
-                                .background(
-                                    model.filter == filter
-                                        ? Color(nsColor: .textBackgroundColor)
-                                        : Color.clear
-                                )
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                        }
-                        .buttonStyle(.plain)
+                        Text(filter.title).tag(filter)
                     }
                 }
-                .padding(3)
-                .background(Color(nsColor: .separatorColor).opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .onChange(of: model.filter) { _ in
+                    model.reconcileSelection()
+                }
             }
             .padding(13)
 
@@ -372,25 +335,18 @@ struct HistoryWorkspaceView: View {
                 HistoryEmptyState(title: "没有匹配的语音", symbol: "magnifyingglass", detail: "换一个关键词或筛选条件。")
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            ForEach(model.groups) { group in
-                                Text(group.title)
-                                    .font(.system(size: 11.5, weight: .semibold))
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 16)
-                                    .padding(.top, 12)
-                                    .padding(.bottom, 6)
-
+                    List(selection: recordSelection) {
+                        ForEach(model.groups) { group in
+                            Section(group.title) {
                                 ForEach(group.records) { record in
                                     voiceRow(record)
                                         .id(record.id)
+                                        .tag(record.id)
                                 }
                             }
                         }
                     }
-                    .scrollIndicators(.automatic)
+                    .listStyle(.inset)
                     .onChange(of: model.selectedRecordID) { id in
                         guard let id else { return }
                         withAnimation(.easeOut(duration: 0.16)) {
@@ -414,67 +370,58 @@ struct HistoryWorkspaceView: View {
             .padding(.horizontal, 16)
             .frame(height: 38)
         }
-        .frame(width: SettingsLayout.historyListWidth)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+        .frame(minWidth: 280, idealWidth: SettingsLayout.historyListWidth, maxWidth: 380)
     }
 
     private func voiceRow(_ record: RecoveryHistorySummary) -> some View {
-        let selected = model.selectedRecordID == record.id
-        return Button {
-            model.selectRecord(record.id)
-        } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 7) {
-                    Circle()
-                        .fill(record.status.tone.color)
-                        .frame(width: 7, height: 7)
-                    Text(record.status.label)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(record.status.tone.color)
-                    Spacer()
-                    Text(record.timestamp.formatted(date: .omitted, time: .shortened))
-                        .font(.system(size: 11, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(record.status.tone.color)
+                    .frame(width: 7, height: 7)
+                Text(record.status.label)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(record.status.tone.color)
+                Spacer()
+                Text(record.timestamp.formatted(date: .omitted, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
-                Text(record.displayTitle)
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+            Text(record.displayTitle)
+                .font(.body)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
 
-                HStack(spacing: 7) {
-                    Text(record.appName ?? "未记录目标")
-                        .lineLimit(1)
-                    Spacer()
-                    Text(record.formattedDuration)
-                        .monospacedDigit()
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 7) {
+                Text(record.appName ?? "未记录目标")
+                    .lineLimit(1)
+                Spacer()
+                Text(record.formattedDuration)
+                    .monospacedDigit()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
 
-                HStack(spacing: 3) {
-                    ForEach(Array(record.stageStates.enumerated()), id: \.offset) { _, state in
-                        Capsule()
-                            .fill(state.color.opacity(state == .unavailable ? 0.18 : 0.72))
-                            .frame(height: 4)
-                    }
+            HStack(spacing: 3) {
+                ForEach(Array(record.stageStates.enumerated()), id: \.offset) { _, state in
+                    Capsule()
+                        .fill(state.color.opacity(state == .unavailable ? 0.18 : 0.72))
+                        .frame(height: 4)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? Color.accentColor.opacity(0.11) : Color.clear)
-            .overlay(alignment: .leading) {
-                if selected {
-                    Rectangle()
-                        .fill(Color.accentColor.opacity(0.55))
-                        .frame(width: 2)
-                }
-            }
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    private var recordSelection: Binding<UUID?> {
+        Binding(
+            get: { model.selectedRecordID },
+            set: { model.selectRecord($0) }
+        )
     }
 
     @ViewBuilder
@@ -691,78 +638,41 @@ private struct HistoryDetailView: View {
     }
 
     private func stages(_ view: HistoryRecordPresentation) -> some View {
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("处理流程")
-                    .font(.system(size: 13.5, weight: .semibold))
-                Spacer()
-                if view.legacy {
-                    Text("旧记录 · 无分阶段明细")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                } else if let attempt = view.selectedAttempt {
-                    Text("尝试 \(attemptIndex(view, attempt) + 1) · \(attempt.resolvedKind.label)")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if view.legacy {
-                Text("这条记录来自旧版档案。保留原声、ASR 和旧版润色文本，不推断未保存的中间阶段。")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(.secondary)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 9))
-            } else {
-                HStack(spacing: 6) {
-                    ForEach(view.stages) { stage in
-                        stageButton(stage)
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("处理流程")
+                        .font(SettingsTypography.rowTitle)
+                    Spacer()
+                    if view.legacy {
+                        Text("旧记录 · 无分阶段明细")
+                            .font(SettingsTypography.caption)
+                            .foregroundStyle(.secondary)
+                    } else if let attempt = view.selectedAttempt {
+                        Text("尝试 \(attemptIndex(view, attempt) + 1) · \(attempt.resolvedKind.label)")
+                            .font(SettingsTypography.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
-            }
-        }
-    }
 
-    private func stageButton(_ stage: HistoryStagePresentation) -> some View {
-        let selected = selectedStage == stage.position
-        return Button {
-            selectedStage = stage.position
-        } label: {
-            VStack(spacing: 5) {
-                HStack(spacing: 6) {
-                    Image(systemName: stage.position.systemImage)
-                        .font(.system(size: 15, weight: .semibold))
-                    Text(stage.position.title)
-                        .font(.system(size: 12.5, weight: selected ? .semibold : .medium))
+                if view.legacy {
+                    Text("这条记录来自旧版档案。保留原声、ASR 和旧版润色文本，不推断未保存的中间阶段。")
+                        .font(SettingsTypography.detail)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                } else {
+                    Picker("处理阶段", selection: $selectedStage) {
+                        ForEach(view.stages) { stage in
+                            Text(stage.position.title).tag(stage.position)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
                 }
-                Text(stage.detail)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
             }
-            .foregroundStyle(selected ? Color.primary : stage.state.color)
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: 56)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 8)
-            .background(selected ? Color.accentColor.opacity(0.11) : Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(
-                        selected
-                            ? Color.accentColor.opacity(0.38)
-                            : Color(nsColor: .separatorColor).opacity(0.24),
-                        lineWidth: 1
-                    )
-            )
+            .padding(4)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(stage.position.title)：\(stage.detail)")
-        .help("\(stage.position.title)：\(stage.detail)")
     }
 
     @ViewBuilder
@@ -860,10 +770,6 @@ private struct HistoryDetailView: View {
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(isSelected ? Color.accentColor.opacity(0.045) : Color.clear)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            selectedStage = stagePosition(for: artifact.kind)
-        }
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(isSelected ? Color.accentColor.opacity(0.22) : Color.clear, lineWidth: 1)
@@ -895,14 +801,6 @@ private struct HistoryDetailView: View {
         case .alignment: return .aligned
         case .polish, .correction, .output: return .output
         case .audio: return nil
-        }
-    }
-
-    private func stagePosition(for artifact: HistoryTextArtifactKind) -> HistoryStagePosition {
-        switch artifact {
-        case .asr: return .asr
-        case .aligned: return .alignment
-        case .output: return .polish
         }
     }
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0 (152)
+
+- Restored the standard macOS Edit menu so text fields in the settings window support Undo, Redo, Cut, Copy, Paste, Delete and Select All with their normal keyboard shortcuts.
+- Reworked the settings shell around `NavigationSplitView`, sidebar `List`, native `GroupBox` sections and semantic system typography. The Workflow stage map and History selection controls now use native segmented `Picker` and `List` selection.
+- Replaced the transient key popover with a native credential sheet, made descriptive text selectable throughout Settings, and removed the text-column tap gesture that competed with selection.
+
 ## 0.6.0 (151)
 
 - Added an explicit DeepSeek workflow for complete-recording ASR and DeepSeek Flash text polish through Markpipe. Both stages use one independently stored Markpipe key, fixed destinations, no automatic provider switching, and no live-preview dependency.

@@ -2,6 +2,7 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: AppCoordinator?
+    private var applicationMenu: ApplicationMenuController?
     private let authManager = ChatGPTAuthManager()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -12,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             })
         } else {
             coordinator = AppCoordinator(authManager: authManager)
+        }
+        applicationMenu = ApplicationMenuController.install { [weak self] in
+            self?.coordinator?.showSettings()
         }
         coordinator?.start(
             launchMode: AppLaunchMode.resolve(

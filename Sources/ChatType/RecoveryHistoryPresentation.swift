@@ -1,6 +1,6 @@
 import Foundation
 
-enum HistoryStagePosition: Int, CaseIterable, Sendable, Identifiable {
+enum HistoryStagePosition: Int, CaseIterable, Sendable, Identifiable, Hashable {
     case audio
     case asr
     case alignment

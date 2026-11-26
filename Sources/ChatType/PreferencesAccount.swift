@@ -145,30 +145,22 @@ extension PreferencesView {
         return HStack(alignment: .top, spacing: 12) {
             SettingsIconBadge(symbol: providerSymbol(title), tone: tone, size: 32)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .center, spacing: 8) {
                     Text(title)
                         .font(SettingsTypography.rowTitle)
-                    HStack(spacing: 4) {
-                        ForEach(capabilities) { capability in
-                            Text(capability.rawValue)
-                                .font(.system(size: 10.5, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color(nsColor: .controlBackgroundColor))
-                                .clipShape(Capsule())
-                        }
-                    }
+                    Text(capabilities.map(\.rawValue).joined(separator: " · "))
+                        .font(SettingsTypography.caption)
+                        .foregroundStyle(.secondary)
                     Spacer()
                     accessory()
                     SettingsStatusPill(text: localizedProviderStatus(status), tone: tone)
                 }
                 Text(detail)
-                    .font(.system(size: 12.5))
+                    .font(SettingsTypography.detail)
                     .foregroundStyle(.secondary)
-                    .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
         }
         .padding(.vertical, 3)
@@ -202,23 +194,18 @@ extension PreferencesView {
     }
 
     func routeRow(title: String, value: String, detail: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(title)
-                .font(SettingsTypography.bodyEmphasis)
-                .frame(width: 96, alignment: .leading)
-            VStack(alignment: .leading, spacing: 2) {
+        LabeledContent(title) {
+            VStack(alignment: .trailing, spacing: 2) {
                 Text(value)
                     .font(SettingsTypography.value)
+                    .textSelection(.enabled)
                 Text(detail)
                     .font(SettingsTypography.detail)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .multilineTextAlignment(.trailing)
+                    .textSelection(.enabled)
             }
-            Spacer()
         }
-        .padding(9)
-        .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     var polishRouteDetail: String {
@@ -273,101 +260,6 @@ extension PreferencesView {
         }
     }
 
-    func testTextPolishSelection() {
-        let selected = TextPolishProviderSelector().selectProvider(
-            config: config.transcription.textPolish,
-            chatGPTAuthAvailable: authSnapshot.state == .ready,
-            glmKeyAvailable: glmKeySaved,
-            qwenKeyAvailable: qwenKeySaved,
-            markpipeKeyAvailable: markpipeKeySaved
-        )
-        guard let selected else {
-            textPolishMessage = config.transcription.textPolish.provider == .qwenFlash ? "先保存 Qwen API Key，或检查 Mode。" : config.transcription.textPolish.provider == .glmFlash ? "先保存 GLM API Key，或检查 Mode。" : config.transcription.textPolish.provider == .deepSeekFlash ? "先保存 Markpipe API Key，或检查 Mode。" : "ChatGPT Auth is not ready. Connect ChatGPT first."
-            textPolishMessageIsError = true
-            return
-        }
-        let generation = UUID()
-        polishTestGeneration = generation
-        testingTextPolish = true
-        textPolishMessage = "Testing \(selected.id.title)…"
-        textPolishMessageIsError = false
-        let polisher = OpenAICompatibleTextPolisher(
-            config: config.transcription.textPolish, chatGPTAuthProvider: authManager,
-            chatGPTAuthAvailable: authSnapshot.state == .ready, glmKeyStore: glmKeyStore, qwenKeyStore: qwenKeyStore,
-            markpipeKeyStore: markpipeKeyStore
-        )
-        Task { @MainActor in
-            defer { if polishTestGeneration == generation { testingTextPolish = false } }
-            do {
-                _ = try await polisher.polish(text: "请保留 ChatType 与 F5，只整理这句话。", terminologyEntries: [], hintTerms: [])
-                guard polishTestGeneration == generation else { return }
-                textPolishMessage = "Connected: \(selected.id.title)."
-                textPolishMessageIsError = false
-            } catch {
-                guard polishTestGeneration == generation else { return }
-                textPolishMessage = error.localizedDescription
-                textPolishMessageIsError = true
-            }
-        }
-    }
-
-    var chatGPTAccountSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("ChatGPT Account")
-                        .font(SettingsTypography.bodyEmphasis)
-                        .foregroundStyle(.secondary)
-                    Text(authSnapshot.userEmail ?? authSnapshot.detail)
-                        .font(SettingsTypography.body)
-                        .foregroundStyle(.secondary)
-                    Text(browserBridgeSnapshot.detail)
-                        .font(SettingsTypography.detail)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 6) {
-                    statusPill(for: authSnapshot.state)
-                    browserBridgePill(for: browserBridgeSnapshot.state)
-                }
-            }
-
-            HStack(spacing: 10) {
-                Button(browserLoginIsInProgress ? "Waiting for Authorization" : "Connect ChatGPT") {
-                    connectViaBrowser()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(browserLoginIsInProgress)
-
-                Button("Refresh Session") {
-                    Task {
-                        _ = try? await authManager.refreshAccessToken()
-                        await MainActor.run {
-                            authSnapshot = authManager.authSnapshot()
-                        }
-                    }
-                }
-                .buttonStyle(.bordered)
-
-                Button("Sign out") {
-                    do {
-                        try authManager.signOut()
-                        authSnapshot = authManager.authSnapshot()
-                    } catch {
-                        terminologyImportMessage = error.localizedDescription
-                        terminologyImportIsError = true
-                    }
-                }
-                .buttonStyle(.bordered)
-            }
-
-            if let userCode = browserBridgeSnapshot.userCode {
-                deviceAuthorizationCard(userCode: userCode)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
     func connectViaBrowser() {
         guard browserLoginIsInProgress == false else {
             return
@@ -399,60 +291,6 @@ extension PreferencesView {
             return true
         }
         return isConnectingBrowserLogin
-    }
-
-    func statusPill(for state: ChatGPTAuthState) -> some View {
-        let label: String
-        let color: Color
-        switch state {
-        case .ready:
-            label = "Signed In"
-            color = .green
-        case .signedOut:
-            label = "Signed Out"
-            color = .orange
-        case .expired:
-            label = "Expired"
-            color = .orange
-        case .unavailable:
-            label = "Unavailable"
-            color = .red
-        }
-
-        return Text(label)
-            .font(.system(size: 11.5, weight: .semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color(nsColor: .textBackgroundColor))
-            .clipShape(Capsule())
-    }
-
-    func browserBridgePill(for state: BrowserBridgeState) -> some View {
-        let label: String
-        let color: Color
-        switch state {
-        case .available:
-            label = "Device Login Ready"
-            color = .secondary
-        case .waiting:
-            label = "Waiting"
-            color = .orange
-        case .connected:
-            label = "Connected"
-            color = .green
-        case .failed:
-            label = "Failed"
-            color = .red
-        }
-
-        return Text(label)
-            .font(.system(size: 11.5, weight: .semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color(nsColor: .textBackgroundColor))
-            .clipShape(Capsule())
     }
 
     var chatGPTSetupActions: some View {
@@ -508,49 +346,44 @@ extension PreferencesView {
     }
 
     func deviceAuthorizationCard(userCode: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("在 OpenAI 页面完成登录", systemImage: "rectangle.and.hand.point.up.left")
-                .font(.system(size: 13, weight: .semibold))
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("在 OpenAI 页面完成登录", systemImage: "rectangle.and.hand.point.up.left")
+                    .font(SettingsTypography.rowTitle)
 
-            Text("1. 复制一次性验证码。")
-                .font(SettingsTypography.body)
+                Text("1. 复制一次性验证码。")
+                    .font(SettingsTypography.body)
 
-            HStack(spacing: 12) {
-                Text(userCode)
-                    .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                HStack(spacing: 12) {
+                    Text(userCode)
+                        .font(SettingsTypography.monoValue)
+                        .textSelection(.enabled)
+
+                    Button(copiedDeviceCode == userCode ? "已复制" : "复制验证码") {
+                        copyDeviceCode(userCode)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button(chromeApplicationURL == nil ? "打开登录页" : "在 Chrome 中打开") {
+                        openDeviceAuthorizationPage()
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Text("2. 将 9 个字符粘贴到浏览器。3. 点击继续。4. 回到这里，ChatType 会自动完成。")
+                    .font(SettingsTypography.body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 7))
 
-                Button(copiedDeviceCode == userCode ? "已复制" : "复制验证码") {
-                    copyDeviceCode(userCode)
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button(chromeApplicationURL == nil ? "打开登录页" : "在 Chrome 中打开") {
-                    openDeviceAuthorizationPage()
-                }
-                .buttonStyle(.bordered)
+                Text("验证码 15 分钟后过期。失败时再次点击“连接 ChatGPT”生成新验证码。")
+                    .font(SettingsTypography.detail)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
-
-            Text("2. 将 9 个字符粘贴到浏览器。3. 点击继续。4. 回到这里，ChatType 会自动完成。")
-                .font(SettingsTypography.body)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text("验证码 15 分钟后过期。失败时再次点击“连接 ChatGPT”生成新验证码。")
-                .font(SettingsTypography.detail)
-                .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(4)
         }
-        .padding(12)
-        .background(Color.accentColor.opacity(0.08))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.accentColor.opacity(0.28), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     func copyDeviceCode(_ userCode: String) {
@@ -607,30 +440,58 @@ private struct ServiceKeyButton: View {
         .help(saved ? "更换 \(title) API Key" : "填写 \(title) API Key")
         .accessibilityLabel(saved ? "更换 \(title) API Key" : "填写 \(title) API Key")
         .accessibilityIdentifier("manage-\(title.lowercased())-key")
-        .popover(isPresented: $showing, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("\(title) API Key")
-                    .font(.system(size: 14, weight: .semibold))
-                SecureField("\(title) API Key", text: $text)
-                    .textFieldStyle(.roundedBorder)
-                    .font(SettingsTypography.control)
-                    .controlSize(.large)
-                HStack {
+        .sheet(isPresented: $showing) {
+            CredentialEntrySheet(
+                title: title,
+                text: $text,
+                onCancel: { showing = false },
+                onSave: {
+                    save()
+                    showing = false
+                }
+            )
+        }
+    }
+}
+
+private struct CredentialEntrySheet: View {
+    let title: String
+    @Binding var text: String
+    let onCancel: () -> Void
+    let onSave: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section {
+                    SecureField("粘贴 \(title) API Key", text: $text)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.large)
+                        .labelsHidden()
+                        .accessibilityLabel("\(title) API Key")
                     Text("只保存到 macOS Keychain。")
                         .font(SettingsTypography.detail)
                         .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("保存") {
-                        save()
-                        showing = false
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .textSelection(.enabled)
+                } header: {
+                    Text("\(title) API Key")
                 }
             }
+            .formStyle(.grouped)
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("取消", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("保存", action: onSave)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
             .padding(16)
-            .frame(width: 340)
         }
+        .frame(width: 440, height: 220)
     }
 }

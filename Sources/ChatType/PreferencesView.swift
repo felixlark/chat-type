@@ -57,7 +57,6 @@ struct PreferencesView: View {
         get { providers.value.qwenKeySaved }
         nonmutating set { let value = newValue; providers.update { var copy = $0; copy.qwenKeySaved = value; return copy } }
     }
-    @State var polishTestGeneration = UUID()
     @State var markpipeKeyInput = ""
     var markpipeKeySaved: Bool {
         get { providers.value.markpipeKeySaved }
@@ -68,7 +67,6 @@ struct PreferencesView: View {
         get { providers.value.glmKeySaved }
         nonmutating set { let value = newValue; providers.update { var copy = $0; copy.glmKeySaved = value; return copy } }
     }
-    @State var testingTextPolish = false
     let qwenKeyStore: any QwenKeyStoring
     let glmKeyStore: any GLMKeyStoring
     let markpipeKeyStore: any MarkpipeKeyStoring
@@ -208,65 +206,13 @@ struct PreferencesView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        NavigationSplitView {
             sidebar
-
-            Divider()
-
-            VStack(spacing: 0) {
-                if selectedSection == .recovery {
-                    HistoryWorkspaceView(
-                        model: historyWorkspace,
-                        recoveryDirectoryURL: recoveryDirectoryURL,
-                        onRetryRecoveryRecord: onRetryRecoveryRecord,
-                        onReprocessRecoveryRecord: onReprocessRecoveryRecord
-                    )
-                } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
-                            sectionHeader
-                            selectedSectionView
-                        }
-                        .padding(SettingsLayout.pagePadding)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .id(selectedSection)
-                }
-
-                Divider()
-
-                HStack {
-                    Button("打开配置文件夹", action: onOpenConfigFolder)
-                        .buttonStyle(.bordered)
-                        .font(SettingsTypography.body)
-                        .controlSize(.large)
-                        .frame(minWidth: 120)
-                    Spacer()
-                    Text(saveMessage)
-                        .font(SettingsTypography.detail)
-                        .foregroundStyle(saveIsError ? .red : .secondary)
-                        .lineLimit(2)
-                    Button("保存设置") {
-                        _ = draft.apply(using: onSave)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .font(SettingsTypography.bodyEmphasis)
-                    .controlSize(.large)
-                    .frame(minWidth: 96)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(draft.isRecordingShortcut)
-                }
-                .padding(.horizontal, 22)
-                .padding(.vertical, 14)
-                .background(Color(nsColor: .windowBackgroundColor))
-                .frame(minHeight: 58)
-                .fixedSize(horizontal: false, vertical: true)
-                .layoutPriority(1)
-            }
-            .background(Color(nsColor: .windowBackgroundColor))
+        } detail: {
+            detail
         }
-        .frame(minWidth: 1200, minHeight: 680)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 1100, minHeight: 680)
         .onChange(of: config) { _ in
             saveMessage = "尚未应用 · 保存设置后使用新快捷键；新录音或按当前流程重跑时应用流程选择。"
             saveIsError = false
@@ -297,70 +243,125 @@ struct PreferencesView: View {
     }
 
     var sidebar: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 5) {
                 Text("ChatType")
-                    .font(.system(size: 26, weight: .semibold))
+                    .font(.title2.weight(.semibold))
                 Text("Speak. Make it clear.")
-                    .font(.system(size: 12.5))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
             .padding(.bottom, 10)
 
-            ForEach(SettingsSection.allCases) { section in
-                Button {
-                    selectedSection = section
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: section.icon)
-                            .font(.system(size: 16, weight: .medium))
-                            .frame(width: 20)
-                        Text(section.rawValue)
-                        Spacer()
-                    }
-                    .font(SettingsTypography.nav)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(
-                        selectedSection == section
-                            ? Color.accentColor.opacity(0.12)
-                            : Color.clear
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            List(selection: sectionSelection) {
+                ForEach(SettingsSection.allCases) { section in
+                    Label(section.rawValue, systemImage: section.icon)
+                        .font(SettingsTypography.nav)
+                        .tag(section)
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 8)
             }
+            .listStyle(.sidebar)
 
-            Spacer()
+            Divider()
             Label("\(draft.activeShortcut.title) 开始 / 停止", systemImage: "mic")
-                .font(.system(size: 12))
+                .font(.caption)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 18)
-                .padding(.bottom, 18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
         }
-        .frame(width: SettingsLayout.sidebarWidth)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 260)
     }
 
     var sectionHeader: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                Text("ChatType")
-                Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
-                Text(selectedSection.rawValue)
-            }
-            .font(SettingsTypography.caption)
-            .foregroundStyle(.secondary)
             Text(selectedSection.rawValue)
                 .font(SettingsTypography.pageTitle)
             Text(sectionSubtitle)
                 .font(SettingsTypography.pageSubtitle)
                 .foregroundStyle(.secondary)
+                .textSelection(.enabled)
         }
         .padding(.bottom, 2)
+    }
+
+    private var sectionSelection: Binding<SettingsSection?> {
+        Binding(
+            get: { selectedSection },
+            set: { section in
+                if let section {
+                    selectedSection = section
+                }
+            }
+        )
+    }
+
+    private var detail: some View {
+        detailContent
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                actionBar
+            }
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        if selectedSection == .recovery {
+            HistoryWorkspaceView(
+                model: historyWorkspace,
+                recoveryDirectoryURL: recoveryDirectoryURL,
+                onRetryRecoveryRecord: onRetryRecoveryRecord,
+                onReprocessRecoveryRecord: onReprocessRecoveryRecord
+            )
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: SettingsLayout.sectionSpacing) {
+                    sectionHeader
+                    selectedSectionView
+                }
+                .padding(SettingsLayout.pagePadding)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .textSelection(.enabled)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .id(selectedSection)
+        }
+    }
+
+    private var actionBar: some View {
+        HStack(spacing: 12) {
+            Button(action: onOpenConfigFolder) {
+                Label("打开配置文件夹", systemImage: "folder")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+
+            Spacer(minLength: 12)
+
+            Text(saveMessage)
+                .font(SettingsTypography.detail)
+                .foregroundStyle(saveIsError ? .red : .secondary)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+                .textSelection(.enabled)
+
+            Button("保存设置") {
+                _ = draft.apply(using: onSave)
+            }
+            .buttonStyle(.borderedProminent)
+            .font(SettingsTypography.bodyEmphasis)
+            .controlSize(.large)
+            .frame(minWidth: 96)
+            .keyboardShortcut(.defaultAction)
+            .disabled(draft.isRecordingShortcut)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
+        .background(.bar)
+        .overlay(alignment: .top) {
+            Divider()
+        }
     }
 
     var sectionSubtitle: String {

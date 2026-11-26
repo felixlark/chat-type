@@ -61,9 +61,21 @@ extension PreferencesView {
                 Text("整段 WAV 发往 api.markpipe.app/v1/tools/asr。DeepSeek ASR 不接收提示词或热词字段；本地术语对齐仍会执行。识别和润色共用 Account 中保存的 Markpipe key，失败时不会自动切换。")
                     .font(SettingsTypography.detail).foregroundStyle(.secondary)
             } else {
-                TextField("转写端点", text: $draft.config.transcription.openAITranscriptionURL)
-                TextField("音频模型", text: $draft.config.transcription.openAIModel)
-                TextField("API Key 环境变量", text: $draft.config.transcription.openAIAuthTokenEnv)
+                LabeledContent("转写端点") {
+                    TextField("https://…", text: $draft.config.transcription.openAITranscriptionURL)
+                        .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                }
+                LabeledContent("音频模型") {
+                    TextField("模型 ID", text: $draft.config.transcription.openAIModel)
+                        .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                }
+                LabeledContent("API Key 环境变量") {
+                    TextField("变量名", text: $draft.config.transcription.openAIAuthTokenEnv)
+                        .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                }
                 Text("Advanced recovery uses your own API credentials and may incur usage charges. ChatGPT login credentials are never sent to this endpoint. No automatic provider switching.")
                     .font(SettingsTypography.body)
                     .foregroundStyle(.secondary)
@@ -109,58 +121,53 @@ extension PreferencesView {
                 }
             }
 
-            HStack(alignment: .top, spacing: 16) {
-                settingsCard(
-                    title: "启动",
-                    subtitle: "登录这台 Mac 时自动启动菜单栏应用。"
-                ) {
-                    Toggle("登录时启动 ChatType", isOn: Binding(get: { loginItem.isEnabled }, set: { loginItem.setEnabled($0) }))
-                        .accessibilityIdentifier("launch-at-login")
-                    Text("切换后立即生效。")
-                        .font(SettingsTypography.detail)
-                        .foregroundStyle(.secondary)
-                    if loginItem.status == .requiresApproval {
-                        Text("等待 macOS 登录项批准。").font(SettingsTypography.body).foregroundStyle(.orange)
-                        Button("打开登录项") { loginItem.openSystemSettings() }
-                            .buttonStyle(.bordered)
-                            .controlSize(.large)
-                    }
-                    if let message = loginItem.message {
-                        Text(message).font(SettingsTypography.detail).foregroundStyle(.red)
-                    }
+            settingsCard(
+                title: "启动与权限",
+                subtitle: "登录项、麦克风和辅助功能都在这里管理。"
+            ) {
+                Toggle("登录时启动 ChatType", isOn: Binding(get: { loginItem.isEnabled }, set: { loginItem.setEnabled($0) }))
+                    .accessibilityIdentifier("launch-at-login")
+                Text("切换后立即生效。")
+                    .font(SettingsTypography.detail)
+                    .foregroundStyle(.secondary)
+                if loginItem.status == .requiresApproval {
+                    Text("等待 macOS 登录项批准。").font(SettingsTypography.body).foregroundStyle(.orange)
+                    Button("打开登录项") { loginItem.openSystemSettings() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-
-                settingsCard(
-                    title: "权限",
-                    subtitle: "麦克风用于录音，辅助功能用于自动粘贴。"
-                ) {
-                    HStack(spacing: 12) {
-                        compactSetupTile(title: "麦克风", status: microphoneStatus)
-                        compactSetupTile(title: "辅助功能", status: accessibilityStatus)
-                    }
+                if let message = loginItem.message {
+                    Text(message).font(SettingsTypography.detail).foregroundStyle(.red)
+                }
+                Divider()
+                compactSetupTile(title: "麦克风", status: microphoneStatus)
+                Divider()
+                compactSetupTile(title: "辅助功能", status: accessibilityStatus)
+                HStack(spacing: 10) {
                     ForEach(microphoneRepairActions + accessibilityRepairActions) { repairActionButton($0) }
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
 
             settingsCard(
                 title: "本地数据",
                 subtitle: "配置与词库保存在本机；凭据使用 macOS Keychain。"
             ) {
-                HStack(alignment: .center, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("~/Library/Application Support/ChatType")
-                            .font(SettingsTypography.bodyEmphasis)
-                            .textSelection(.enabled)
-                        Text("History 包含识别文本和可恢复的原始录音。")
-                            .font(SettingsTypography.detail)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
+                LabeledContent("保存位置") {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .trailing, spacing: 3) {
+                            Text("~/Library/Application Support/ChatType")
+                                .font(SettingsTypography.bodyEmphasis)
+                                .textSelection(.enabled)
+                            Text("History 包含识别文本和可恢复的原始录音。")
+                                .font(SettingsTypography.detail)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        .multilineTextAlignment(.trailing)
                     Button("打开本地数据文件夹", action: onOpenConfigFolder)
                         .buttonStyle(.bordered)
                         .controlSize(.large)
+                    }
                 }
             }
         }
@@ -188,8 +195,6 @@ extension PreferencesView {
                 .accessibilityIdentifier("stage-polish-provider")
                 .onChange(of: config.transcription.textPolish.provider) { _ in
                     if config.transcription.textPolish.provider == .chatGPTAuth { config.transcription.textPolish.chatGPTAuthEnabled = true }
-                    polishTestGeneration = UUID()
-                    testingTextPolish = false
                     textPolishMessage = nil
                     textPolishMessageIsError = false
                 }
@@ -215,9 +220,9 @@ extension PreferencesView {
                         .foregroundStyle(.secondary)
                 }
                 if config.transcription.textPolish.provider == .chatGPTAuth {
-                    HStack {
-                        Text("文本模型").frame(width: 90, alignment: .leading)
+                    LabeledContent("文本模型") {
                         TextField("模型 ID", text: $draft.config.transcription.textPolish.chatGPTResponseModel)
+                            .textFieldStyle(.roundedBorder)
                             .accessibilityIdentifier("polish-model")
                     }
                     Text("仅润色阶段使用这个模型。ChatType 通过 chatgpt.com 的账户后端和现有 ChatGPT 登录发送文本，不调用 OpenAI Platform API，也不使用按量 API Key。实际额度与频率限制由 ChatGPT 账户决定；界面中的 token 数为本地估算，不是账单。")

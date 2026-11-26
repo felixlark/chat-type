@@ -114,6 +114,10 @@ struct ShortcutRecorder: NSViewRepresentable {
         }
 
         override func keyDown(with event: NSEvent) {
+            handleKeyDown(event)
+        }
+
+        private func handleKeyDown(_ event: NSEvent) {
             guard !completed, !event.isARepeat else { return }
             if event.keyCode == 53 { stop(); return }
             completed = true
